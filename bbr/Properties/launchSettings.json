@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "bbr": {
+      "commandName": "Project",
+      "commandLineArgs": "--tcp-listen 127.0.0.1:11300 --write \"C:\\Temp\\relay\\1.dat\" --read \"C:\\Temp\\relay\\2.dat\""
+    }
+  }
+}

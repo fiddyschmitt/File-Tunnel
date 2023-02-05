@@ -1,0 +1,21 @@
+﻿//Transport TCP over files
+bbr.exe --tcp-listen 127.0.0.1:11300 --write "\\192.168.1.31\e\Temp\relay\1.dat" --read "\\192.168.1.31\e\Temp\relay\2.dat"
+bbr.exe --tcp-connect 192.168.56.120:22 --write "\\192.168.1.31\e\Temp\relay\2.dat" --read "\\192.168.1.31\e\Temp\relay\1.dat"
+
+//Transport UDP over files (two way)
+bbr.exe --udp-listen 192.168.56.1:11300 --write "\\192.168.1.31\e\Temp\relay\1.dat" --read "\\192.168.1.31\e\Temp\relay\2.dat"
+bbr.exe --udp-send-to 192.168.56.120:11301 --udp-send-from 192.168.56.1:11302 --read "\\192.168.1.31\e\Temp\relay\1.dat" --write "\\192.168.1.31\e\Temp\relay\2.dat"
+
+//Transport UDP over files (one way way)
+bbr.exe --udp-listen 192.168.56.1:11300 --write "\\192.168.1.31\e\Temp\relay\1.dat"
+bbr.exe --read "\\192.168.1.31\e\Temp\relay\1.dat" --udp-send-to 192.168.56.120:16000 --udp-send-from 192.168.56.1:11500
+
+
+
+
+
+
+sudo mknod -m 777 fifo p
+cat fifo | netcat -l -k -u -p 11301 > fifo
+
+nc -u 192.168.56.1 11300
