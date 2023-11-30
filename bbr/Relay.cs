@@ -19,7 +19,7 @@ namespace bbr
                 try
                 {
                     //fromStream.CopyTo(toStream);
-                    Extensions.CopyTo(fromStream, toStream, 64 * 1024, (bytesRead) =>
+                    Extensions.CopyTo(fromStream, toStream, 128 * 1024, (bytesRead) =>
                     {
                         Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                     }, null);
@@ -49,13 +49,21 @@ namespace bbr
             {
                 FromStream.Close();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Program.Log($"Stop(): {ex}");
+            }
+
 
             try
             {
                 ToStream.Close();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Program.Log($"Stop(): {ex}");
+            }
+
 
 
             Program.Log($"Closed relay. {FromStream.Name(true)} -> {ToStream.Name(true)}");

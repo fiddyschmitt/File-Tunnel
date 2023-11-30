@@ -14,7 +14,7 @@ namespace bbr.Commands
 
         public override string Serialize()
         {
-            var result = $"connect|{ConnectionId}";
+            var result = $"$connect|{ConnectionId}";
             return result;
         }
     }

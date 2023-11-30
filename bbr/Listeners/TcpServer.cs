@@ -52,13 +52,21 @@ namespace bbr.Listeners
             {
                 listener.Stop();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Program.Log($"Stop(): {ex}");
+            }
+
 
             try
             {
                 listenerTask.Wait();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Program.Log($"Stop(): {ex}");
+            }
+
         }
     }
 }

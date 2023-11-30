@@ -18,7 +18,7 @@ namespace bbr
     internal class Program
     {
         const string PROGRAM_NAME = "BB Relay";
-        const string VERSION = "1.0";
+        const string VERSION = "1.1";
 
         static void Main(string[] args)
         {
@@ -68,7 +68,6 @@ namespace bbr
 
                            var tearDown = () =>
                            {
-                               sharedFileManager.Stop();
                                relay1.Stop();
                                relay2.Stop();
                            };
@@ -80,9 +79,7 @@ namespace bbr
 
                    if (!string.IsNullOrEmpty(o.TcpConnectTo) || !string.IsNullOrEmpty(o.UdpSendTo))
                    {
-                       StreamEstablisher listener2 = null;
-
-                       listener2 = new SharedFileManager(o.ReadFrom, o.WriteTo);
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
 
                        if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
                        {
@@ -97,7 +94,7 @@ namespace bbr
                        Program.Log($"and forward to: {forwardToStr}");
                        if (!string.IsNullOrEmpty(o.WriteTo)) Program.Log($"and when they respond, will write the response to: {o.WriteTo}");
 
-                       listener2.StreamEstablished += (sender, stream) =>
+                       sharedFileManager.StreamEstablished += (sender, stream) =>
                        {
                            if (!string.IsNullOrEmpty(o.TcpConnectTo))
                            {
@@ -112,7 +109,6 @@ namespace bbr
 
                                var tearDown = () =>
                                {
-                                   listener2.Stop();
                                    relay1.Stop();
                                    relay2.Stop();
                                };
@@ -141,7 +137,6 @@ namespace bbr
 
                                var tearDown = () =>
                                {
-                                   listener2.Stop();
                                    relay1.Stop();
                                    relay2.Stop();
                                };

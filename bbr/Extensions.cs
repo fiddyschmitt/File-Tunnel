@@ -24,7 +24,10 @@ namespace bbr
                     read = input.Read(buffer, 0, buffer.Length);
                     output.Write(buffer, 0, read);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Program.Log($"CopyTo: {ex}");
+                }
 
                 if (read == 0) break;
             }
@@ -50,13 +53,11 @@ namespace bbr
         }
 
 
-        static Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = new();
+        static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = new();
         public static string Name(this Stream stream, bool readFrom)
         {
             if (!StreamNames.ContainsKey(stream))
             {
-                var name = stream.GetType().Name;
-
                 if (stream is UdpStream udpStream)
                 {
                     StreamNames.Add(
@@ -84,9 +85,9 @@ namespace bbr
 
             }
 
-            var streamNames = StreamNames[stream];
+            var (ReadString, WriteString) = StreamNames[stream];
 
-            var streamName = readFrom ? streamNames.ReadString : streamNames.WriteString;
+            var streamName = readFrom ? ReadString : WriteString;
 
             return streamName;
 

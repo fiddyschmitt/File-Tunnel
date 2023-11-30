@@ -85,7 +85,7 @@ namespace bbr.Streams
         {
             base.Close();
 
-            //SharedFileManager.Stop();
+            SharedFileManager.TearDown(ConnectionId);
         }
     }
 }
