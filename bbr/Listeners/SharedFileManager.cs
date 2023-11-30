@@ -82,7 +82,7 @@ namespace bbr.Streams
             SendQueue.Add(teardownCommand);
         }
 
-        const long PURGE_SIZE_BYTES = long.MaxValue;
+        const long PURGE_SIZE_BYTES = 100 * 1024 * 1024;
 
         public void SendPump()
         {
