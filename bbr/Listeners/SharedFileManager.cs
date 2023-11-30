@@ -82,7 +82,7 @@ namespace bbr.Streams
             SendQueue.Add(teardownCommand);
         }
 
-        const long PURGE_SIZE_BYTES = 100 * 1024 * 1024;
+        const long PURGE_SIZE_BYTES = 10 * 1024 * 1024;
 
         public void SendPump()
         {
@@ -175,6 +175,7 @@ namespace bbr.Streams
 
             var repeatCurrentLine = false;
 
+            var lastSuccessfulLineEndPos = 0L;
             string line = null;
             while (!cancellationTokenSource.IsCancellationRequested)
             {
@@ -226,13 +227,17 @@ namespace bbr.Streams
                     Program.Log($"File has been created: {ReadFromFilename}");
                 }
 
+                var positionBeforeRead = 0L;
+                var wasRepeat = false;
                 if (repeatCurrentLine)
                 {
                     //we're keeping the current line, to retry something
                     repeatCurrentLine = false;
+                    wasRepeat = true;
                 }
                 else
                 {
+                    positionBeforeRead = streamReader.BaseStream.Position;
                     line = streamReader.ReadLine();
                 }
 
@@ -275,13 +280,25 @@ namespace bbr.Streams
                     try
                     {
                         payload = Convert.FromBase64String(payloadStr);
+                        lastSuccessfulLineEndPos = streamReader.BaseStream.Position;
+
+                        if (wasRepeat)
+                        {
+                            Program.Log($"After resetting stream, packet was {payload.Length:N0} bytes");
+                        }
                     }
                     catch
                     {
-                        Program.Log($"Couldn't convert base64 string");
+                        Program.Log($"Couldn't convert base64 string from {payloadStr.Length:N0} characters, at position {positionBeforeRead:N0}");
                         Program.Log($"Resetting StreamReader.");
+
                         //FPS 02/02/2023: Unsure what causes this. The string is a subset of the whole line. If we do another ReadLine(), 2004 characters are skipped.
                         //For now, let's reset the StreamReader and jump to where we were.
+
+                        
+                        //streamReader.BaseStream.Position = lastSuccessfulLineEndPos;
+                        //streamReader = new StreamReader(streamReader.BaseStream);
+                        //streamReader.DiscardBufferedData();
 
                         var readingFromFile = streamReader.BaseStream as FileStream;
                         readingFromFile.Position = 0;
@@ -290,6 +307,7 @@ namespace bbr.Streams
                         var originalLine = line;
                         while (true)
                         {
+                            var positionBeforeReread = streamReader.BaseStream.Position;
                             line = streamReader.ReadLine();
 
                             if (line == null)
@@ -299,6 +317,7 @@ namespace bbr.Streams
 
                             if (line.StartsWith(originalLine))
                             {
+                                Program.Log($"Position after rescanning is: {positionBeforeReread:N0}. Delta is {positionBeforeReread - positionBeforeRead:N0} byes");
                                 break;
                             }
                         }

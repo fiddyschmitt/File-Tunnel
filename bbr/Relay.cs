@@ -16,10 +16,11 @@ namespace bbr
         {
             Task.Factory.StartNew(() =>
             {
+
                 try
                 {
                     //fromStream.CopyTo(toStream);
-                    Extensions.CopyTo(fromStream, toStream, 128 * 1024, (bytesRead) =>
+                    Extensions.CopyTo(fromStream, toStream, 131072, (bytesRead) =>
                     {
                         Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                     }, null);

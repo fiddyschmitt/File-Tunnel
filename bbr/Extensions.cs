@@ -90,8 +90,6 @@ namespace bbr
             var streamName = readFrom ? ReadString : WriteString;
 
             return streamName;
-
-            
         }
     }
 }
