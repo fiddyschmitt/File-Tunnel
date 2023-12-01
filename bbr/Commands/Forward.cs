@@ -15,10 +15,12 @@ namespace bbr.Commands
 
         public byte[] Payload { get; }
 
+        static ulong FwdCount = 0;
+
         public override string Serialize()
         {
             var payloadBase64 = Convert.ToBase64String(Payload);
-            var result = $"$forward|{ConnectionId}|{payloadBase64}";
+            var result = $"$forward|{FwdCount++}|{ConnectionId}|{payloadBase64}";
             return result;
         }
     }

@@ -264,7 +264,7 @@ namespace bbr.Streams
                 if (line.StartsWith("$forward"))
                 {
                     var tokens = line.Split('|');
-                    var connectionId = tokens[1];
+                    var connectionId = tokens[2];
 
                     if (!ReceiveQueue.ContainsKey(connectionId))
                     {
@@ -274,7 +274,7 @@ namespace bbr.Streams
                         StreamEstablished?.Invoke(this, sharedFileStream);
                     }
 
-                    var payloadStr = tokens[2];
+                    var payloadStr = tokens[3];
 
                     byte[] payload;
                     try

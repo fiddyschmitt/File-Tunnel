@@ -1,5 +1,6 @@
 ﻿using bbr.Streams;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -12,27 +13,7 @@ namespace bbr
 {
     public static class Extensions
     {
-        public static void CopyTo(this Stream input, Stream output, int bufferSize)
-        {
-            var buffer = new byte[bufferSize];
-            while (true)
-            {
-                var read = 0;
-
-                try
-                {
-                    read = input.Read(buffer, 0, buffer.Length);
-                    output.Write(buffer, 0, read);
-                }
-                catch (Exception ex)
-                {
-                    Program.Log($"CopyTo: {ex}");
-                }
-
-                if (read == 0) break;
-            }
-        }
-
+        /*
         public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource cancellationTokenSource)
         {
             var buffer = new byte[bufferSize];
@@ -50,6 +31,40 @@ namespace bbr
                 callBack?.Invoke(read);
             }
             callBack?.Invoke(read);
+        }
+        */
+
+        public const int ARBITARY_MEDIUM_SIZE_BUFFER = 5 * 1024 * 1024;
+
+        //Initialised to something big, because otherwise it defaults to 1MB and smaller.
+        //See: https://adamsitnik.com/Array-Pool/
+        //Always remember to return the array back into the pool.
+        //Never trust buffer.Length
+        public static readonly ArrayPool<byte> BufferPool = ArrayPool<byte>.Create(ARBITARY_MEDIUM_SIZE_BUFFER + 1, 50);
+
+        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource cancellationTokenSource)
+        {
+            var buffer = BufferPool.Rent(bufferSize);
+
+            var read = 0 ;
+            while (true)
+            {
+                if (cancellationTokenSource != null && cancellationTokenSource.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                read = input.Read(buffer, 0, bufferSize);
+
+                if (read == 0) break;
+
+                output.Write(buffer, 0, read);
+
+                callBack?.Invoke(read);
+            }
+            callBack?.Invoke(read);
+
+            BufferPool.Return(buffer);
         }
 
 
