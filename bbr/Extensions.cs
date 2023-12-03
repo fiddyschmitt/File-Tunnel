@@ -46,7 +46,7 @@ namespace bbr
         {
             var buffer = BufferPool.Rent(bufferSize);
 
-            var read = 0 ;
+            var read = 0;
             while (true)
             {
                 if (cancellationTokenSource != null && cancellationTokenSource.IsCancellationRequested)
@@ -56,7 +56,11 @@ namespace bbr
 
                 read = input.Read(buffer, 0, bufferSize);
 
-                if (read == 0) break;
+                if (read == 0)
+                {
+                    Program.Log("Nothing left to read");
+                    break;
+                }
 
                 output.Write(buffer, 0, read);
 
