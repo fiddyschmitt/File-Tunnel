@@ -20,6 +20,9 @@ namespace bbr
         const string PROGRAM_NAME = "BB Relay";
         const string VERSION = "1.1";
 
+
+        static int connectionId = 0;
+
         static void Main(string[] args)
         {
             Program.Log($"{PROGRAM_NAME} {VERSION}");
@@ -54,8 +57,8 @@ namespace bbr
 
                        relayStreamCreator = new Func<Stream>(() =>
                        {
-                           var connectionId = Guid.NewGuid().ToString();
-                           var sharedFileStream = new SharedFileStream(sharedFileManager, connectionId);
+                           var cId = "" + connectionId++;
+                           var sharedFileStream = new SharedFileStream(sharedFileManager, cId);
                            return sharedFileStream;
                        });
 
