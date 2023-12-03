@@ -87,7 +87,7 @@ namespace bbr.Streams
 
         static string wroteFilename = @$"\\192.168.1.31\e\Temp\bb\wrote-{Environment.MachineName}.txt";
         static bool logWrites = false;
-        static bool logReads = true;
+        static bool logReads = false;
         public static void Send(string str, StreamWriter streamWriter)
         {
             if (logWrites) File.AppendAllText(wroteFilename, str.Length + Environment.NewLine);
