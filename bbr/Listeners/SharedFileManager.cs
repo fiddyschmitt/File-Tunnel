@@ -103,7 +103,7 @@ namespace bbr.Streams
         {
             StreamWriter streamWriter = null;
 
-            File.Delete(wroteFilename);
+            if (logWrites && File.Exists(wroteFilename)) File.Delete(wroteFilename);
 
             while (!cancellationTokenSource.IsCancellationRequested)
             {
@@ -190,7 +190,7 @@ namespace bbr.Streams
         public void ReceivePump()
         {
             var readFilename = @$"\\192.168.1.31\e\Temp\bb\read-{Environment.MachineName}.txt";
-            File.Delete(readFilename);
+            if (logReads && File.Exists(readFilename)) File.Delete(readFilename);
 
             foreach (var line in IOUtils.Tail(ReadFromFilename))
             {
