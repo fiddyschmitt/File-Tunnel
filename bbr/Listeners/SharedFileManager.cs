@@ -16,9 +16,9 @@ namespace bbr.Streams
 {
     public class SharedFileManager : StreamEstablisher
     {
-        readonly Dictionary<string, BlockingCollection<byte[]>> ReceiveQueue = new();
+        readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = new();
         readonly BlockingCollection<Command> SendQueue = new();
-        readonly List<string> ConnectionIds = new();
+        readonly HashSet<int> ConnectionIds = new();
 
         public SharedFileManager(string readFromFilename, string writeToFilename)
         {
@@ -58,7 +58,7 @@ namespace bbr.Streams
             }
         }
 
-        public byte[] Read(string connectionId)
+        public byte[] Read(int connectionId)
         {
             if (!ReceiveQueue.ContainsKey(connectionId))
             {
@@ -67,17 +67,23 @@ namespace bbr.Streams
 
             var queue = ReceiveQueue[connectionId];
 
-            byte[] result = queue.Take(cancellationTokenSource.Token);
+            var result = queue.Take(cancellationTokenSource.Token);
             return result;
         }
 
-        public void Write(string connectionId, byte[] data)
+        public void Connect(int connectionId)
+        {
+            var connectCommand = new Connect(connectionId);
+            SendQueue.Add(connectCommand);
+        }
+
+        public void Write(int connectionId, byte[] data)
         {
             var forwardCommand = new Forward(connectionId, data);
             SendQueue.Add(forwardCommand);
         }
 
-        public void TearDown(string connectionId)
+        public void TearDown(int connectionId)
         {
             var teardownCommand = new TearDown(connectionId);
             SendQueue.Add(teardownCommand);
@@ -85,25 +91,10 @@ namespace bbr.Streams
 
         public const long PURGE_SIZE_BYTES = 1 * 1024 * 1024;
 
-        static string wroteFilename = @$"\\192.168.1.31\e\Temp\bb\wrote-{Environment.MachineName}.txt";
-        static bool logWrites = false;
-        static bool logReads = false;
-        public static void Send(string str, StreamWriter streamWriter)
-        {
-            if (logWrites) File.AppendAllText(wroteFilename, str.Length + Environment.NewLine);
-            streamWriter.Write(str.Length + Environment.NewLine);
-
-            if (logWrites) File.AppendAllText(wroteFilename, str + Environment.NewLine);
-            streamWriter.WriteLine(str);
-
-            streamWriter.Flush();
-        }
-
         public void SendPump()
         {
-            StreamWriter streamWriter = null;
-
-            if (logWrites && File.Exists(wroteFilename)) File.Delete(wroteFilename);
+            FileStream fileStream = null;
+            BinaryWriter writer = null;
 
             while (!cancellationTokenSource.IsCancellationRequested)
             {
@@ -111,67 +102,56 @@ namespace bbr.Streams
                 {
                     foreach (var toSend in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                     {
-                        streamWriter ??= new StreamWriter(WriteToFilename, new FileStreamOptions()
+                        //FileOptions.DeleteOnClose causes access issues, and FileOptions.WriteThrough causes significant slowdown
+                        fileStream ??= new FileStream(WriteToFilename, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                        writer ??= new BinaryWriter(fileStream);
+
+                        if (toSend is Forward fwd && !ConnectionIds.Contains(fwd.ConnectionId))
                         {
-                            Mode = FileMode.Append,
-                            Access = FileAccess.Write,
-                            Share = FileShare.ReadWrite | FileShare.Delete,
-                            Options = FileOptions.None     //FileOptions.DeleteOnClose causes access issues, and FileOptions.WriteThrough causes significant slowdown
-                        });
 
-                        if (!ConnectionIds.Contains(toSend.ConnectionId))
-                        {
-                            ConnectionIds.Add(toSend.ConnectionId);
-
-                            var connectCommand = new Connect(toSend.ConnectionId);
-                            var connectCommandStr = connectCommand.Serialize();
-
-                            Send(connectCommandStr, streamWriter);
                         }
 
-                        var commandStr = toSend.Serialize();
-                        Send(commandStr, streamWriter);
+                        toSend.Serialise(writer);
+                        writer.Flush();
 
-                        if (streamWriter.BaseStream.Length > PURGE_SIZE_BYTES)
+                        if (fileStream.Length > PURGE_SIZE_BYTES)
                         {
-                            //tell the other side to purge the file
-                            var purgeCommand = new Purge(toSend.ConnectionId);
-                            var purgeCommandStr = purgeCommand.Serialize();
-
-                            Send(purgeCommandStr, streamWriter);
-
-                            //wait until the receiver has processed this message (signified by the file being truncated)
-
-                            while (true)
+                            if (toSend is Forward forward)
                             {
-                                Program.Log($"Waiting for file to be purged: {WriteToFilename}");
+                                //tell the other side to purge the file
+                                var purgeCommand = new Purge(forward.ConnectionId);
+                                purgeCommand.Serialise(writer);
+                                writer.Flush();
 
-                                try
+                                //wait until the receiver has processed this message (signified by the file being truncated)
+
+                                while (true)
                                 {
-                                    if (streamWriter.BaseStream.Length == 0)
+                                    Program.Log($"Waiting for file to be purged: {WriteToFilename}");
+
+                                    try
                                     {
+                                        if (fileStream.Length == 0)
+                                        {
+                                            break;
+                                        }
+
+                                        Thread.Sleep(10);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Program.Log($"Waiting for file to be purged: {ex}");
                                         break;
                                     }
+                                }
 
-                                    Thread.Sleep(10);
-                                }
-                                catch (Exception ex)
-                                {
-                                    Program.Log($"Waiting for file to be purged: {ex}");
-                                    break;
-                                }
+                                fileStream.Position = 0;
+
+                                //fileStream.Close();
+                                //writer.Close();
+
+                                Program.Log($"File purge is complete: {WriteToFilename}");
                             }
-
-                            streamWriter.BaseStream.Position = 0;
-
-                            streamWriter = new StreamWriter(WriteToFilename, new FileStreamOptions()
-                            {
-                                Mode = FileMode.Append,
-                                Access = FileAccess.Write,
-                                Share = FileShare.ReadWrite | FileShare.Delete
-                            });
-
-                            Program.Log($"File purge is complete: {WriteToFilename}");
                         }
                     }
                 }
@@ -189,66 +169,85 @@ namespace bbr.Streams
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
         {
-            var readFilename = @$"\\192.168.1.31\e\Temp\bb\read-{Environment.MachineName}.txt";
-            if (logReads && File.Exists(readFilename)) File.Delete(readFilename);
+            File.Delete(ReadFromFilename);
 
-            foreach (var line in IOUtils.Tail(ReadFromFilename))
+            while (!IOUtils.FileExists(ReadFromFilename))
             {
-                if (logReads) File.AppendAllText(readFilename, line + Environment.NewLine);
+                Program.Log($"Waiting for file to be created: {ReadFromFilename}");
+                Thread.Sleep(1000);
+            }
 
-                if (line.StartsWith("$connect"))
+            FileStream fileStream = null;
+            BinaryReader binaryReader = null;
+
+            while (true)
+            {
+                fileStream ??= new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+                binaryReader ??= new BinaryReader(fileStream);
+
+                if (fileStream.Position == fileStream.Length)
                 {
-                    var tokens = line.Split('|');
-                    var connectionId = tokens[1];
+                    //Program.Log($"Waiting for content: {ReadFromFilename}");
+                    //Thread.Sleep(100);
+                    continue;
+                }
 
-                    if (!ReceiveQueue.ContainsKey(connectionId))
+                var command = Command.Deserialise(binaryReader);
+
+                if (command is Connect connect)
+                {
+                    if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
                     {
-                        ReceiveQueue.Add(connectionId, new BlockingCollection<byte[]>());
+                        ReceiveQueue.Add(connect.ConnectionId, new BlockingCollection<byte[]>());
 
-                        var sharedFileStream = new SharedFileStream(this, connectionId);
+                        var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
                         StreamEstablished?.Invoke(this, sharedFileStream);
                     }
                 }
 
-                if (line.StartsWith("$forward"))
+                if (command is Forward forward)
                 {
-                    var tokens = line.Split('|');
-                    var connectionId = tokens[2];
-
-                    if (!ReceiveQueue.ContainsKey(connectionId))
-                    {
-                        ReceiveQueue.Add(connectionId, new BlockingCollection<byte[]>());
-
-                        var sharedFileStream = new SharedFileStream(this, connectionId);
-                        StreamEstablished?.Invoke(this, sharedFileStream);
-                    }
-
-                    var payloadStr = tokens[3];
-
-                    var payload = Convert.FromBase64String(payloadStr);
-
-                    var connectionReceiveQueue = ReceiveQueue[connectionId];
-                    if (!connectionReceiveQueue.IsCompleted)
-                    {
-                        connectionReceiveQueue.Add(payload);
-                    }
+                    var connectionReceiveQueue = ReceiveQueue[forward.ConnectionId];
+                    connectionReceiveQueue.Add(forward.Payload);
                 }
 
-
-
-                if (line.StartsWith("$teardown"))
+                if (command is Purge)
                 {
-                    var tokens = line.Split('|');
-                    var connectionId = tokens[1];
+                    Program.Log($"Was asked to purge {ReadFromFilename}");
 
-                    if (ConnectionIds.Contains(connectionId))
+                    //let's truncate the file, so that it doesn't get too big and to signify to the other side that we've processed it.
+                    //FPS 30/11/2023: Occasionally, this doesn't seem to clear the file
+
+                    /*
+                    fileStream.Position = 0;
+                    fileStream.SetLength(0);
+                    fileStream.Flush(true);
+                    */
+
+                    binaryReader.Close();
+                    fileStream.Close();
+
+                    binaryReader = null;
+                    fileStream = null;
+
+                    using (var fs = new FileStream(ReadFromFilename, new FileStreamOptions()
                     {
-                        Program.Log($"Was asked to tear down {connectionId}");
-                        var connectionReceiveQueue = ReceiveQueue[connectionId];
-                        //connectionReceiveQueue.CompleteAdding();
-
-                        ConnectionIds.Remove(connectionId);
+                        Mode = FileMode.Open,
+                        Access = FileAccess.ReadWrite,
+                        Share = FileShare.ReadWrite | FileShare.Delete
+                    }))
+                    {
+                        fs.SetLength(0);
                     }
+
+                    Program.Log($"Purge complete: {ReadFromFilename}");
+                }
+
+                if (command is TearDown teardown)
+                {
+                    Program.Log($"Was asked to tear down {teardown.CommandId}");
+                    //var connectionReceiveQueue = ReceiveQueue[teardown.CommandId];
+                    //connectionReceiveQueue.CompleteAdding();
                 }
             }
         }

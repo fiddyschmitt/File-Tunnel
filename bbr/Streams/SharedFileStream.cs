@@ -11,10 +11,15 @@ namespace bbr.Streams
 {
     public class SharedFileStream : Stream
     {
-        public SharedFileStream(SharedFileManager sharedFileManager, string connectionId)
+        public SharedFileStream(SharedFileManager sharedFileManager, int connectionId)
         {
             SharedFileManager = sharedFileManager;
             ConnectionId = connectionId;
+        }
+
+        public void EstablishConnection()
+        {
+            SharedFileManager.Connect(ConnectionId);
         }
 
         public override bool CanRead => true;
@@ -27,7 +32,7 @@ namespace bbr.Streams
 
         public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
         public SharedFileManager SharedFileManager { get; }
-        public string ConnectionId { get; }
+        public int ConnectionId { get; }
 
         public override void Flush()
         {

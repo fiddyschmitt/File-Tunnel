@@ -51,14 +51,13 @@ namespace bbr
                        if (!string.IsNullOrEmpty(o.ReadFrom)) Program.Log($"and read responses from: {o.ReadFrom}");
 
 
-                       Func<Stream> relayStreamCreator = null;
-
                        var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
 
-                       relayStreamCreator = new Func<Stream>(() =>
+                       var relayStreamCreator = new Func<Stream>(() =>
                        {
-                           var cId = "" + connectionId++;
+                           var cId = connectionId++;
                            var sharedFileStream = new SharedFileStream(sharedFileManager, cId);
+                           sharedFileStream.EstablishConnection();
                            return sharedFileStream;
                        });
 

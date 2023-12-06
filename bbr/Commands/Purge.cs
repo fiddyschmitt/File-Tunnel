@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,14 +9,26 @@ namespace bbr.Commands
 {
     public class Purge : Command
     {
-        public Purge(string connectionId) : base(connectionId)
+        public const int COMMAND_ID = 3;
+        public override int CommandId => COMMAND_ID;
+
+        public int ConnectionId { get; protected set; }
+
+        public Purge() { }
+
+        public Purge(int connectionId)
         {
+            ConnectionId = connectionId;
         }
 
-        public override string Serialize()
+        protected override void Serialize(BinaryWriter writer)
         {
-            var result = $"$purge|{ConnectionId}";
-            return result;
+            writer.Write(ConnectionId);
+        }
+
+        protected override void Deserialize(BinaryReader reader)
+        {
+            ConnectionId = reader.ReadInt32();
         }
     }
 }
