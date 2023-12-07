@@ -18,7 +18,6 @@ namespace bbr.Streams
     {
         readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = new();
         readonly BlockingCollection<Command> SendQueue = new();
-        readonly HashSet<int> ConnectionIds = new();
 
         public SharedFileManager(string readFromFilename, string writeToFilename)
         {
