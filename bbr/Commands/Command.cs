@@ -38,7 +38,7 @@ namespace bbr.Commands
                 _ => throw new NotImplementedException()
             };
 
-            Program.Log($"Received {result.GetType().Name} command");
+            //Program.Log($"Received {result.GetType().Name} command");
 
             result.Deserialize(reader);
             return result;

@@ -106,11 +106,6 @@ namespace bbr.Streams
                         fileStream ??= new FileStream(WriteToFilename, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
                         writer ??= new BinaryWriter(fileStream);
 
-                        if (toSend is Forward fwd && !ConnectionIds.Contains(fwd.ConnectionId))
-                        {
-
-                        }
-
                         toSend.Serialise(writer);
                         writer.Flush();
 
@@ -185,11 +180,16 @@ namespace bbr.Streams
                 fileStream ??= new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
                 binaryReader ??= new BinaryReader(fileStream);
 
-                if (fileStream.Position == fileStream.Length)
+                /*
+                while (fileStream.Position == fileStream.Length)
                 {
-                    //Program.Log($"Waiting for content: {ReadFromFilename}");
-                    //Thread.Sleep(100);
-                    continue;
+
+                }
+                */
+
+                while (binaryReader.PeekChar() == -1)
+                {
+
                 }
 
                 var command = Command.Deserialise(binaryReader);
