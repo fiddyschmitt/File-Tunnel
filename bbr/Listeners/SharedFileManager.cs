@@ -130,7 +130,7 @@ namespace bbr.Streams
                                             break;
                                         }
 
-                                        Thread.Sleep(10);
+                                        Delay.Wait(1);
                                     }
                                     catch (Exception ex)
                                     {
