@@ -15,6 +15,7 @@ namespace bbr.Commands
         }
 
         public abstract int CommandId { get; }
+        public ulong PacketNumber { get; set; }
 
         protected abstract void Deserialize(BinaryReader reader);
         protected abstract void Serialize(BinaryWriter writer);
@@ -22,6 +23,8 @@ namespace bbr.Commands
         public void Serialise(BinaryWriter writer)
         {
             writer.Write(CommandId);
+            writer.Write(PacketNumber++);
+
             Serialize(writer);
         }
 
@@ -39,6 +42,8 @@ namespace bbr.Commands
             };
 
             //Program.Log($"Received {result.GetType().Name} command");
+
+            result.PacketNumber = reader.ReadUInt64();
 
             result.Deserialize(reader);
             return result;

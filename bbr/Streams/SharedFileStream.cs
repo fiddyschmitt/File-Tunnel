@@ -39,7 +39,7 @@ namespace bbr.Streams
             throw new NotImplementedException();
         }
 
-        byte[] currentData = null;
+        byte[]? currentData = null;
         int currentDataIndex;
 
         public override int Read(byte[] buffer, int offset, int count)
