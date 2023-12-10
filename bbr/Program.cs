@@ -43,6 +43,8 @@ namespace bbr
                        if (!string.IsNullOrEmpty(o.TcpListenTo)) listener = new TcpServer(o.TcpListenTo);
                        if (!string.IsNullOrEmpty(o.UdpListenTo)) listener = new UdpServer(o.UdpListenTo);
 
+                       if (listener == null) return;
+
                        var listenToStr = o.TcpListenTo;
                        if (string.IsNullOrEmpty(listenToStr)) listenToStr = o.UdpListenTo;
 
@@ -50,6 +52,8 @@ namespace bbr
                        Program.Log($"and forward to: {o.WriteTo}");
                        if (!string.IsNullOrEmpty(o.ReadFrom)) Program.Log($"and read responses from: {o.ReadFrom}");
 
+                       if (o.ReadFrom == null) throw new Exception("Must provide --read");
+                       if (o.WriteTo == null) throw new Exception("Must provide --write");
 
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");

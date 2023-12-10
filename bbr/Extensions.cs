@@ -102,7 +102,6 @@ namespace bbr
                                 (Path.GetFileName(sharedFileStream.SharedFileManager.ReadFromFilename),
                                  Path.GetFileName(sharedFileStream.SharedFileManager.WriteToFilename)));
                     }
-
                 }
 
                 var (ReadString, WriteString) = StreamNames[stream];

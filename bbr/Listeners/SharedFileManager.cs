@@ -192,7 +192,7 @@ namespace bbr.Streams
                 binaryReader ??= new BinaryReader(fileStream);
 
                 /*
-				//This is slower than PeekChar
+                //This is slower than PeekChar
                 while (fileStream.Position == fileStream.Length)
                 {
 
@@ -201,11 +201,20 @@ namespace bbr.Streams
 
                 while (binaryReader.PeekChar() == -1)
                 {
-					Delay.Wait(1);  //avoids a tight loop
-
+                    Delay.Wait(1);  //avoids a tight loop
                 }
 
-                var command = Command.Deserialise(binaryReader);
+                Command? command = null;
+
+                try
+                {
+                    command = Command.Deserialise(binaryReader);
+                }
+                catch
+                {
+                    Program.Log($"Exception happened at position {fileStream.Position:N0} in {ReadFromFilename}");
+                    throw;
+                }
 
                 Program.Log($"[Packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
 
@@ -267,7 +276,9 @@ namespace bbr.Streams
                 {
                     Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
                     var connectionReceiveQueue = ReceiveQueue[teardown.ConnectionId];
-					ReceiveQueue.Remove(teardown.ConnectionId);
+
+                    ReceiveQueue.Remove(teardown.ConnectionId);
+
                     connectionReceiveQueue.CompleteAdding();
                 }
             }
