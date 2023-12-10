@@ -72,7 +72,8 @@ namespace bbr.Streams
                 try
                 {
                     result = queue.Take(cancellationTokenSource.Token);
-                } catch (InvalidOperationException)
+                }
+                catch (InvalidOperationException)
                 {
                     //This is normal - the queue might have been marked as AddingComplete while we were listening
                 }
@@ -99,7 +100,7 @@ namespace bbr.Streams
             SendQueue.Add(teardownCommand);
         }
 
-        public const long PURGE_SIZE_BYTES = 10 * 1024 * 1024;
+        public const long PURGE_SIZE_BYTES = 1 * 1024 * 1024;
 
         public void SendPump()
         {
@@ -187,6 +188,8 @@ namespace bbr.Streams
 
             while (true)
             {
+                var guid = System.Guid.NewGuid().ToString();
+
                 fileStream ??= new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
                 binaryReader ??= new BinaryReader(fileStream);
 
@@ -203,7 +206,19 @@ namespace bbr.Streams
                     Delay.Wait(1);  //avoids a tight loop
                 }
 
-                var command = Command.Deserialise(binaryReader);
+                Command? command = null;
+
+                try
+                {
+                    command = Command.Deserialise(binaryReader);
+                }
+                catch
+                {
+                    Program.Log($"Exception happened at position {fileStream.Position:N0} in {ReadFromFilename}");
+                    throw;
+                }
+
+                Program.Log($"[{guid}] [Packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] Deserialised {command.GetType().Name} command");
 
                 if (command is Forward forward && ReceiveQueue.ContainsKey(forward.ConnectionId) && forward.Payload != null)
                 {
@@ -222,7 +237,7 @@ namespace bbr.Streams
                 }
                 else if (command is Purge purge)
                 {
-                    Program.Log($"[{purge.PacketNumber} Was asked to purge {ReadFromFilename}");
+                    Program.Log($"Was asked to purge {ReadFromFilename}");
 
                     //let's truncate the file, so that it doesn't get too big and to signify to the other side that we've processed it.
                     //FPS 30/11/2023: Occasionally, this doesn't seem to clear the file

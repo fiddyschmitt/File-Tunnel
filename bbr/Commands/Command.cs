@@ -15,6 +15,7 @@ namespace bbr.Commands
         }
 
         public abstract int CommandId { get; }
+        public static ulong SentPacketCount { get; set; }
         public ulong PacketNumber { get; set; }
 
         protected abstract void Deserialize(BinaryReader reader);
@@ -23,7 +24,7 @@ namespace bbr.Commands
         public void Serialise(BinaryWriter writer)
         {
             writer.Write(CommandId);
-            writer.Write(PacketNumber++);
+            writer.Write(SentPacketCount++);
 
             Serialize(writer);
         }
