@@ -2,7 +2,7 @@
   "profiles": {
     "bbr": {
       "commandName": "Project",
-      "commandLineArgs": "--tcp-listen 127.0.0.1:5001 --write \"\\\\192.168.1.31\\e\\Temp\\bb\\1.dat\" --read \"\\\\192.168.1.31\\e\\Temp\\bb\\2.dat\""
+      "commandLineArgs": "--read \"E:\\Temp\\g_proxy_1.dat\" --tcp-connect 127.0.0.1:8080 --write \"E:\\Temp\\g_proxy_2.dat\""
     }
   }
 }

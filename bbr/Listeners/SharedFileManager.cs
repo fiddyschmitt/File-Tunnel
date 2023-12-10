@@ -57,16 +57,28 @@ namespace bbr.Streams
             }
         }
 
-        public byte[] Read(int connectionId)
+        public byte[]? Read(int connectionId)
         {
             if (!ReceiveQueue.ContainsKey(connectionId))
             {
                 ReceiveQueue.Add(connectionId, new BlockingCollection<byte[]>());
             }
 
-            var queue = ReceiveQueue[connectionId];
+            byte[]? result = null;
+            if (ReceiveQueue.ContainsKey(connectionId))
+            {
+                var queue = ReceiveQueue[connectionId];
 
-            var result = queue.Take(cancellationTokenSource.Token);
+                try
+                {
+                    result = queue.Take(cancellationTokenSource.Token);
+                }
+                catch (InvalidOperationException)
+                {
+                    //This is normal - the queue might have been marked as AddingComplete while we were listening
+                }
+            }
+
             return result;
         }
 
@@ -92,8 +104,8 @@ namespace bbr.Streams
 
         public void SendPump()
         {
-            FileStream fileStream = null;
-            BinaryWriter writer = null;
+            FileStream? fileStream = null;
+            BinaryWriter? writer = null;
 
             while (!cancellationTokenSource.IsCancellationRequested)
             {
@@ -171,8 +183,8 @@ namespace bbr.Streams
                 Thread.Sleep(1000);
             }
 
-            FileStream fileStream = null;
-            BinaryReader binaryReader = null;
+            FileStream? fileStream = null;
+            BinaryReader? binaryReader = null;
 
             while (true)
             {
@@ -180,6 +192,7 @@ namespace bbr.Streams
                 binaryReader ??= new BinaryReader(fileStream);
 
                 /*
+				//This is slower than PeekChar
                 while (fileStream.Position == fileStream.Length)
                 {
 
@@ -188,12 +201,28 @@ namespace bbr.Streams
 
                 while (binaryReader.PeekChar() == -1)
                 {
+					Delay.Wait(1);  //avoids a tight loop
 
                 }
 
                 var command = Command.Deserialise(binaryReader);
 
-                if (command is Connect connect)
+                Program.Log($"[Packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
+
+                if (command is Forward forward)
+                {
+                    if (!ReceiveQueue.ContainsKey(forward.ConnectionId))
+                    {
+                        ReceiveQueue.Add(forward.ConnectionId, new BlockingCollection<byte[]>());
+                    }
+
+                    var connectionReceiveQueue = ReceiveQueue[forward.ConnectionId];
+                    if (forward.Payload != null)
+                    {
+                        connectionReceiveQueue.Add(forward.Payload);
+                    }
+                }
+                else if (command is Connect connect)
                 {
                     if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
                     {
@@ -203,16 +232,9 @@ namespace bbr.Streams
                         StreamEstablished?.Invoke(this, sharedFileStream);
                     }
                 }
-
-                if (command is Forward forward)
+                else if (command is Purge purge)
                 {
-                    var connectionReceiveQueue = ReceiveQueue[forward.ConnectionId];
-                    connectionReceiveQueue.Add(forward.Payload);
-                }
-
-                if (command is Purge)
-                {
-                    Program.Log($"Was asked to purge {ReadFromFilename}");
+                    Program.Log($"Was asked to purge connection {purge.ConnectionId} {ReadFromFilename}");
 
                     //let's truncate the file, so that it doesn't get too big and to signify to the other side that we've processed it.
                     //FPS 30/11/2023: Occasionally, this doesn't seem to clear the file
@@ -241,12 +263,12 @@ namespace bbr.Streams
 
                     Program.Log($"Purge complete: {ReadFromFilename}");
                 }
-
-                if (command is TearDown teardown)
+                else if (command is TearDown teardown && ReceiveQueue.ContainsKey(teardown.ConnectionId))
                 {
-                    Program.Log($"Was asked to tear down {teardown.CommandId}");
-                    //var connectionReceiveQueue = ReceiveQueue[teardown.CommandId];
-                    //connectionReceiveQueue.CompleteAdding();
+                    Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
+                    var connectionReceiveQueue = ReceiveQueue[teardown.ConnectionId];
+					ReceiveQueue.Remove(teardown.ConnectionId);
+                    connectionReceiveQueue.CompleteAdding();
                 }
             }
         }

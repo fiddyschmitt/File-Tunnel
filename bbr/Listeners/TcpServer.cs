@@ -11,7 +11,7 @@ namespace bbr.Listeners
 {
     public class TcpServer : StreamEstablisher
     {
-        TcpListener listener;
+        TcpListener? listener;
         readonly Task listenerTask;
 
         public TcpServer(string endpointStr)
@@ -30,7 +30,7 @@ namespace bbr.Listeners
                     while (true)
                     {
                         var client = listener.AcceptTcpClient();
-                        var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
+                        var remoteEndpoint = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
 
                         Program.Log($"{DateTime.Now}: Accepted connection from {client.Client.RemoteEndPoint}");
 
@@ -50,7 +50,7 @@ namespace bbr.Listeners
         {
             try
             {
-                listener.Stop();
+                listener?.Stop();
             }
             catch (Exception ex)
             {

@@ -9,7 +9,7 @@ namespace bbr.Listeners
 {
     public abstract class StreamEstablisher
     {
-        public EventHandler<Stream> StreamEstablished;
+        public EventHandler<Stream>? StreamEstablished;
         public abstract void Stop();
     }
 }

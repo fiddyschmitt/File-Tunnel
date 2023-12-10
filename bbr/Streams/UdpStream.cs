@@ -18,12 +18,6 @@ namespace bbr.Streams
         {
             Client = client;
             SendTo = sendTo;
-        }
-
-        public UdpStream(UdpClient client, IPEndPoint sendTo, IPEndPoint listenTo)
-        {
-            Client = client;
-            SendTo = sendTo;
 
             Task.Factory.StartNew(() =>
             {
@@ -62,17 +56,16 @@ namespace bbr.Streams
             throw new NotImplementedException();
         }
 
-        byte[] currentData = null;
+        byte[]? currentData = null;
         int currentDataIndex;
 
-        BlockingCollection<byte[]> toRead = new BlockingCollection<byte[]>();
+        readonly BlockingCollection<byte[]> toRead = new();
         public void AddToReadQueue(byte[] data)
         {
             toRead.Add(data);
         }
 
-
-        CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+        readonly CancellationTokenSource cancellationTokenSource = new();
 
         public override int Read(byte[] buffer, int offset, int count)
         {
