@@ -36,7 +36,7 @@ namespace bbr
                        Environment.Exit(0);
                    }
 
-                   StreamEstablisher listener = null;
+                   StreamEstablisher? listener = null;
 
                    if (!string.IsNullOrEmpty(o.TcpListenTo) || !string.IsNullOrEmpty(o.UdpListenTo))
                    {
@@ -50,6 +50,8 @@ namespace bbr
                        Program.Log($"and forward to: {o.WriteTo}");
                        if (!string.IsNullOrEmpty(o.ReadFrom)) Program.Log($"and read responses from: {o.ReadFrom}");
 
+                       if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
+                       if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
                        var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
 
@@ -60,6 +62,8 @@ namespace bbr
                            sharedFileStream.EstablishConnection();
                            return sharedFileStream;
                        });
+
+                       if (listener == null) return;
 
                        listener.StreamEstablished += (sender, stream) =>
                        {
@@ -81,6 +85,9 @@ namespace bbr
 
                    if (!string.IsNullOrEmpty(o.TcpConnectTo) || !string.IsNullOrEmpty(o.UdpSendTo))
                    {
+                       if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
+                       if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
+
                        var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
 
                        if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
@@ -119,7 +126,7 @@ namespace bbr
                                relay2.RelayFinished += (s, a) => tearDown();
                            }
 
-                           if (!string.IsNullOrEmpty(o.UdpSendTo))
+                           if (!string.IsNullOrEmpty(o.UdpSendFrom) && !string.IsNullOrEmpty(o.UdpSendTo))
                            {
                                var sendFromEndpointTokens = o.UdpSendFrom.Split(new[] { "://", ":" }, StringSplitOptions.None);
                                var sendFromEndpoint = new IPEndPoint(IPAddress.Parse(sendFromEndpointTokens[0]), int.Parse(sendFromEndpointTokens[1]));
@@ -130,7 +137,7 @@ namespace bbr
                                var udpClient = new UdpClient();
                                udpClient.Client.Bind(sendFromEndpoint);
 
-                               var udpStream = new UdpStream(udpClient, sendToEndpoint, sendToEndpoint);
+                               var udpStream = new UdpStream(udpClient, sendToEndpoint);
 
                                Program.Log($"Will send data to {o.UdpSendTo} from {o.UdpListenTo}");
 

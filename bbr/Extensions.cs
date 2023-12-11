@@ -42,7 +42,7 @@ namespace bbr
         //Never trust buffer.Length
         public static readonly ArrayPool<byte> BufferPool = ArrayPool<byte>.Create(ARBITARY_MEDIUM_SIZE_BUFFER + 1, 50);
 
-        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource cancellationTokenSource)
+        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource)
         {
             var buffer = BufferPool.Rent(bufferSize);
 
@@ -75,40 +75,46 @@ namespace bbr
         static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = new();
         public static string Name(this Stream stream, bool readFrom)
         {
-            if (!StreamNames.ContainsKey(stream))
+            try
             {
-                if (stream is UdpStream udpStream)
+                if (!StreamNames.ContainsKey(stream))
                 {
-                    StreamNames.Add(
-                            stream,
-                            ($"{udpStream.SendTo} -> {udpStream.Client.Client.LocalEndPoint}",
-                            $"{udpStream.Client.Client.LocalEndPoint} -> {udpStream.SendTo}"));
+                    if (stream is UdpStream udpStream)
+                    {
+                        StreamNames.Add(
+                                stream,
+                                ($"{udpStream.SendTo} -> {udpStream.Client.Client.LocalEndPoint}",
+                                $"{udpStream.Client.Client.LocalEndPoint} -> {udpStream.SendTo}"));
+                    }
+
+                    if (stream is NetworkStream networkStream)
+                    {
+                        StreamNames.Add(
+                                stream,
+                                ($"{networkStream.Socket.RemoteEndPoint} -> {networkStream.Socket.LocalEndPoint}",
+                                 $"{networkStream.Socket.LocalEndPoint} -> {networkStream.Socket.RemoteEndPoint}"));
+                    }
+
+
+                    if (stream is SharedFileStream sharedFileStream)
+                    {
+                        StreamNames.Add(
+                                stream,
+                                (Path.GetFileName(sharedFileStream.SharedFileManager.ReadFromFilename),
+                                 Path.GetFileName(sharedFileStream.SharedFileManager.WriteToFilename)));
+                    }
                 }
 
-                if (stream is NetworkStream networkStream)
-                {
-                    StreamNames.Add(
-                            stream,
-                            ($"{networkStream.Socket.RemoteEndPoint} -> {networkStream.Socket.LocalEndPoint}",
-                             $"{networkStream.Socket.LocalEndPoint} -> {networkStream.Socket.RemoteEndPoint}"));
-                }
+                var (ReadString, WriteString) = StreamNames[stream];
 
+                var streamName = readFrom ? ReadString : WriteString;
 
-                if (stream is SharedFileStream sharedFileStream)
-                {
-                    StreamNames.Add(
-                            stream,
-                            (Path.GetFileName(sharedFileStream.SharedFileManager.ReadFromFilename),
-                             Path.GetFileName(sharedFileStream.SharedFileManager.WriteToFilename)));
-                }
-
+                return streamName;
             }
-
-            var (ReadString, WriteString) = StreamNames[stream];
-
-            var streamName = readFrom ? ReadString : WriteString;
-
-            return streamName;
+            catch (Exception)
+            {
+                return "Unknown stream";
+            }
         }
     }
 }

@@ -12,8 +12,8 @@ namespace bbr.Listeners
 {
     public class UdpServer : StreamEstablisher
     {
-        UdpClient listener;
-        Task listenerTask;
+        readonly UdpClient listener;
+        readonly Task listenerTask;
 
         public UdpServer(string listenEndpointStr)
         {
