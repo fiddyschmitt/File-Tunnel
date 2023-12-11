@@ -14,7 +14,7 @@ namespace bbr.Commands
         public override int CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }
-        public byte[] Payload { get; protected set; }
+        public byte[]? Payload { get; protected set; }
 
         public Forward() { }
 
@@ -27,8 +27,12 @@ namespace bbr.Commands
         protected override void Serialize(BinaryWriter writer)
         {
             writer.Write(ConnectionId);
-            writer.Write(Payload.Length);
-            writer.Write(Payload);
+            writer.Write(Payload?.Length ?? 0);
+
+            if (Payload != null)
+            {
+                writer.Write(Payload);
+            }
         }
 
         protected override void Deserialize(BinaryReader reader)

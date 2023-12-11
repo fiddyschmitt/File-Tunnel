@@ -2,7 +2,7 @@
   "profiles": {
     "bbr": {
       "commandName": "Project",
-      "commandLineArgs": "--tcp-listen 127.0.0.1:5001 --write \"\\\\192.168.1.31\\e\\Temp\\bb\\1.dat\" --read \"\\\\192.168.1.31\\e\\Temp\\bb\\2.dat\""
+      "commandLineArgs": "--tcp-listen 127.0.0.1:5000 --write E:\\Temp\\g-rdp-1.dat --read E:\\Temp\\g-rdp-2.dat"
     }
   }
 }
