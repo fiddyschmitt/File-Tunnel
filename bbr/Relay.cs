@@ -9,7 +9,7 @@ namespace bbr
 {
     public class Relay
     {
-        public EventHandler RelayFinished;
+        public EventHandler? RelayFinished;
         bool Stopped = false;
 
         public Relay(Stream fromStream, Stream toStream)
@@ -18,9 +18,12 @@ namespace bbr
             {
                 try
                 {
-                    Extensions.CopyTo(fromStream, toStream, 131072, (bytesRead) =>
+                    Extensions.CopyTo(fromStream, toStream, 131072, bytesRead =>
                     {
-                        Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
+                        if (bytesRead > 0)
+                        {
+                            Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
+                        }
                     }, null);
                 }
                 catch (Exception ex)
@@ -31,7 +34,7 @@ namespace bbr
                     }
                 }
 
-                RelayFinished?.Invoke(this, null);
+                RelayFinished?.Invoke(this, new EventArgs());
             });
             FromStream = fromStream;
             ToStream = toStream;
