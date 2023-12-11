@@ -58,7 +58,6 @@ namespace bbr
 
                 if (read == 0)
                 {
-                    Program.Log("Nothing left to read");
                     break;
                 }
 
