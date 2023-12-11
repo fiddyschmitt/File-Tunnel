@@ -48,7 +48,7 @@ namespace bbrelay.Utilities
             while (!IOUtils.FileExists(filename))
             {
                 Program.Log($"Waiting for file to be created: {filename}");
-                Thread.Sleep(10);
+                Thread.Sleep(1000);
             }
 
             var streamReader = new StreamReader(filename, new FileStreamOptions()
@@ -64,7 +64,7 @@ namespace bbrelay.Utilities
 
                 if (string.IsNullOrEmpty(lineLengthStr))
                 {
-                    //Thread.Sleep(10);
+                    Delay.Wait(1);
                     continue;
                 }
 
