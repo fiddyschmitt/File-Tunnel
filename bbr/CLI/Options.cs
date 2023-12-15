@@ -24,7 +24,7 @@ namespace bbr.CLI
         [Option("udp-send-to", Required = false, HelpText = "Forwards data to a UDP endpoint. Example --udp-send-to 192.168.1.50:12000")]
         public string? UdpSendTo { get; set; }
 
-        [Option("udp-send-from", Required = false, HelpText = "A local address which UDP data will be sent from. Example --uudp-send-from 192.168.1.1:11000")]
+        [Option("udp-send-from", Required = false, HelpText = "A local address which UDP data will be sent from. Example --udp-send-from 192.168.1.1:11000")]
         public string? UdpSendFrom { get; set; }
 
 
