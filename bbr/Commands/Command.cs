@@ -24,7 +24,9 @@ namespace bbr.Commands
         public void Serialise(BinaryWriter writer)
         {
             writer.Write(CommandId);
-            writer.Write(SentPacketCount++);
+
+            PacketNumber = SentPacketCount++;
+            writer.Write(PacketNumber);
 
             Serialize(writer);
         }
