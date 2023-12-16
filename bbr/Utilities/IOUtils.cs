@@ -12,40 +12,11 @@ namespace bbrelay.Utilities
         [DllImport("Shlwapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private extern static bool PathFileExists(StringBuilder path);
 
-        /*
-        public static bool FileExists(string filename)
-        {
-            // A StringBuilder is required for interops calls that use strings
-            var builder = new StringBuilder();
-            builder.Append(filename);
-            bool exists = PathFileExists(builder);
-            return exists;
-        }
-        */
-
-        /*
-        public static bool FileExists(string filename, int timeoutMillis = 100)
-        {
-            var task = new Task<bool>(() =>
-            {
-                var fi = new FileInfo(filename);
-                return fi.Exists;
-            });
-            task.Start();
-            return task.Wait(timeoutMillis) && task.Result;
-        }
-        */
-
-        public static bool FileExists(string filename)
-        {
-            return File.Exists(filename);
-        }
-
         public static IEnumerable<string> Tail(string filename)
         {
             File.Delete(filename);
 
-            while (!IOUtils.FileExists(filename))
+            while (!File.Exists(filename))
             {
                 Program.Log($"Waiting for file to be created: {filename}");
                 Thread.Sleep(1000);
