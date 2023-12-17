@@ -1,6 +1,8 @@
 ﻿using bbr;
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -11,6 +13,27 @@ namespace bbrelay.Utilities
     {
         [DllImport("Shlwapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private extern static bool PathFileExists(StringBuilder path);
+
+        public static bool FileIsBlank(string path)
+        {
+            // bufferSize == 1 used to avoid unnecessary buffer in FileStream
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1, FileOptions.SequentialScan);
+            long fileLength = 0;
+
+            int index = 0;
+            int count = (int)fileLength;
+            byte[] bytes = new byte[count];
+            while (count > 0)
+            {
+                int n = fs.Read(bytes, index, count);
+
+                index += n;
+                count -= n;
+            }
+
+            var result = bytes.All(b => b == 0);
+            return result;
+        }
 
         public static IEnumerable<string> Tail(string filename)
         {
@@ -91,6 +114,24 @@ namespace bbrelay.Utilities
                     yield return line;
                 }
             }
+        }
+
+        public static void TruncateFile(string readFromFilename)
+        {
+            var attempt = 1;
+            do
+            {
+                Program.Log($"Truncating file, attempt {attempt++:N0}: {readFromFilename}");
+                using var fs = new FileStream(readFromFilename, new FileStreamOptions()
+                {
+                    Mode = FileMode.Open,
+                    Access = FileAccess.ReadWrite,
+                    Share = FileShare.ReadWrite | FileShare.Delete
+                });
+                fs.SetLength(0);
+
+                //for some reason, it sometimes takes more than one go
+            } while (new FileInfo(readFromFilename).Length > 0 || !IOUtils.FileIsBlank(readFromFilename));
         }
     }
 }

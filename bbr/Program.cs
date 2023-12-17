@@ -1,6 +1,7 @@
 ﻿using bbr.CLI;
 using bbr.Listeners;
 using bbr.Streams;
+using bbrelay.Utilities;
 using CommandLine;
 using System;
 using System.Collections.Generic;
@@ -163,9 +164,20 @@ namespace bbr
             }
         }
 
-        public static void Log(string str)
+        static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;
+
+        public static void Log(string str, ConsoleColor? color = null)
         {
+            // Change color if specified
+            if (color.HasValue)
+            {
+                Console.ForegroundColor = color.Value;
+            }
+
             Console.WriteLine($"{DateTime.Now}: {str}");
+
+            // Reset to original color
+            Console.ForegroundColor = OriginalConsoleColour;
         }
     }
 }

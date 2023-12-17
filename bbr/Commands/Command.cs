@@ -31,22 +31,25 @@ namespace bbr.Commands
             Serialize(writer);
         }
 
-        public static Command Deserialise(BinaryReader reader)
+        public static Command? Deserialise(BinaryReader reader)
         {
             var commandId = reader.ReadInt32();
 
-            Command result = commandId switch
+            Command? result = commandId switch
             {
                 Connect.COMMAND_ID => new Connect(),
                 Forward.COMMAND_ID => new Forward(),
                 Purge.COMMAND_ID => new Purge(),
                 TearDown.COMMAND_ID => new TearDown(),
-                _ => throw new NotImplementedException()
+                _ => null
             };
 
-            result.PacketNumber = reader.ReadUInt64();
+            if (result != null)
+            {
+                result.PacketNumber = reader.ReadUInt64();
+                result.Deserialize(reader);
+            }
 
-            result.Deserialize(reader);
             return result;
         }
     }

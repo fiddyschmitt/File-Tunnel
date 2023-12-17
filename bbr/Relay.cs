@@ -18,7 +18,7 @@ namespace bbr
             {
                 try
                 {
-                    Extensions.CopyTo(fromStream, toStream, 131072, bytesRead =>
+                    Extensions.CopyTo(fromStream, toStream, 131000, bytesRead =>
                     {
                         if (bytesRead > 0)
                         {

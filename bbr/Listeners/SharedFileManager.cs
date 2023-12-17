@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Net.Mail;
 using System.Text;
@@ -24,37 +25,9 @@ namespace bbr.Streams
             ReadFromFilename = readFromFilename;
             WriteToFilename = writeToFilename;
 
-            if (!string.IsNullOrEmpty(readFromFilename))
-            {
-                Task.Factory.StartNew(() =>
-                {
-                    try
-                    {
-                        ReceivePump();
-                    }
-                    catch (Exception ex)
-                    {
-                        Program.Log($"ReceivePump: {ex}");
-                        Environment.Exit(1);
-                    }
-                });
-            }
+            Task.Factory.StartNew(ReceivePump);
 
-            if (!string.IsNullOrEmpty(writeToFilename))
-            {
-                Task.Factory.StartNew(() =>
-                {
-                    try
-                    {
-                        SendPump();
-                    }
-                    catch (Exception ex)
-                    {
-                        Program.Log($"SendPump: {ex}");
-                        Environment.Exit(1);
-                    }
-                });
-            }
+            Task.Factory.StartNew(SendPump);
         }
 
         public byte[]? Read(int connectionId)
@@ -81,6 +54,7 @@ namespace bbr.Streams
 
             return result;
         }
+
         public void Connect(int connectionId)
         {
             var connectCommand = new Connect(connectionId);
@@ -103,170 +77,279 @@ namespace bbr.Streams
 
         public void SendPump()
         {
-            FileStream? fileStream = null;
-            BinaryWriter? writer = null;
-
-            while (!cancellationTokenSource.IsCancellationRequested)
+            try
             {
-                try
+                FileStream? fileStream = null;
+                BinaryWriter? writer = null;
+
+                var firstStream = true;
+                var fileAlreadyExisted = File.Exists(WriteToFilename);
+                if (!fileAlreadyExisted)
                 {
-                    foreach (var toSend in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
+                    using var fs = File.Create(WriteToFilename);
+                    Program.Log($"Created: {WriteToFilename}");
+                }
+
+                while (!cancellationTokenSource.IsCancellationRequested)
+                {
+                    try
                     {
-                        //FileOptions.DeleteOnClose causes access issues, and FileOptions.WriteThrough causes significant slowdown
-                        fileStream ??= new FileStream(WriteToFilename, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-                        writer ??= new BinaryWriter(fileStream);
-
-                        toSend.Serialise(writer);
-                        writer.Flush();
-
-                        if (fileStream.Length > PURGE_SIZE_BYTES && toSend is Forward forward)
+                        foreach (var toSend in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                         {
-                            //tell the other side to purge the file
-                            var purgeCommand = new Purge(forward.ConnectionId);
-                            purgeCommand.Serialise(writer);
-                            writer.Flush();
-
-                            //wait until the receiver has processed this message (signified by the file being truncated)
-
-                            while (true)
+                            //FileOptions.DeleteOnClose causes access issues, and FileOptions.WriteThrough causes significant slowdown
+                            if (fileStream == null)
                             {
-                                Program.Log($"Waiting for file to be purged: {WriteToFilename}");
+                                fileStream = new FileStream(WriteToFilename, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
 
-                                try
+                                if (fileAlreadyExisted && firstStream)
                                 {
-                                    if (fileStream.Length == 0)
-                                    {
-                                        break;
-                                    }
-
-                                    Delay.Wait(1);
-                                }
-                                catch (Exception ex)
-                                {
-                                    Program.Log($"Waiting for file to be purged: {ex}");
-                                    break;
+                                    fileStream.Seek(0, SeekOrigin.End);
+                                    Program.Log($"Write file existed, so seeked to {fileStream.Position:N0} in {WriteToFilename}");
+                                    firstStream = false;
                                 }
                             }
 
-                            fileStream.Position = 0;
+                            writer ??= new BinaryWriter(fileStream, Encoding.UTF8, true);
 
-                            //fileStream.Close();
-                            //writer.Close();
+                            toSend.Serialise(writer);
+                            writer.Flush();
 
-                            Program.Log($"File purge is complete: {WriteToFilename}");
+                            if (toSend is Forward forwardCommand)
+                            {
+                                Program.Log($"[Sent packet {forwardCommand.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{forwardCommand.GetType().Name}] [{forwardCommand.Payload?.Length ?? 0:N0} bytes]");
+                            }
+
+                            if (fileStream.Length > PURGE_SIZE_BYTES && toSend is Forward forward)
+                            {
+                                //tell the other side to purge the file
+                                var purgeCommand = new Purge(forward.ConnectionId);
+                                purgeCommand.Serialise(writer);
+                                writer.Flush();
+
+                                writer.Close();
+                                writer = null;
+
+                                //wait until the receiver has processed this message (signified by the file being truncated)
+
+                                while (true)
+                                {
+                                    Program.Log($"Waiting for file to be purged: {WriteToFilename}");
+
+                                    try
+                                    {
+                                        if (fileStream.Length == 0)
+                                        {
+                                            break;
+                                        }
+
+                                        Delay.Wait(1);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Program.Log($"Waiting for file to be purged: {ex}");
+                                        break;
+                                    }
+                                }
+
+                                fileStream.Position = 0;
+
+                                Program.Log($"File purge is complete: {WriteToFilename}");
+                            }
                         }
                     }
-                }
-                catch (OperationCanceledException)
-                {
+                    catch (OperationCanceledException)
+                    {
 
-                }
-                catch (Exception ex)
-                {
-                    Program.Log($"CopyTo: {ex}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Program.Log($"CopyTo: {ex}");
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                Program.Log(ex.ToString());
+                Environment.Exit(1);
+            }
         }
+
+        public ulong TotalBytesReceived = 0;
+        public DateTime started = DateTime.Now;
 
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
         {
-            File.Delete(ReadFromFilename);
-
-            while (!IOUtils.FileExists(ReadFromFilename))
+            try
             {
-                Program.Log($"Waiting for file to be created: {ReadFromFilename}");
-                Thread.Sleep(1000);
-            }
+                FileStream? fileStream = null;
+                BinaryReader? binaryReader = null;
 
-            FileStream? fileStream = null;
-            BinaryReader? binaryReader = null;
-
-            while (true)
-            {
-                fileStream ??= new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
-                binaryReader ??= new BinaryReader(fileStream);
-
-                /*
-                //This is slower than PeekChar
-                while (fileStream.Position == fileStream.Length)
+                var firstStream = true;
+                var fileAlreadyExisted = File.Exists(ReadFromFilename);
+                if (!fileAlreadyExisted)
                 {
-
-                }
-                */
-
-                while (binaryReader.PeekChar() == -1)
-                {
-                    Delay.Wait(1);  //avoids a tight loop
+                    using var fs = File.Create(ReadFromFilename);
+                    Program.Log($"Created: {ReadFromFilename}");
                 }
 
-                var command = Command.Deserialise(binaryReader);
-
-                Program.Log($"[Packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
-
-                if (command is Forward forward)
+                while (true)
                 {
-                    if (!ReceiveQueue.ContainsKey(forward.ConnectionId))
+                    if (fileStream == null)
                     {
-                        ReceiveQueue.Add(forward.ConnectionId, new BlockingCollection<byte[]>());
+                        fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+
+                        if (fileAlreadyExisted && firstStream)
+                        {
+                            fileStream.Seek(0, SeekOrigin.End);
+                            Program.Log($"Read file existed, so seeked to {fileStream.Position:N0} in {ReadFromFilename}");
+                            firstStream = false;
+                        }
                     }
 
-                    var connectionReceiveQueue = ReceiveQueue[forward.ConnectionId];
-                    if (forward.Payload != null)
-                    {
-                        connectionReceiveQueue.Add(forward.Payload);
-                    }
-                }
-                else if (command is Connect connect)
-                {
-                    if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
-                    {
-                        ReceiveQueue.Add(connect.ConnectionId, new BlockingCollection<byte[]>());
-
-                        var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                        StreamEstablished?.Invoke(this, sharedFileStream);
-                    }
-                }
-                else if (command is Purge purge)
-                {
-                    Program.Log($"Was asked to purge connection {purge.ConnectionId} {ReadFromFilename}");
-
-                    //let's truncate the file, so that it doesn't get too big and to signify to the other side that we've processed it.
-                    //FPS 30/11/2023: Occasionally, this doesn't seem to clear the file
+                    binaryReader ??= new BinaryReader(fileStream);
 
                     /*
-                    fileStream.Position = 0;
-                    fileStream.SetLength(0);
-                    fileStream.Flush(true);
+                    //This is slower than PeekChar
+                    while (fileStream.Position == fileStream.Length)
+                    {
+
+                    }
                     */
 
-                    binaryReader.Close();
-                    fileStream.Close();
-
-                    binaryReader = null;
-                    fileStream = null;
-
-                    using (var fs = new FileStream(ReadFromFilename, new FileStreamOptions()
+                    while (binaryReader.PeekChar() == -1)
                     {
-                        Mode = FileMode.Open,
-                        Access = FileAccess.ReadWrite,
-                        Share = FileShare.ReadWrite | FileShare.Delete
-                    }))
-                    {
-                        fs.SetLength(0);
+                        Delay.Wait(1);  //avoids a tight loop
                     }
 
-                    Program.Log($"Purge complete: {ReadFromFilename}");
-                }
-                else if (command is TearDown teardown && ReceiveQueue.ContainsKey(teardown.ConnectionId))
-                {
-                    Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
-                    var connectionReceiveQueue = ReceiveQueue[teardown.ConnectionId];
+                    var posBeforeCommand = fileStream.Position;
 
-                    ReceiveQueue.Remove(teardown.ConnectionId);
+                    var command = Command.Deserialise(binaryReader);
 
-                    connectionReceiveQueue.CompleteAdding();
+                    if (command == null)
+                    {
+                        /*
+                        if (IOUtils.FileIsBlank(ReadFromFilename))
+                        {
+                            Program.Log($"Could not read command. File has not content.", ConsoleColor.Red);
+
+
+                            binaryReader.Close();
+                            fileStream.Close();
+
+                            binaryReader = null;
+                            fileStream = null;
+
+                            IOUtils.TruncateFile(ReadFromFilename);
+
+                            continue;
+                        }
+                        */
+
+                        Program.Log($"Could not read command at file position {posBeforeCommand:N0}. Attempting recovery.", ConsoleColor.Red);
+
+                        while (binaryReader.ReadByte() == 0)
+                        {
+                            Program.Log($"Seeked to file position {fileStream.Position:N0}.", ConsoleColor.Red);
+                        }
+
+                        fileStream.Position -= 1;
+                        Program.Log($"Content found. Seeking to file position {fileStream.Position:N0}.", ConsoleColor.Red);
+
+                        var recoveredCommand = binaryReader.ReadInt32();
+                        Program.Log($"Recovered command is {recoveredCommand}.", ConsoleColor.Red);
+                        fileStream.Position -= sizeof(int);
+
+                        command = Command.Deserialise(binaryReader);
+
+                        if (command == null)
+                        {
+                            throw new Exception("Could not recover. Command is still unknown.");
+                        }
+                    }
+
+                    Program.Log($"[Received packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
+
+                    if (command is Forward forward)
+                    {
+                        TotalBytesReceived += (ulong)(forward.Payload?.Length ?? 0);
+
+                        var rate = TotalBytesReceived * 8 / (double)(DateTime.Now - started).TotalSeconds;
+
+                        var ordinals = new[] { "", "K", "M", "G", "T", "P", "E" };
+                        var ordinal = 0;
+                        while (rate > 1024)
+                        {
+                            rate /= 1024;
+                            ordinal++;
+                        }
+                        var bw = Math.Round(rate, 2, MidpointRounding.AwayFromZero);
+                        var bwStr = $"{bw} {ordinals[ordinal]}b/s";
+
+                        Program.Log($"[Received packet {forward.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{forward.GetType().Name}] [{forward.Payload?.Length ?? 0:N0} bytes] [{bwStr}]");
+
+
+
+
+                        if (!ReceiveQueue.ContainsKey(forward.ConnectionId))
+                        {
+                            ReceiveQueue.Add(forward.ConnectionId, new BlockingCollection<byte[]>());
+                        }
+
+                        var connectionReceiveQueue = ReceiveQueue[forward.ConnectionId];
+                        if (forward.Payload != null)
+                        {
+                            connectionReceiveQueue.Add(forward.Payload);
+                        }
+                    }
+                    else if (command is Connect connect)
+                    {
+                        if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
+                        {
+                            ReceiveQueue.Add(connect.ConnectionId, new BlockingCollection<byte[]>());
+
+                            var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
+                            StreamEstablished?.Invoke(this, sharedFileStream);
+                        }
+                    }
+                    else if (command is Purge purge)
+                    {
+                        Program.Log($"Was asked to purge connection {purge.ConnectionId} {ReadFromFilename}");
+
+                        //let's truncate the file, so that it doesn't get too big and to signify to the other side that we've processed it.
+                        //FPS 30/11/2023: Occasionally, this doesn't seem to clear the file
+
+                        /*
+                        fileStream.Position = 0;
+                        fileStream.SetLength(0);
+                        fileStream.Flush(true);
+                        */
+
+                        binaryReader.Close();
+                        fileStream.Close();
+
+                        binaryReader = null;
+                        fileStream = null;
+
+                        IOUtils.TruncateFile(ReadFromFilename);
+
+                        Program.Log($"Purge complete: {ReadFromFilename}");
+                    }
+                    else if (command is TearDown teardown && ReceiveQueue.ContainsKey(teardown.ConnectionId))
+                    {
+                        Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
+                        var connectionReceiveQueue = ReceiveQueue[teardown.ConnectionId];
+
+                        ReceiveQueue.Remove(teardown.ConnectionId);
+
+                        connectionReceiveQueue.CompleteAdding();
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Program.Log(ex.ToString());
+                Environment.Exit(1);
             }
         }
 
