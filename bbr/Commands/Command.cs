@@ -14,7 +14,7 @@ namespace bbr.Commands
 
         }
 
-        public abstract int CommandId { get; }
+        public abstract byte CommandId { get; }
         public static ulong SentPacketCount { get; set; }
         public ulong PacketNumber { get; set; }
 
@@ -33,7 +33,7 @@ namespace bbr.Commands
 
         public static Command? Deserialise(BinaryReader reader)
         {
-            var commandId = reader.ReadInt32();
+            var commandId = reader.ReadByte();
 
             Command? result = commandId switch
             {

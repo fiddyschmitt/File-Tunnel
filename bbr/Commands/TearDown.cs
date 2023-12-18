@@ -9,8 +9,8 @@ namespace bbr.Commands
 {
     public class TearDown : Command
     {
-        public const int COMMAND_ID = 4;
-        public override int CommandId => COMMAND_ID;
+        public const byte COMMAND_ID = 4;
+        public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }
 

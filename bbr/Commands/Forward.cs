@@ -10,8 +10,8 @@ namespace bbr.Commands
 {
     public class Forward : Command
     {
-        public const int COMMAND_ID = 2;
-        public override int CommandId => COMMAND_ID;
+        public const byte COMMAND_ID = 2;
+        public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }
         public byte[]? Payload { get; protected set; }
