@@ -230,44 +230,8 @@ namespace bbr.Streams
 
                     if (command == null)
                     {
-                        /*
-                        if (IOUtils.FileIsBlank(ReadFromFilename))
-                        {
-                            Program.Log($"Could not read command. File has not content.", ConsoleColor.Red);
-
-
-                            binaryReader.Close();
-                            fileStream.Close();
-
-                            binaryReader = null;
-                            fileStream = null;
-
-                            IOUtils.TruncateFile(ReadFromFilename);
-
-                            continue;
-                        }
-                        */
-
-                        Program.Log($"Could not read command at file position {posBeforeCommand:N0}. Attempting recovery. [{ReadFromFilename}]", ConsoleColor.Red);
-
-                        while (binaryReader.ReadByte() == 0)
-                        {
-                            Program.Log($"Seeked to file position {fileStream.Position:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
-                        }
-
-                        fileStream.Position -= 1;
-                        Program.Log($"Content found. Seeking to file position {fileStream.Position:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
-
-                        var recoveredCommand = binaryReader.ReadByte();
-                        Program.Log($"Recovered command is {recoveredCommand}.", ConsoleColor.Red);
-                        fileStream.Position -= 1;
-
-                        command = Command.Deserialise(binaryReader);
-
-                        if (command == null)
-                        {
-                            throw new Exception("Could not recover. Command is still unknown.");
-                        }
+                        Program.Log($"Could not read command at file position {posBeforeCommand:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
+                        Environment.Exit(1);
                     }
 
                     Program.Log($"[Received packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
