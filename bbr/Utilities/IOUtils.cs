@@ -126,11 +126,10 @@ namespace bbrelay.Utilities
                 Program.Log($"Truncating file, attempt {attempt++:N0}: {filename}");
                 using var fs = new FileStream(filename, new FileStreamOptions()
                 {
-                    Mode = FileMode.Open,
+                    Mode = FileMode.Truncate,
                     Access = FileAccess.ReadWrite,
                     Share = FileShare.ReadWrite | FileShare.Delete
                 });
-                fs.SetLength(0);
 
                 //for some reason, it sometimes takes more than one go
             } while (new FileInfo(filename).Length > 0 || !IOUtils.FileIsBlank(filename));

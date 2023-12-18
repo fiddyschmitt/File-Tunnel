@@ -151,6 +151,8 @@ namespace bbr.Streams
                                     }
                                 }
 
+                                //Thread.Sleep(1000);
+
                                 fileStream.Position = 0;
 
                                 Program.Log($"File purge is complete: {WriteToFilename}");
@@ -256,9 +258,9 @@ namespace bbr.Streams
                         fileStream.Position -= 1;
                         Program.Log($"Content found. Seeking to file position {fileStream.Position:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
 
-                        var recoveredCommand = binaryReader.ReadInt32();
+                        var recoveredCommand = binaryReader.ReadByte();
                         Program.Log($"Recovered command is {recoveredCommand}.", ConsoleColor.Red);
-                        fileStream.Position -= sizeof(int);
+                        fileStream.Position -= 1;
 
                         command = Command.Deserialise(binaryReader);
 
