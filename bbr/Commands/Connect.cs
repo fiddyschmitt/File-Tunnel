@@ -28,7 +28,7 @@ namespace bbr.Commands
 
         protected override void Deserialize(BinaryReader reader)
         {
-            ConnectionId = reader.ReadByte();
+            ConnectionId = reader.ReadInt32();
         }
     }
 }
