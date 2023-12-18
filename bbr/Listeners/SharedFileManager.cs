@@ -129,6 +129,9 @@ namespace bbr.Streams
                                 writer.Close();
                                 writer = null;
 
+                                fileStream.Close();
+                                fileStream = null;
+
                                 //wait until the receiver has processed this message (signified by the file being truncated)
 
                                 while (true)
@@ -137,12 +140,12 @@ namespace bbr.Streams
 
                                     try
                                     {
-                                        if (fileStream.Length == 0)
+                                        if (new FileInfo(WriteToFilename).Length == 0)
                                         {
                                             break;
                                         }
 
-                                        Delay.Wait(1);
+                                        Delay.Wait(10);
                                     }
                                     catch (Exception ex)
                                     {
@@ -152,9 +155,7 @@ namespace bbr.Streams
                                 }
 
                                 //Thread.Sleep(1000);
-
-                                fileStream.Position = 0;
-
+                                
                                 Program.Log($"File purge is complete: {WriteToFilename}");
                             }
                         }
