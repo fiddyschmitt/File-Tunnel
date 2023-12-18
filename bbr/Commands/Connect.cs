@@ -9,7 +9,7 @@ namespace bbr.Commands
 {
     public class Connect : Command
     {
-        public const int COMMAND_ID = 1;
+        public const byte COMMAND_ID = 1;
         public override int CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }
@@ -28,7 +28,7 @@ namespace bbr.Commands
 
         protected override void Deserialize(BinaryReader reader)
         {
-            ConnectionId = reader.ReadInt32();
+            ConnectionId = reader.ReadByte();
         }
     }
 }
