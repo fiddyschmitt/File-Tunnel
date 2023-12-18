@@ -1,7 +1,9 @@
 ﻿using bbr;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -116,13 +118,13 @@ namespace bbrelay.Utilities
             }
         }
 
-        public static void TruncateFile(string readFromFilename)
+        public static void TruncateFile(string filename)
         {
             var attempt = 1;
             do
             {
-                Program.Log($"Truncating file, attempt {attempt++:N0}: {readFromFilename}");
-                using var fs = new FileStream(readFromFilename, new FileStreamOptions()
+                Program.Log($"Truncating file, attempt {attempt++:N0}: {filename}");
+                using var fs = new FileStream(filename, new FileStreamOptions()
                 {
                     Mode = FileMode.Open,
                     Access = FileAccess.ReadWrite,
@@ -131,7 +133,7 @@ namespace bbrelay.Utilities
                 fs.SetLength(0);
 
                 //for some reason, it sometimes takes more than one go
-            } while (new FileInfo(readFromFilename).Length > 0 || !IOUtils.FileIsBlank(readFromFilename));
+            } while (new FileInfo(filename).Length > 0 || !IOUtils.FileIsBlank(filename));
         }
     }
 }

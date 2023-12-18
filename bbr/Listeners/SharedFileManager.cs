@@ -246,15 +246,15 @@ namespace bbr.Streams
                         }
                         */
 
-                        Program.Log($"Could not read command at file position {posBeforeCommand:N0}. Attempting recovery.", ConsoleColor.Red);
+                        Program.Log($"Could not read command at file position {posBeforeCommand:N0}. Attempting recovery. [{ReadFromFilename}]", ConsoleColor.Red);
 
                         while (binaryReader.ReadByte() == 0)
                         {
-                            Program.Log($"Seeked to file position {fileStream.Position:N0}.", ConsoleColor.Red);
+                            Program.Log($"Seeked to file position {fileStream.Position:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
                         }
 
                         fileStream.Position -= 1;
-                        Program.Log($"Content found. Seeking to file position {fileStream.Position:N0}.", ConsoleColor.Red);
+                        Program.Log($"Content found. Seeking to file position {fileStream.Position:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
 
                         var recoveredCommand = binaryReader.ReadInt32();
                         Program.Log($"Recovered command is {recoveredCommand}.", ConsoleColor.Red);
