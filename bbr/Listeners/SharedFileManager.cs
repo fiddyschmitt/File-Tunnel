@@ -132,10 +132,14 @@ namespace bbr.Streams
                                 fileStream.Close();
                                 fileStream = null;
 
+                                /*
+                                //This approachis fast, but occassionally the file is not empty.
+                                
                                 fileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
                                 //wait until the receiver has processed this message (signified by the file being truncated)
 
+                                
                                 while (true)
                                 {
                                     Program.Log($"Waiting for file to be purged: {WriteToFilename}");
@@ -155,8 +159,23 @@ namespace bbr.Streams
                                         break;
                                     }
                                 }
+                                */
 
-                                fileStream = null;
+
+
+                                var fileInfo = new FileInfo(WriteToFilename);
+                                while (true)
+                                {
+                                    Program.Log($"Waiting for file to be purged: {WriteToFilename}");
+
+                                    if (fileInfo.Length == 0)
+                                    {
+                                        Program.Log($"File is now empty: {WriteToFilename}");
+                                        break;
+                                    }
+
+                                    fileInfo.Refresh();
+                                }
 
                                 Program.Log($"File purge is complete: {WriteToFilename}");
                             }
