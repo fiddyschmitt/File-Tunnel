@@ -40,6 +40,7 @@ namespace bbr.Commands
                 Connect.COMMAND_ID => new Connect(),
                 Forward.COMMAND_ID => new Forward(),
                 Purge.COMMAND_ID => new Purge(),
+                PurgeComplete.COMMAND_ID => new PurgeComplete(),
                 TearDown.COMMAND_ID => new TearDown(),
                 _ => null
             };

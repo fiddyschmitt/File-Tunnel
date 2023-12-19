@@ -73,6 +73,8 @@ namespace bbr.Streams
             SendQueue.Add(teardownCommand);
         }
 
+        bool RemotePurgeUnderway = false;
+
         public const long PURGE_SIZE_BYTES = 1 * 1024 * 1024;
 
         public void SendPump()
@@ -121,6 +123,8 @@ namespace bbr.Streams
 
                             if (fileStream.Length > PURGE_SIZE_BYTES && toSend is Forward forward)
                             {
+                                RemotePurgeUnderway = true;
+
                                 //tell the other side to purge the file
                                 var purgeCommand = new Purge(forward.ConnectionId);
                                 purgeCommand.Serialise(writer);
@@ -132,10 +136,8 @@ namespace bbr.Streams
                                 fileStream.Close();
                                 fileStream = null;
 
-
-
                                 //This approach is fast, but occassionally the file is not empty.
-
+                                /*
                                 fileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
                                 //wait until the receiver has processed this message (signified by the file being truncated)
@@ -162,6 +164,7 @@ namespace bbr.Streams
                                     }
                                 }
                                 fileStream = null;
+                                */
 
 
 
@@ -182,6 +185,12 @@ namespace bbr.Streams
                                     Delay.Wait(1);
                                 }
                                 */
+
+                                //todo - change this to something faster using WaitOne() (Semaphore? ManualResetEvent? AutoResetEvent?)
+                                while (RemotePurgeUnderway)
+                                {
+                                    Delay.Wait(1);
+                                }
 
                                 Program.Log($"File purge is complete: {WriteToFilename}");
                             }
@@ -327,7 +336,15 @@ namespace bbr.Streams
 
                         IOUtils.TruncateFile(ReadFromFilename);
 
+                        var purgeComplete = new PurgeComplete();
+                        SendQueue.Add(purgeComplete);
+
+
                         Program.Log($"Purge complete: {ReadFromFilename}");
+                    }
+                    else if (command is PurgeComplete)
+                    {
+                        RemotePurgeUnderway = false;
                     }
                     else if (command is TearDown teardown && ReceiveQueue.ContainsKey(teardown.ConnectionId))
                     {

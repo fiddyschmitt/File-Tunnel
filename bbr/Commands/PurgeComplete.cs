@@ -7,16 +7,16 @@ using System.Threading.Tasks;
 
 namespace bbr.Commands
 {
-    public class TearDown : Command
+    public class PurgeComplete : Command
     {
-        public const byte COMMAND_ID = 5;
+        public const byte COMMAND_ID = 4;
         public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }
 
-        public TearDown() { }
+        public PurgeComplete() { }
 
-        public TearDown(int connectionId)
+        public PurgeComplete(int connectionId)
         {
             ConnectionId = connectionId;
         }
