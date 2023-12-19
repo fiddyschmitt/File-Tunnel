@@ -132,25 +132,27 @@ namespace bbr.Streams
                                 fileStream.Close();
                                 fileStream = null;
 
-                                /*
-                                //This approachis fast, but occassionally the file is not empty.
-                                
+
+
+                                //This approach is fast, but occassionally the file is not empty.
+
                                 fileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
                                 //wait until the receiver has processed this message (signified by the file being truncated)
 
-                                
+                                var fileInfo = new FileInfo(WriteToFilename);
                                 while (true)
                                 {
                                     Program.Log($"Waiting for file to be purged: {WriteToFilename}");
 
                                     try
                                     {
-                                        if (fileStream.Length == 0)
+                                        if (fileStream.Length == 0 && fileInfo.Length == 0)
                                         {
                                             break;
                                         }
 
+                                        fileInfo.Refresh();
                                         Delay.Wait(1);
                                     }
                                     catch (Exception ex)
@@ -159,10 +161,12 @@ namespace bbr.Streams
                                         break;
                                     }
                                 }
-                                */
+                                fileStream = null;
 
 
 
+                                //This approach is slow, but reliable
+                                /*
                                 var fileInfo = new FileInfo(WriteToFilename);
                                 while (true)
                                 {
@@ -175,7 +179,9 @@ namespace bbr.Streams
                                     }
 
                                     fileInfo.Refresh();
+                                    Delay.Wait(1);
                                 }
+                                */
 
                                 Program.Log($"File purge is complete: {WriteToFilename}");
                             }
