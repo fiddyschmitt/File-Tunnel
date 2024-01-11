@@ -120,6 +120,10 @@ namespace bbr.Streams
                             {
                                 Program.Log($"[Sent packet {forwardCommand.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{forwardCommand.GetType().Name}] [{forwardCommand.Payload?.Length ?? 0:N0} bytes]");
                             }
+                            else
+                            {
+                                Program.Log($"[Sent packet {toSend.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{toSend.GetType().Name}]");
+                            }
 
                             if (fileStream.Length > PURGE_SIZE_BYTES && toSend is Forward forward)
                             {
@@ -129,6 +133,8 @@ namespace bbr.Streams
                                 var purgeCommand = new Purge(forward.ConnectionId);
                                 purgeCommand.Serialise(writer);
                                 writer.Flush();
+
+                                Program.Log($"Asked other side to purge: {WriteToFilename}");
 
                                 writer.Close();
                                 writer = null;
@@ -186,10 +192,20 @@ namespace bbr.Streams
                                 }
                                 */
 
+                                var waitStart = DateTime.Now;
                                 //todo - change this to something faster using WaitOne() (Semaphore? ManualResetEvent? AutoResetEvent?)
                                 while (RemotePurgeUnderway)
                                 {
                                     Delay.Wait(1);
+                                    Program.Log($"SendPump() Waiting for other side to purge: {WriteToFilename}");
+
+                                    var waitDuration = DateTime.Now - waitStart;
+                                    if (waitDuration.TotalSeconds > 3)  //todo: Use a better way of detecting deadlock
+                                    {
+                                        //likely both sides are waiting
+                                        RemotePurgeUnderway = false;
+                                        break;
+                                    }
                                 }
 
                                 Program.Log($"File purge is complete: {WriteToFilename}");
@@ -225,8 +241,7 @@ namespace bbr.Streams
                 BinaryReader? binaryReader = null;
 
                 var firstStream = true;
-                var fileAlreadyExisted = File.Exists(ReadFromFilename);
-                if (!fileAlreadyExisted)
+                if (File.Exists(ReadFromFilename))
                 {
                     using var fs = File.Create(ReadFromFilename);
                     Program.Log($"Created: {ReadFromFilename}");
@@ -238,7 +253,7 @@ namespace bbr.Streams
                     {
                         fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
 
-                        if (fileAlreadyExisted && firstStream)
+                        if (firstStream)
                         {
                             fileStream.Seek(0, SeekOrigin.End);
                             Program.Log($"Read file existed, so seeked to {fileStream.Position:N0} in {ReadFromFilename}");
@@ -247,14 +262,6 @@ namespace bbr.Streams
                     }
 
                     binaryReader ??= new BinaryReader(fileStream);
-
-                    /*
-                    //This is slower than PeekChar
-                    while (fileStream.Position == fileStream.Length)
-                    {
-
-                    }
-                    */
 
                     while (binaryReader.PeekChar() == -1)
                     {
@@ -271,11 +278,9 @@ namespace bbr.Streams
                         Environment.Exit(1);
                     }
 
-                    Program.Log($"[Received packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
-
-                    if (command is Forward forward)
+                    if (command is Forward fwd)
                     {
-                        TotalBytesReceived += (ulong)(forward.Payload?.Length ?? 0);
+                        TotalBytesReceived += (ulong)(fwd.Payload?.Length ?? 0);
 
                         var rate = TotalBytesReceived * 8 / (double)(DateTime.Now - started).TotalSeconds;
 
@@ -289,11 +294,15 @@ namespace bbr.Streams
                         var bw = Math.Round(rate, 2, MidpointRounding.AwayFromZero);
                         var bwStr = $"{bw} {ordinals[ordinal]}b/s";
 
-                        Program.Log($"[Received packet {forward.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{forward.GetType().Name}] [{forward.Payload?.Length ?? 0:N0} bytes] [{bwStr}]");
+                        Program.Log($"[Received packet {fwd.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{fwd.GetType().Name}] [{fwd.Payload?.Length ?? 0:N0} bytes] [{bwStr}]");
+                    }
+                    else
+                    {
+                        Program.Log($"[Received packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
+                    }
 
-
-
-
+                    if (command is Forward forward)
+                    {
                         if (!ReceiveQueue.ContainsKey(forward.ConnectionId))
                         {
                             ReceiveQueue.Add(forward.ConnectionId, new BlockingCollection<byte[]>());
@@ -319,15 +328,6 @@ namespace bbr.Streams
                     {
                         Program.Log($"Was asked to purge connection {purge.ConnectionId} {ReadFromFilename}");
 
-                        //let's truncate the file, so that it doesn't get too big and to signify to the other side that we've processed it.
-                        //FPS 30/11/2023: Occasionally, this doesn't seem to clear the file
-
-                        /*
-                        fileStream.Position = 0;
-                        fileStream.SetLength(0);
-                        fileStream.Flush(true);
-                        */
-
                         binaryReader.Close();
                         fileStream.Close();
 
@@ -338,12 +338,11 @@ namespace bbr.Streams
 
                         var purgeComplete = new PurgeComplete();
                         SendQueue.Add(purgeComplete);
-
-
-                        Program.Log($"Purge complete: {ReadFromFilename}");
+                        Program.Log($"Informed other side that purge is complete: {ReadFromFilename}");
                     }
                     else if (command is PurgeComplete)
                     {
+                        Program.Log($"Informed by other side that purge is complete: {ReadFromFilename}");
                         RemotePurgeUnderway = false;
                     }
                     else if (command is TearDown teardown && ReceiveQueue.ContainsKey(teardown.ConnectionId))

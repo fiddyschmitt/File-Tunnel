@@ -121,7 +121,9 @@ namespace bbrelay.Utilities
         public static void TruncateFile(string filename)
         {
             var attempt = 1;
-            do
+            var fileInfo = new FileInfo(filename);
+
+            while (true)
             {
                 Program.Log($"Truncating file, attempt {attempt++:N0}: {filename}");
                 using var fs = new FileStream(filename, new FileStreamOptions()
@@ -131,8 +133,17 @@ namespace bbrelay.Utilities
                     Share = FileShare.ReadWrite | FileShare.Delete
                 });
 
-                //for some reason, it sometimes takes more than one go
-            } while (new FileInfo(filename).Length > 0 || !IOUtils.FileIsBlank(filename));
+                if (fileInfo.Length == 0)
+                {
+                    using var br = new BinaryReader(fs);
+                    if (br.PeekChar() == -1)
+                    {
+                        break;
+                    }
+                }
+
+                fileInfo.Refresh();
+            }
         }
     }
 }
