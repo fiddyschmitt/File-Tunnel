@@ -7,7 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace bbr.Streams
+namespace ft.Streams
 {
     public class SharedFileStream : Stream
     {

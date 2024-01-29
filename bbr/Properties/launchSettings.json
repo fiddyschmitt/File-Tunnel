@@ -1,8 +1,8 @@
 {
   "profiles": {
-    "bbr": {
+    "ft": {
       "commandName": "Project",
-      "commandLineArgs": "--tcp-listen 127.0.0.1:5000 --write E:\\Temp\\bb\\g-rdp-1.dat --read E:\\Temp\\bb\\g-rdp-2.dat"
+      "commandLineArgs": "--tcp-listen 127.0.0.1:5000 --write 1.dat --read 2.dat"
     }
   }
 }

@@ -1,6 +1,6 @@
-﻿using bbr.Commands;
-using bbr.Listeners;
-using bbrelay.Utilities;
+﻿using ft.Commands;
+using ft.Listeners;
+using ft.Utilities;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -13,7 +13,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace bbr.Streams
+namespace ft.Streams
 {
     public class SharedFileManager : StreamEstablisher
     {
@@ -38,9 +38,9 @@ namespace bbr.Streams
             }
 
             byte[]? result = null;
-            if (ReceiveQueue.ContainsKey(connectionId))
+            if (ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? value))
             {
-                var queue = ReceiveQueue[connectionId];
+                var queue = value;
 
                 try
                 {
@@ -116,6 +116,7 @@ namespace bbr.Streams
                             toSend.Serialise(writer);
                             writer.Flush();
 
+                            /*
                             if (toSend is Forward forwardCommand)
                             {
                                 Program.Log($"[Sent packet {forwardCommand.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{forwardCommand.GetType().Name}] [{forwardCommand.Payload?.Length ?? 0:N0} bytes]");
@@ -124,6 +125,7 @@ namespace bbr.Streams
                             {
                                 Program.Log($"[Sent packet {toSend.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{toSend.GetType().Name}]");
                             }
+                            */
 
                             if (fileStream.Length > PURGE_SIZE_BYTES && toSend is Forward forward)
                             {
@@ -241,7 +243,7 @@ namespace bbr.Streams
                 BinaryReader? binaryReader = null;
 
                 var firstStream = true;
-                if (File.Exists(ReadFromFilename))
+                if (!File.Exists(ReadFromFilename))
                 {
                     using var fs = File.Create(ReadFromFilename);
                     Program.Log($"Created: {ReadFromFilename}");
@@ -278,6 +280,7 @@ namespace bbr.Streams
                         Environment.Exit(1);
                     }
 
+                    /*
                     if (command is Forward fwd)
                     {
                         TotalBytesReceived += (ulong)(fwd.Payload?.Length ?? 0);
@@ -300,6 +303,7 @@ namespace bbr.Streams
                     {
                         Program.Log($"[Received packet {command.PacketNumber:N0}] [File position {fileStream.Position:N0}] {command.GetType().Name}");
                     }
+                    */
 
                     if (command is Forward forward)
                     {

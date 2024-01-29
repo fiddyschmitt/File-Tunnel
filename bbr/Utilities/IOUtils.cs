@@ -1,4 +1,4 @@
-﻿using bbr;
+﻿using ft;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -9,7 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-namespace bbrelay.Utilities
+namespace ft.Utilities
 {
     public static class IOUtils
     {

@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace bbr.CLI
+namespace ft.CLI
 {
     public class Options
     {

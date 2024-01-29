@@ -1,4 +1,4 @@
-﻿using bbr.Streams;
+﻿using ft.Streams;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
@@ -9,7 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace bbr
+namespace ft
 {
     public static class Extensions
     {

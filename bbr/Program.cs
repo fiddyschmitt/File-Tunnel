@@ -1,7 +1,7 @@
-﻿using bbr.CLI;
-using bbr.Listeners;
-using bbr.Streams;
-using bbrelay.Utilities;
+﻿using ft.CLI;
+using ft.Listeners;
+using ft.Streams;
+using ft.Utilities;
 using CommandLine;
 using System;
 using System.Collections.Generic;
@@ -14,11 +14,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace bbr
+namespace ft
 {
     internal class Program
     {
-        const string PROGRAM_NAME = "BB Relay";
+        const string PROGRAM_NAME = "File Tunnel";
         const string VERSION = "1.1";
 
 

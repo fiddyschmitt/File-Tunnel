@@ -1,4 +1,4 @@
-﻿using bbr.Listeners;
+﻿using ft.Listeners;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -10,7 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace bbr.Streams
+namespace ft.Streams
 {
     public class UdpStream : Stream
     {
