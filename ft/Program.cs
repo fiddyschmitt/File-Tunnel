@@ -13,6 +13,7 @@ using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics.CodeAnalysis;
 
 namespace ft
 {
@@ -24,9 +25,10 @@ namespace ft
 
         static int connectionId = 0;
 
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
         static void Main(string[] args)
         {
-            Program.Log($"{PROGRAM_NAME} {VERSION}");
+            Log($"{PROGRAM_NAME} {VERSION}");
 
             Parser.Default.ParseArguments<Options>(args)
                .WithParsed(o =>
@@ -47,9 +49,9 @@ namespace ft
                        var listenToStr = o.TcpListenTo;
                        if (string.IsNullOrEmpty(listenToStr)) listenToStr = o.UdpListenTo;
 
-                       Program.Log($"Will listen to: {listenToStr}");
-                       Program.Log($"and forward to: {o.WriteTo}");
-                       if (!string.IsNullOrEmpty(o.ReadFrom)) Program.Log($"and read responses from: {o.ReadFrom}");
+                       Log($"Will listen to: {listenToStr}");
+                       Log($"and forward to: {o.WriteTo}");
+                       if (!string.IsNullOrEmpty(o.ReadFrom)) Log($"and read responses from: {o.ReadFrom}");
 
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
@@ -93,16 +95,16 @@ namespace ft
 
                        if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
                        {
-                           Program.Log($"Please specify a (local) sender address to use for sending data, using the --udp-send-from argument.");
+                           Log($"Please specify a (local) sender address to use for sending data, using the --udp-send-from argument.");
                            Environment.Exit(1);
                        }
 
                        var forwardToStr = o.TcpConnectTo;
                        if (string.IsNullOrEmpty(forwardToStr)) forwardToStr = o.UdpSendTo;
 
-                       Program.Log($"Will listen to: {o.ReadFrom}");
-                       Program.Log($"and forward to: {forwardToStr}");
-                       if (!string.IsNullOrEmpty(o.WriteTo)) Program.Log($"and when they respond, will write the response to: {o.WriteTo}");
+                       Log($"Will listen to: {o.ReadFrom}");
+                       Log($"and forward to: {forwardToStr}");
+                       if (!string.IsNullOrEmpty(o.WriteTo)) Log($"and when they respond, will write the response to: {o.WriteTo}");
 
                        sharedFileManager.StreamEstablished += (sender, stream) =>
                        {
@@ -112,7 +114,7 @@ namespace ft
                                var tcpClient = new TcpClient();
                                tcpClient.Connect(endpointTokens[0], int.Parse(endpointTokens[1]));
 
-                               Program.Log($"Connected to {o.TcpConnectTo}");
+                               Log($"Connected to {o.TcpConnectTo}");
 
                                var relay1 = new Relay(tcpClient.GetStream(), stream);
                                var relay2 = new Relay(stream, tcpClient.GetStream());
@@ -140,7 +142,7 @@ namespace ft
 
                                var udpStream = new UdpStream(udpClient, sendToEndpoint);
 
-                               Program.Log($"Will send data to {o.UdpSendTo} from {o.UdpListenTo}");
+                               Log($"Will send data to {o.UdpSendTo} from {o.UdpListenTo}");
 
                                var relay1 = new Relay(udpStream, stream);
                                var relay2 = new Relay(stream, udpStream);
