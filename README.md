@@ -3,6 +3,10 @@
 Tunnel TCP connections through a file.
 
 <br />
+
+## Download
+Releases can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
+
 <br />
 <br />
 
