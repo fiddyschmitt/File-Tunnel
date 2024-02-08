@@ -7,7 +7,7 @@ Tunnel TCP connections through a file.
 ## Download
 Releases can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
 
-Linux and Windows is supported.
+Linux and Windows are supported.
 
 <br />
 <br />
