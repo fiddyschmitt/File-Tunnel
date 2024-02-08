@@ -3,6 +3,10 @@
 Tunnel TCP connections through a file.
 
 <br />
+
+## Download
+Releases can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
+
 <br />
 <br />
 
@@ -22,7 +26,7 @@ Now on Host A, open an RDP client and connect to: ``127.0.0.1:5000``
 <br />
 <br />
 
-## Example 2 - RDP tunnel (similar to SSH tunnel)
+## Example 2 - Tunnel TCP through RDP (similar to SSH tunnel)
 
 You'd like to connect to a remote service, but only have access to Host B using RDP.
 
