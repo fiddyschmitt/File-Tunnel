@@ -10,7 +10,6 @@ Releases can be found over in the [releases](https://github.com/fiddyschmitt/fil
 Linux and Windows are supported.
 
 <br />
-<br />
 
 ## Example 1 - RDP connection
 
