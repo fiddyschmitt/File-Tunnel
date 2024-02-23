@@ -126,23 +126,31 @@ namespace ft.Utilities
             while (true)
             {
                 Program.Log($"Truncating file, attempt {attempt++:N0}: {filename}");
-                using var fs = new FileStream(filename, new FileStreamOptions()
-                {
-                    Mode = FileMode.Truncate,
-                    Access = FileAccess.ReadWrite,
-                    Share = FileShare.ReadWrite | FileShare.Delete
-                });
 
-                if (fileInfo.Length == 0)
+                try
                 {
-                    using var br = new BinaryReader(fs);
-                    if (br.PeekChar() == -1)
+                    using var fs = new FileStream(filename, new FileStreamOptions()
                     {
-                        break;
-                    }
-                }
+                        Mode = FileMode.Create,     //truncate doesn't seem to work over tsclient. It returns: Not enough memory resources are available to process this command
+                        Access = FileAccess.ReadWrite,
+                        Share = FileShare.ReadWrite | FileShare.Delete
+                    });
 
-                fileInfo.Refresh();
+                    if (fileInfo.Length == 0)
+                    {
+                        using var br = new BinaryReader(fs);
+                        if (br.PeekChar() == -1)
+                        {
+                            break;
+                        }
+                    }
+
+                    fileInfo.Refresh();
+                }
+                catch (Exception ex)
+                {
+                    Program.Log($"Unable to purge file {filename}. {ex.Message}");
+                }
             }
         }
     }
