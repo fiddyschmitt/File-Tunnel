@@ -71,7 +71,7 @@ namespace ft
         }
 
 
-        static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = new();
+        static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = [];
         public static string Name(this Stream stream, bool readFrom)
         {
             try

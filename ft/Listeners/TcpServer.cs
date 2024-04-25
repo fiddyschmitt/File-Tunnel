@@ -16,7 +16,7 @@ namespace ft.Listeners
 
         public TcpServer(string endpointStr)
         {
-            var endpointTokens = endpointStr.Split(new[] { "://", ":" }, StringSplitOptions.None);
+            var endpointTokens = endpointStr.Split(["://", ":"], StringSplitOptions.None);
             var listenEndpoint = new IPEndPoint(IPAddress.Parse(endpointTokens[0]), int.Parse(endpointTokens[1]));
 
             listenerTask = Task.Factory.StartNew(() =>

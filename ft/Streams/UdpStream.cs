@@ -59,7 +59,7 @@ namespace ft.Streams
         byte[]? currentData = null;
         int currentDataIndex;
 
-        readonly BlockingCollection<byte[]> toRead = new();
+        readonly BlockingCollection<byte[]> toRead = [];
         public void AddToReadQueue(byte[] data)
         {
             toRead.Add(data);

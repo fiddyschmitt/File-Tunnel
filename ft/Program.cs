@@ -75,11 +75,11 @@ namespace ft
                            var relay1 = new Relay(stream, secondaryStream);
                            var relay2 = new Relay(secondaryStream, stream);
 
-                           var tearDown = () =>
+                           void tearDown()
                            {
                                relay1.Stop();
                                relay2.Stop();
-                           };
+                           }
 
                            relay1.RelayFinished += (s, a) => tearDown();
                            relay2.RelayFinished += (s, a) => tearDown();
@@ -110,7 +110,7 @@ namespace ft
                        {
                            if (!string.IsNullOrEmpty(o.TcpConnectTo))
                            {
-                               var endpointTokens = o.TcpConnectTo.Split(new[] { "://", ":" }, StringSplitOptions.None);
+                               var endpointTokens = o.TcpConnectTo.Split(["://", ":"], StringSplitOptions.None);
                                var tcpClient = new TcpClient();
                                tcpClient.Connect(endpointTokens[0], int.Parse(endpointTokens[1]));
 
@@ -119,11 +119,11 @@ namespace ft
                                var relay1 = new Relay(tcpClient.GetStream(), stream);
                                var relay2 = new Relay(stream, tcpClient.GetStream());
 
-                               var tearDown = () =>
+                               void tearDown()
                                {
                                    relay1.Stop();
                                    relay2.Stop();
-                               };
+                               }
 
                                relay1.RelayFinished += (s, a) => tearDown();
                                relay2.RelayFinished += (s, a) => tearDown();
@@ -131,10 +131,10 @@ namespace ft
 
                            if (!string.IsNullOrEmpty(o.UdpSendFrom) && !string.IsNullOrEmpty(o.UdpSendTo))
                            {
-                               var sendFromEndpointTokens = o.UdpSendFrom.Split(new[] { "://", ":" }, StringSplitOptions.None);
+                               var sendFromEndpointTokens = o.UdpSendFrom.Split(["://", ":"], StringSplitOptions.None);
                                var sendFromEndpoint = new IPEndPoint(IPAddress.Parse(sendFromEndpointTokens[0]), int.Parse(sendFromEndpointTokens[1]));
 
-                               var sendToEndpointTokens = o.UdpSendTo.Split(new[] { "://", ":" }, StringSplitOptions.None);
+                               var sendToEndpointTokens = o.UdpSendTo.Split(["://", ":"], StringSplitOptions.None);
                                var sendToEndpoint = new IPEndPoint(IPAddress.Parse(sendToEndpointTokens[0]), int.Parse(sendToEndpointTokens[1]));
 
                                var udpClient = new UdpClient();
@@ -147,11 +147,11 @@ namespace ft
                                var relay1 = new Relay(udpStream, stream);
                                var relay2 = new Relay(stream, udpStream);
 
-                               var tearDown = () =>
+                               void tearDown()
                                {
                                    relay1.Stop();
                                    relay2.Stop();
-                               };
+                               }
 
                                relay1.RelayFinished += (s, a) => tearDown();
                                relay2.RelayFinished += (s, a) => tearDown();

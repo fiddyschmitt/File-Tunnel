@@ -2,7 +2,7 @@
   "profiles": {
     "ft": {
       "commandName": "Project",
-      "commandLineArgs": "--tcp-listen 127.0.0.1:5000 --write 1.dat --read 2.dat"
+      "commandLineArgs": "--read 1.dat --tcp-connect 127.0.0.1:8080 --write 2.dat"
     }
   }
 }

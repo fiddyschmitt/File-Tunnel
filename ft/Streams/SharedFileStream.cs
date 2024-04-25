@@ -9,14 +9,8 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileStream : Stream
+    public class SharedFileStream(SharedFileManager sharedFileManager, int connectionId) : Stream
     {
-        public SharedFileStream(SharedFileManager sharedFileManager, int connectionId)
-        {
-            SharedFileManager = sharedFileManager;
-            ConnectionId = connectionId;
-        }
-
         public void EstablishConnection()
         {
             SharedFileManager.Connect(ConnectionId);
@@ -31,8 +25,8 @@ namespace ft.Streams
         public override long Length => throw new NotImplementedException();
 
         public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public SharedFileManager SharedFileManager { get; }
-        public int ConnectionId { get; }
+        public SharedFileManager SharedFileManager { get; } = sharedFileManager;
+        public int ConnectionId { get; } = connectionId;
 
         public override void Flush()
         {

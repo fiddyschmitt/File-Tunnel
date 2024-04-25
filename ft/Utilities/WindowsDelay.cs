@@ -30,18 +30,18 @@ namespace System.Threading
     /// Platform Dependent Wait
     /// Accurately wait down to 1ms if your platform will allow it
     /// Wont murder your CPU
-    public static class WindowsDelay
+    public static partial class WindowsDelay
     {
         internal const string windowsMultimediaAPIString = "winmm.dll";
 
-        [DllImport(windowsMultimediaAPIString)]
-        internal static extern int timeBeginPeriod(int period);
+        [LibraryImport(windowsMultimediaAPIString)]
+        internal static partial int timeBeginPeriod(int period);
 
-        [DllImport(windowsMultimediaAPIString)]
-        internal static extern int timeEndPeriod(int period);
+        [LibraryImport(windowsMultimediaAPIString)]
+        internal static partial int timeEndPeriod(int period);
 
-        [DllImport(windowsMultimediaAPIString)]
-        internal static extern int timeGetDevCaps(ref TimerCapabilities caps, int sizeOfTimerCaps);
+        [LibraryImport(windowsMultimediaAPIString)]
+        internal static partial int timeGetDevCaps(ref TimerCapabilities caps, int sizeOfTimerCaps);
 
         internal static TimerCapabilities Capabilities;
 

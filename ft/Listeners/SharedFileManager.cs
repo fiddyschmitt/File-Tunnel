@@ -17,8 +17,8 @@ namespace ft.Streams
 {
     public class SharedFileManager : StreamEstablisher
     {
-        readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = new();
-        readonly BlockingCollection<Command> SendQueue = new();
+        readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
+        readonly BlockingCollection<Command> SendQueue = [];
 
         public SharedFileManager(string readFromFilename, string writeToFilename)
         {
@@ -34,7 +34,7 @@ namespace ft.Streams
         {
             if (!ReceiveQueue.ContainsKey(connectionId))
             {
-                ReceiveQueue.Add(connectionId, new BlockingCollection<byte[]>());
+                ReceiveQueue.Add(connectionId, []);
             }
 
             byte[]? result = null;
@@ -307,12 +307,13 @@ namespace ft.Streams
 
                     if (command is Forward forward)
                     {
-                        if (!ReceiveQueue.ContainsKey(forward.ConnectionId))
+                        if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? value))
                         {
-                            ReceiveQueue.Add(forward.ConnectionId, new BlockingCollection<byte[]>());
+                            value = [];
+                            ReceiveQueue.Add(forward.ConnectionId, value);
                         }
 
-                        var connectionReceiveQueue = ReceiveQueue[forward.ConnectionId];
+                        var connectionReceiveQueue = value;
                         if (forward.Payload != null)
                         {
                             connectionReceiveQueue.Add(forward.Payload);
@@ -322,7 +323,7 @@ namespace ft.Streams
                     {
                         if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
                         {
-                            ReceiveQueue.Add(connect.ConnectionId, new BlockingCollection<byte[]>());
+                            ReceiveQueue.Add(connect.ConnectionId, []);
 
                             var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
                             StreamEstablished?.Invoke(this, sharedFileStream);
@@ -349,10 +350,10 @@ namespace ft.Streams
                         Program.Log($"Informed by other side that purge is complete: {ReadFromFilename}");
                         RemotePurgeUnderway = false;
                     }
-                    else if (command is TearDown teardown && ReceiveQueue.ContainsKey(teardown.ConnectionId))
+                    else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? value))
                     {
                         Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
-                        var connectionReceiveQueue = ReceiveQueue[teardown.ConnectionId];
+                        var connectionReceiveQueue = value;
 
                         ReceiveQueue.Remove(teardown.ConnectionId);
 

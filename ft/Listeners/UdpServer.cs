@@ -17,7 +17,7 @@ namespace ft.Listeners
 
         public UdpServer(string listenEndpointStr)
         {
-            var listenEndpointTokens = listenEndpointStr.Split(new[] { "://", ":" }, StringSplitOptions.None);
+            var listenEndpointTokens = listenEndpointStr.Split(["://", ":" ], StringSplitOptions.None);
             var listenEndpoint = new IPEndPoint(IPAddress.Parse(listenEndpointTokens[0]), int.Parse(listenEndpointTokens[1]));
 
             listener = new UdpClient(listenEndpoint);
@@ -34,15 +34,16 @@ namespace ft.Listeners
 
                         var data = listener.Receive(ref remoteIpEndPoint);
 
-                        if (!connections.ContainsKey(remoteIpEndPoint))
+                        if (!connections.TryGetValue(remoteIpEndPoint, out UdpStream? value))
                         {
                             var newUdpStream = new UdpStream(listener, remoteIpEndPoint);
-                            connections.Add(remoteIpEndPoint, newUdpStream);
+                            value = newUdpStream;
+                            connections.Add(remoteIpEndPoint, value);
 
                             StreamEstablished?.Invoke(this, newUdpStream);
                         }
 
-                        var udpStream = connections[remoteIpEndPoint];
+                        var udpStream = value;
                         udpStream.AddToReadQueue(data);
                     }
                 }
