@@ -307,13 +307,12 @@ namespace ft.Streams
 
                     if (command is Forward forward)
                     {
-                        if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? value))
+                        if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                         {
-                            value = [];
-                            ReceiveQueue.Add(forward.ConnectionId, value);
+                            connectionReceiveQueue = [];
+                            ReceiveQueue.Add(forward.ConnectionId, connectionReceiveQueue);
                         }
 
-                        var connectionReceiveQueue = value;
                         if (forward.Payload != null)
                         {
                             connectionReceiveQueue.Add(forward.Payload);
