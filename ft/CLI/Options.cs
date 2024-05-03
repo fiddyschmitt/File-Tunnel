@@ -36,8 +36,8 @@ namespace ft.CLI
         public string? ReadFrom { get; set; }
 
 
-        [Option('p', "purge-size-in-kb", Required = false, HelpText = @"The size (in KB) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
-        public long PurgeSizeInKB { get; set; } = 1024 * 1024;
+        [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
+        public long PurgeSizeInBytes { get; set; } = 1024 * 1024;
 
 
         [Option('v', "version", Required = false, HelpText = "Print the version and exit.")]
