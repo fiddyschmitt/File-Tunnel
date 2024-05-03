@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "ft": {
-      "commandName": "Project",
-      "commandLineArgs": "--read 1.dat --tcp-connect 127.0.0.1:8080 --write 2.dat"
-    }
-  }
-}
