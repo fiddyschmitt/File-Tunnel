@@ -17,16 +17,16 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace ft
 {
-    internal class Program
+    public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "1.0.3";
+        const string VERSION = "1.0.4";
 
 
         static int connectionId = 0;
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
-        static void Main(string[] args)
+        public static void Main(string[] args)
         {
             Log($"{PROGRAM_NAME} {VERSION}");
 
@@ -162,7 +162,14 @@ namespace ft
 
             while (true)
             {
-                Thread.Sleep(1000);
+                try
+                {
+                    Thread.Sleep(1000);
+                }
+                catch
+                {
+                    break;
+                }
             }
         }
 
