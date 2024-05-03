@@ -20,13 +20,13 @@ namespace ft.Streams
         readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = [];
 
-        public SharedFileManager(string readFromFilename, string writeToFilename)
+        public SharedFileManager(string readFromFilename, string writeToFilename, long purgeSizeInKB)
         {
             ReadFromFilename = readFromFilename;
             WriteToFilename = writeToFilename;
+            PurgeSizeInKB = purgeSizeInKB;
 
             Task.Factory.StartNew(ReceivePump);
-
             Task.Factory.StartNew(SendPump);
         }
 
@@ -74,8 +74,6 @@ namespace ft.Streams
         }
 
         bool RemotePurgeUnderway = false;
-
-        public const long PURGE_SIZE_BYTES = 1 * 1024 * 1024;
 
         public void SendPump()
         {
@@ -127,7 +125,7 @@ namespace ft.Streams
                             }
                             */
 
-                            if (fileStream.Length > PURGE_SIZE_BYTES && toSend is Forward forward)
+                            if (PurgeSizeInKB > 0 && fileStream.Length > (PurgeSizeInKB * 1024) && toSend is Forward forward)
                             {
                                 RemotePurgeUnderway = true;
 
@@ -398,6 +396,7 @@ namespace ft.Streams
         }
 
         public string WriteToFilename { get; }
+        public long PurgeSizeInKB { get; }
         public string ReadFromFilename { get; }
     }
 }

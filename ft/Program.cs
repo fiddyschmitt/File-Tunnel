@@ -56,7 +56,7 @@ namespace ft
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim(), o.PurgeSizeInKB);
 
                        var relayStreamCreator = new Func<Stream>(() =>
                        {
@@ -91,7 +91,7 @@ namespace ft
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo, o.PurgeSizeInKB);
 
                        if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
                        {
