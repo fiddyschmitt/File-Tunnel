@@ -29,10 +29,10 @@ namespace ft.CLI
 
 
 
-        [Option('w', "write", Required = false, HelpText = @"Where to write data to (file, tcp, udp). Example: --write ""\\nas\share\1.dat"" or --write udp://192.168.1.2:12000")]
+        [Option('w', "write", Required = false, HelpText = @"Where to write data to. Example: --write ""\\nas\share\1.dat""")]
         public string? WriteTo { get; set; }
 
-        [Option('r', "read", Required = false, HelpText = @"Where to read data from (file, tcp, udp). Example: --read ""\\nas\share\2.dat"" or --read udp://192.168.1.1:12000")]
+        [Option('r', "read", Required = false, HelpText = @"Where to read data from. Example: --read ""\\nas\share\2.dat""")]
         public string? ReadFrom { get; set; }
 
 
