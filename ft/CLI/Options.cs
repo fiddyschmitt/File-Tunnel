@@ -37,7 +37,7 @@ namespace ft.CLI
 
 
         [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
-        public long PurgeSizeInBytes { get; set; } = 1024 * 1024;
+        public long PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;
 
 
         [Option('v', "version", Required = false, HelpText = "Print the version and exit.")]
