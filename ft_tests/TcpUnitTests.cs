@@ -5,6 +5,8 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Permissions;
 using ft_tests.Utilities;
+using System.Diagnostics;
+using System.Collections.Concurrent;
 
 namespace ft_tests
 {
@@ -13,43 +15,29 @@ namespace ft_tests
     public partial class TcpUnitTests
     {
         [TestMethod]
-        public void SmallTransfer()
+        public void SingleConnection_HalfDuplex()
         {
-            var data = new byte[500];
-
-            var random = new Random();
-            random.NextBytes(data);
-
-            TestTransfer(data, "127.0.0.1:5000", "127.0.0.1:8000", Path.GetTempFileName(), Path.GetTempFileName());
+            TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), false, 1);
         }
 
         [TestMethod]
-        public void MediumTransfer()
+        public void SingleConnection_FullDuplex()
         {
-            var data = new byte[50 * 1024 * 1024];
-
-            var random = new Random();
-            random.NextBytes(data);
-
-            TestTransfer(data, "127.0.0.1:5000", "127.0.0.1:8000", Path.GetTempFileName(), Path.GetTempFileName());
+            TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 1);
         }
 
         [TestMethod]
-        public void LargeTransfer()
+        public void MultipleConnections_FullDuplex()
         {
-            var data = new byte[500 * 1024 * 1024];
-
-            var random = new Random();
-            random.NextBytes(data);
-
-            TestTransfer(data, "127.0.0.1:5000", "127.0.0.1:8000", Path.GetTempFileName(), Path.GetTempFileName());
+            TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 10);
         }
 
-        public static void TestTransfer(byte[] toSend, string listenPoint, string connectPoint, string writeFilename, string readFilename)
+        public static void TestTransfer(int bytesToSend, string listenPoint, string connectPoint, string writeFilename, string readFilename, bool fullDuplex, int connections)
         {
             var listenThread = new Thread(() =>
             {
                 var listenArgsString = $@"--tcp-listen {listenPoint} --write ""{writeFilename}"" --read ""{readFilename}""";
+
                 var listenArgs = StringUtility.CommandLineToArgs(listenArgsString);
                 ft.Program.Main(listenArgs);
             });
@@ -57,26 +45,85 @@ namespace ft_tests
 
             var forwardThread = new Thread(() =>
             {
-                var forwardArgsString = $@"--read {writeFilename} --tcp-connect {connectPoint} --write ""{readFilename}""";
+                var forwardArgsString = $@"--read ""{writeFilename}"" --tcp-connect {connectPoint} --write ""{readFilename}""";
+
                 var forwardArgs = StringUtility.CommandLineToArgs(forwardArgsString);
                 ft.Program.Main(forwardArgs);
-
             });
             forwardThread.Start();
 
             var ultimateDestination = new TcpListener(IPEndPoint.Parse(connectPoint));
             ultimateDestination.Start();
-            var ultimateDestinationClientTask = ultimateDestination.AcceptTcpClientAsync();
+            var ultimateDestinationAcceptCT = new CancellationTokenSource();
+            var ultimateDestinationClients = new BlockingCollection<TcpClient>();
 
-            var originClient = new TcpClient();
-            originClient.Connect(IPEndPoint.Parse(listenPoint));
+            Task.Factory.StartNew(() =>
+            {
+                while (!ultimateDestinationAcceptCT.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var client = ultimateDestination.AcceptTcpClient();
+                        ultimateDestinationClients.Add(client);
+                    }
+                    catch
+                    {
+                        break;
+                    }
+                }
+            });
 
-            var ultimateDestinationClient = ultimateDestinationClientTask.Result;
+            Enumerable
+                .Range(0, connections)
+                .Select(connection =>
+                {
+                    var originClient = new TcpClient();
+                    originClient.Connect(IPEndPoint.Parse(listenPoint));
 
-            TestDirection("Forward", originClient, ultimateDestinationClient, toSend);
-            TestDirection("Reverse", ultimateDestinationClient, originClient, toSend);
+                    var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
+                    Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
 
-            originClient.Close();
+                    return new
+                    {
+                        OriginClient = originClient,
+                        UltimateDestinationClient = ultimateDestinationClient
+                    };
+                })
+                .ToList()
+                .AsParallel()
+                .WithDegreeOfParallelism(connections)
+                .ForAll(pair =>
+                {
+                    var toSend = new byte[bytesToSend];
+                    var random = new Random();
+                    random.NextBytes(toSend);
+
+                    var tests = new[]
+                    {
+                            new Action(() => TestDirection("Forward", pair.OriginClient, pair.UltimateDestinationClient, toSend)),
+                            new Action(() => TestDirection("Reverse", pair.UltimateDestinationClient, pair.OriginClient, toSend)),
+                        };
+
+                    if (fullDuplex)
+                    {
+                        var testTasks = tests
+                                            .ToList()
+                                            .Select(test => Task.Factory.StartNew(test))
+                                            .ToArray();
+
+                        Task.WaitAll(testTasks);
+                    }
+                    else
+                    {
+                        foreach (var test in tests)
+                        {
+                            test();
+                        }
+                    }
+                });
+
+
+            ultimateDestinationAcceptCT.Cancel();
             ultimateDestination.Stop();
 
             listenThread.Interrupt();
@@ -94,7 +141,14 @@ namespace ft_tests
             sender.GetStream().Write(toSend, 0, toSend.Length);
 
             var received = new byte[toSend.Length];
-            receiver.GetStream().ReadAtLeast(received, received.Length, false);
+
+            int totalRead = 0;
+            while (totalRead < toSend.Length)
+            {
+                var toRead = Math.Min(1024 * 1024, received.Length - totalRead);
+                var read = receiver.GetStream().Read(received, totalRead, toRead);
+                totalRead += read;
+            }
 
             var receivedSuccessfully = received.SequenceEqual(toSend);
             Assert.IsTrue(receivedSuccessfully, $"[{direction}] Received buffer does not match sent buffer");
