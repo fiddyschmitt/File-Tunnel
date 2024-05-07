@@ -73,8 +73,6 @@ namespace ft.Streams
             SendQueue.Add(teardownCommand);
         }
 
-        bool RemotePurgeUnderway = false;
-
         public void SendPump()
         {
             try
@@ -127,8 +125,6 @@ namespace ft.Streams
 
                             if (PurgeSizeInBytes > 0 && fileStream.Length > PurgeSizeInBytes && toSend is Forward forward)
                             {
-                                RemotePurgeUnderway = true;
-
                                 //tell the other side to purge the file
                                 var purgeCommand = new Purge(forward.ConnectionId);
                                 purgeCommand.Serialise(writer);
@@ -174,7 +170,8 @@ namespace ft.Streams
 
 
 
-                                //This approach is slow, but reliable
+                                //This approach is slow, and occassionally results in the following when the file is used over \\tsclient:
+                                //Could not read command at file position 0.
                                 /*
                                 var fileInfo = new FileInfo(WriteToFilename);
                                 while (true)
@@ -192,22 +189,12 @@ namespace ft.Streams
                                 }
                                 */
 
-                                var waitStart = DateTime.Now;
-                                //todo - change this to something faster using WaitOne() (Semaphore? ManualResetEvent? AutoResetEvent?)
-                                while (RemotePurgeUnderway)
+
+                                Program.Log($"Waiting for other side to purge: {WriteToFilename}");
+                                while (File.Exists(WriteToFilename))
                                 {
                                     Delay.Wait(1);
-                                    Program.Log($"SendPump() Waiting for other side to purge: {WriteToFilename}");
-
-                                    var waitDuration = DateTime.Now - waitStart;
-                                    if (waitDuration.TotalSeconds > 3)  //todo: Use a better way of detecting deadlock
-                                    {
-                                        //likely both sides are waiting
-                                        RemotePurgeUnderway = false;
-                                        break;
-                                    }
                                 }
-
                                 Program.Log($"File purge is complete: {WriteToFilename}");
                             }
                         }
@@ -336,16 +323,29 @@ namespace ft.Streams
                         binaryReader = null;
                         fileStream = null;
 
-                        IOUtils.TruncateFile(ReadFromFilename);
+                        //IOUtils.TruncateFile(ReadFromFilename);
 
-                        var purgeComplete = new PurgeComplete();
-                        SendQueue.Add(purgeComplete);
-                        Program.Log($"Informed other side that purge is complete: {ReadFromFilename}");
-                    }
-                    else if (command is PurgeComplete)
-                    {
-                        Program.Log($"Informed by other side that purge is complete: {ReadFromFilename}");
-                        RemotePurgeUnderway = false;
+                        while (true)
+                        {
+                            try
+                            {
+                                File.Delete(ReadFromFilename);
+                            }
+                            catch (Exception)
+                            {
+                                Delay.Wait(1);
+                                continue;
+                            }
+
+                            break;
+                        }
+
+                        Program.Log($"Waiting for file to be created: {ReadFromFilename}");
+                        while (!File.Exists(ReadFromFilename))
+                        {
+                            Delay.Wait(1);
+                        }
+                        Program.Log($"File exists again: {ReadFromFilename}");
                     }
                     else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? value))
                     {
