@@ -265,7 +265,7 @@ namespace ft.Streams
                         Environment.Exit(1);
                     }
 
-                    
+                    /*
                     if (command is Forward fwd)
                     {
                         TotalBytesReceived += (ulong)(fwd.Payload?.Length ?? 0);
@@ -284,6 +284,7 @@ namespace ft.Streams
 
                         Program.Log($"[Received packet {fwd.PacketNumber:N0}] [File position {fileStream.Position:N0}] [{fwd.GetType().Name}] [{fwd.Payload?.Length ?? 0:N0} bytes] [{bwStr}]");
                     }
+                    */
                     /*
                     else
                     {
