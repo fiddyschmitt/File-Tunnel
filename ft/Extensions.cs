@@ -1,7 +1,9 @@
 ﻿using ft.Streams;
+using ft.Utilities;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -42,7 +44,7 @@ namespace ft
         //Never trust buffer.Length
         public static readonly ArrayPool<byte> BufferPool = ArrayPool<byte>.Create(ARBITARY_MEDIUM_SIZE_BUFFER + 1, 50);
 
-        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource)
+        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource, int readDurationMillis)
         {
             var buffer = BufferPool.Rent(bufferSize);
 
@@ -54,7 +56,16 @@ namespace ft
                     break;
                 }
 
-                read = input.Read(buffer, 0, bufferSize);
+                if (input is not NetworkStream inputNetworkStream || readDurationMillis <= 0)
+                {
+                    read = input.Read(buffer, 0, bufferSize);
+                }
+                else
+                {
+                    //Speed optimisation.
+                    //We want to avoid writing tiny amounts of data to file, because IO is expensive. Let's accumulate n milliseconds worth of data.
+                    read = inputNetworkStream.Read(buffer, 0, bufferSize, readDurationMillis);
+                }
 
                 if (read == 0)
                 {
@@ -68,6 +79,50 @@ namespace ft
             callBack?.Invoke(read);
 
             BufferPool.Return(buffer);
+        }
+
+        public static int Read(this NetworkStream input, byte[] buffer, int offset, int count, int readDurationMillis)
+        {
+            var stopwatch = new Stopwatch();
+
+            var totalBytesRead = 0;
+            var currentOffset = offset;
+
+            while (true)
+            {
+                if (input.DataAvailable)
+                {
+                    if (!stopwatch.IsRunning)
+                    {
+                        stopwatch.Start();
+                    }
+
+                    var toRead = Math.Min(count - totalBytesRead, buffer.Length - currentOffset);
+
+                    if (toRead <= 0)
+                    {
+                        break;
+                    }
+
+                    var bytesRead = input.Read(buffer, currentOffset, toRead);
+
+                    currentOffset += bytesRead;
+                    totalBytesRead += bytesRead;
+                }
+                else
+                {
+                    Delay.Wait(1);
+                }
+
+                if (totalBytesRead > 0 && stopwatch.IsRunning && stopwatch.ElapsedMilliseconds > readDurationMillis)
+                {
+                    break;
+                }
+            }
+
+            stopwatch.Stop();
+
+            return totalBytesRead;
         }
 
         static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = [];

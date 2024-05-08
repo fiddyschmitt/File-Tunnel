@@ -12,7 +12,7 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream)
+        public Relay(Stream fromStream, Stream toStream, int readDurationMillis)
         {
             Task.Factory.StartNew(() =>
             {
@@ -24,7 +24,7 @@ namespace ft
                         {
                             Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                         }
-                    }, null);
+                    }, null, readDurationMillis);
                 }
                 catch (Exception ex)
                 {

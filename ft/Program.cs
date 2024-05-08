@@ -72,8 +72,8 @@ namespace ft
                        {
                            var secondaryStream = relayStreamCreator();
 
-                           var relay1 = new Relay(stream, secondaryStream);
-                           var relay2 = new Relay(secondaryStream, stream);
+                           var relay1 = new Relay(stream, secondaryStream, o.ReadDurationMillis);
+                           var relay2 = new Relay(secondaryStream, stream, o.ReadDurationMillis);
 
                            void tearDown()
                            {
@@ -116,8 +116,8 @@ namespace ft
 
                                Log($"Connected to {o.TcpConnectTo}");
 
-                               var relay1 = new Relay(tcpClient.GetStream(), stream);
-                               var relay2 = new Relay(stream, tcpClient.GetStream());
+                               var relay1 = new Relay(tcpClient.GetStream(), stream, o.ReadDurationMillis);
+                               var relay2 = new Relay(stream, tcpClient.GetStream(), o.ReadDurationMillis);
 
                                void tearDown()
                                {
@@ -144,8 +144,8 @@ namespace ft
 
                                Log($"Will send data to {o.UdpSendTo} from {o.UdpListenTo}");
 
-                               var relay1 = new Relay(udpStream, stream);
-                               var relay2 = new Relay(stream, udpStream);
+                               var relay1 = new Relay(udpStream, stream, o.ReadDurationMillis);
+                               var relay2 = new Relay(stream, udpStream, o.ReadDurationMillis);
 
                                void tearDown()
                                {
