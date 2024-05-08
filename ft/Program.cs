@@ -113,6 +113,7 @@ namespace ft
                                var endpointTokens = o.TcpConnectTo.Split(["://", ":"], StringSplitOptions.None);
                                var tcpClient = new TcpClient();
                                tcpClient.Connect(endpointTokens[0], int.Parse(endpointTokens[1]));
+                               tcpClient.ReceiveTimeout = 50;
 
                                Log($"Connected to {o.TcpConnectTo}");
 

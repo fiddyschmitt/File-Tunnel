@@ -30,6 +30,8 @@ namespace ft.Listeners
                     while (true)
                     {
                         var client = listener.AcceptTcpClient();
+                        client.ReceiveTimeout = 50;
+
                         var remoteEndpoint = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
 
                         Program.Log($"{DateTime.Now}: Accepted connection from {client.Client.RemoteEndPoint}");

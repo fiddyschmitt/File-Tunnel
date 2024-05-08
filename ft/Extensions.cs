@@ -54,7 +54,21 @@ namespace ft
                     break;
                 }
 
-                read = input.Read(buffer, 0, bufferSize);
+                try
+                {
+                    read = input.Read(buffer, 0, bufferSize);
+                }
+                catch (Exception ex)
+                {
+                    if (ex.Message.StartsWith("Unable to read data from the transport connection: A connection attempt failed because the connected party did not properly respond after a period of time"))
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
 
                 if (read == 0)
                 {
@@ -69,7 +83,6 @@ namespace ft
 
             BufferPool.Return(buffer);
         }
-
 
         static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = [];
         public static string Name(this Stream stream, bool readFrom)
