@@ -54,21 +54,7 @@ namespace ft
                     break;
                 }
 
-                try
-                {
-                    read = input.Read(buffer, 0, bufferSize);
-                }
-                catch (Exception ex)
-                {
-                    if (ex.Message.StartsWith("Unable to read data from the transport connection: A connection attempt failed because the connected party did not properly respond after a period of time"))
-                    {
-                        continue;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
+                read = input.Read(buffer, 0, bufferSize);
 
                 if (read == 0)
                 {
