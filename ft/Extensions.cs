@@ -48,6 +48,8 @@ namespace ft
         {
             var buffer = BufferPool.Rent(bufferSize);
 
+            var maxQuietDurationMillis = (int)Math.Max(1, readDurationMillis / 4d);
+
             var read = 0;
             while (true)
             {
@@ -64,7 +66,7 @@ namespace ft
                 {
                     //Speed optimisation.
                     //We want to avoid writing tiny amounts of data to file, because IO is expensive. Let's accumulate n milliseconds worth of data.
-                    read = inputNetworkStream.Read(buffer, 0, bufferSize, readDurationMillis);
+                    read = inputNetworkStream.Read(buffer, 0, bufferSize, readDurationMillis, maxQuietDurationMillis);
                 }
 
                 if (read == 0)
@@ -81,9 +83,10 @@ namespace ft
             BufferPool.Return(buffer);
         }
 
-        public static int Read(this NetworkStream input, byte[] buffer, int offset, int count, int readDurationMillis)
+        public static int Read(this NetworkStream input, byte[] buffer, int offset, int count, int maxDurationMillis, int maxQuietDurationMillis)
         {
-            var stopwatch = new Stopwatch();
+            var totalTime = new Stopwatch();
+            var timeSinceLastRead = new Stopwatch();
 
             var totalBytesRead = 0;
             var currentOffset = offset;
@@ -92,9 +95,9 @@ namespace ft
             {
                 if (input.DataAvailable)
                 {
-                    if (!stopwatch.IsRunning)
+                    if (!totalTime.IsRunning)
                     {
-                        stopwatch.Start();
+                        totalTime.Start();
                     }
 
                     var toRead = Math.Min(count - totalBytesRead, buffer.Length - currentOffset);
@@ -106,6 +109,8 @@ namespace ft
 
                     var bytesRead = input.Read(buffer, currentOffset, toRead);
 
+                    timeSinceLastRead.Restart();
+
                     currentOffset += bytesRead;
                     totalBytesRead += bytesRead;
                 }
@@ -114,13 +119,20 @@ namespace ft
                     Delay.Wait(1);
                 }
 
-                if (totalBytesRead > 0 && stopwatch.IsRunning && stopwatch.ElapsedMilliseconds > readDurationMillis)
+                if (totalBytesRead > 0 && timeSinceLastRead.IsRunning && timeSinceLastRead.ElapsedMilliseconds > maxQuietDurationMillis)
+                {
+                    break;
+                }
+
+                if (totalBytesRead > 0 && totalTime.IsRunning && totalTime.ElapsedMilliseconds > maxDurationMillis)
                 {
                     break;
                 }
             }
 
-            stopwatch.Stop();
+            totalTime.Stop();
+
+            Console.WriteLine($"Read duration: {totalTime.ElapsedMilliseconds:N0} ms");
 
             return totalBytesRead;
         }
