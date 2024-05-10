@@ -132,8 +132,6 @@ namespace ft
 
             totalTime.Stop();
 
-            Console.WriteLine($"Read duration: {totalTime.ElapsedMilliseconds:N0} ms");
-
             return totalBytesRead;
         }
 
