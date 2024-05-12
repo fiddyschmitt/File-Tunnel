@@ -110,9 +110,9 @@ namespace ft
                        {
                            if (!string.IsNullOrEmpty(o.TcpConnectTo))
                            {
-                               var endpointTokens = o.TcpConnectTo.Split(["://", ":"], StringSplitOptions.None);
+                               var connectToEndpoint = IPEndPoint.Parse(o.TcpConnectTo);
                                var tcpClient = new TcpClient();
-                               tcpClient.Connect(endpointTokens[0], int.Parse(endpointTokens[1]));
+                               tcpClient.Connect(connectToEndpoint);
 
                                Log($"Connected to {o.TcpConnectTo}");
 
@@ -131,11 +131,8 @@ namespace ft
 
                            if (!string.IsNullOrEmpty(o.UdpSendFrom) && !string.IsNullOrEmpty(o.UdpSendTo))
                            {
-                               var sendFromEndpointTokens = o.UdpSendFrom.Split(["://", ":"], StringSplitOptions.None);
-                               var sendFromEndpoint = new IPEndPoint(IPAddress.Parse(sendFromEndpointTokens[0]), int.Parse(sendFromEndpointTokens[1]));
-
-                               var sendToEndpointTokens = o.UdpSendTo.Split(["://", ":"], StringSplitOptions.None);
-                               var sendToEndpoint = new IPEndPoint(IPAddress.Parse(sendToEndpointTokens[0]), int.Parse(sendToEndpointTokens[1]));
+                               var sendFromEndpoint = IPEndPoint.Parse(o.UdpSendFrom);
+                               var sendToEndpoint = IPEndPoint.Parse(o.UdpSendTo);
 
                                var udpClient = new UdpClient();
                                udpClient.Client.Bind(sendFromEndpoint);

@@ -17,8 +17,7 @@ namespace ft.Listeners
 
         public UdpServer(string listenEndpointStr)
         {
-            var listenEndpointTokens = listenEndpointStr.Split(["://", ":" ], StringSplitOptions.None);
-            var listenEndpoint = new IPEndPoint(IPAddress.Parse(listenEndpointTokens[0]), int.Parse(listenEndpointTokens[1]));
+            var listenEndpoint = IPEndPoint.Parse(listenEndpointStr);
 
             listener = new UdpClient(listenEndpoint);
 
