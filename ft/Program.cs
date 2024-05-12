@@ -20,7 +20,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "1.0.5";
+        const string VERSION = "1.0.6";
 
 
         static int connectionId = 0;
