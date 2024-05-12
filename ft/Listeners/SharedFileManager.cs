@@ -345,10 +345,9 @@ namespace ft.Streams
                         }
                         Program.Log($"File exists again: {ReadFromFilename}");
                     }
-                    else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? value))
+                    else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                     {
                         Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
-                        var connectionReceiveQueue = value;
 
                         ReceiveQueue.Remove(teardown.ConnectionId);
 

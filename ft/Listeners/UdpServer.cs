@@ -34,16 +34,14 @@ namespace ft.Listeners
 
                         var data = listener.Receive(ref remoteIpEndPoint);
 
-                        if (!connections.TryGetValue(remoteIpEndPoint, out UdpStream? value))
+                        if (!connections.TryGetValue(remoteIpEndPoint, out UdpStream? udpStream))
                         {
-                            var newUdpStream = new UdpStream(listener, remoteIpEndPoint);
-                            value = newUdpStream;
-                            connections.Add(remoteIpEndPoint, value);
+                            udpStream = new UdpStream(listener, remoteIpEndPoint);
+                            connections.Add(remoteIpEndPoint, udpStream);
 
-                            StreamEstablished?.Invoke(this, newUdpStream);
+                            StreamEstablished?.Invoke(this, udpStream);
                         }
 
-                        var udpStream = value;
                         udpStream.AddToReadQueue(data);
                     }
                 }
