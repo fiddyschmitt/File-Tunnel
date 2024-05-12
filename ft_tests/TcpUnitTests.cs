@@ -71,7 +71,7 @@ namespace ft_tests
                         break;
                     }
                 }
-            });
+            }, TaskCreationOptions.LongRunning);
 
             Enumerable
                 .Range(0, connections)
@@ -108,7 +108,7 @@ namespace ft_tests
                     {
                         var testTasks = tests
                                             .ToList()
-                                            .Select(test => Task.Factory.StartNew(test))
+                                            .Select(test => Task.Factory.StartNew(test, TaskCreationOptions.LongRunning))
                                             .ToArray();
 
                         Task.WaitAll(testTasks);

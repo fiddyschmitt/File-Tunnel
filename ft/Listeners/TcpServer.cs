@@ -44,7 +44,7 @@ namespace ft.Listeners
                 {
                     Program.Log($"TcpServer error: {ex}");
                 }
-            });
+            }, TaskCreationOptions.LongRunning);
         }
 
         public override void Stop()

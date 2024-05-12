@@ -51,7 +51,7 @@ namespace ft.Listeners
                 {
                     Program.Log($"UdpServer error: {ex}");
                 }
-            });
+            }, TaskCreationOptions.LongRunning);
         }
 
         public override void Stop()

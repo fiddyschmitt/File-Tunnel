@@ -26,8 +26,8 @@ namespace ft.Streams
             WriteToFilename = writeToFilename;
             PurgeSizeInBytes = purgeSizeInBytes;
 
-            Task.Factory.StartNew(ReceivePump);
-            Task.Factory.StartNew(SendPump);
+            Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
         }
 
         public byte[]? Read(int connectionId)

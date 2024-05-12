@@ -35,7 +35,7 @@ namespace ft
                 }
 
                 RelayFinished?.Invoke(this, new EventArgs());
-            });
+            }, TaskCreationOptions.LongRunning);
             FromStream = fromStream;
             ToStream = toStream;
         }

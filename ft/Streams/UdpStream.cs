@@ -36,7 +36,7 @@ namespace ft.Streams
                 {
                     Program.Log($"UDP Read Pump: {ex}");
                 }
-            });
+            }, TaskCreationOptions.LongRunning);
         }
 
         public override bool CanRead => true;
