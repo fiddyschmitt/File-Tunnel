@@ -32,16 +32,13 @@ namespace ft.Streams
 
         public byte[]? Read(int connectionId)
         {
-            if (!ReceiveQueue.ContainsKey(connectionId))
+            if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? queue))
             {
-                ReceiveQueue.Add(connectionId, []);
+                queue = [];
+                ReceiveQueue.Add(connectionId, queue);
             }
 
             byte[]? result = null;
-            if (ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? value))
-            {
-                var queue = value;
-
                 try
                 {
                     result = queue.Take(cancellationTokenSource.Token);
@@ -50,7 +47,6 @@ namespace ft.Streams
                 {
                     //This is normal - the queue might have been marked as AddingComplete while we were listening
                 }
-            }
 
             return result;
         }
