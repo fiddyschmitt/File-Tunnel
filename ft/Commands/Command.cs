@@ -39,7 +39,6 @@ namespace ft.Commands
             {
                 Connect.COMMAND_ID => new Connect(),
                 Forward.COMMAND_ID => new Forward(),
-                Purge.COMMAND_ID => new Purge(),
                 TearDown.COMMAND_ID => new TearDown(),
                 _ => null
             };

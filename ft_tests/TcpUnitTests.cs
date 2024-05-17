@@ -7,6 +7,7 @@ using System.Security.Permissions;
 using ft_tests.Utilities;
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 
 namespace ft_tests
 {
@@ -127,10 +128,10 @@ namespace ft_tests
             ultimateDestination.Stop();
 
             listenThread.Interrupt();
-            listenThread.Join();
+            //listenThread.Join();
 
             forwardThread.Interrupt();
-            forwardThread.Join();
+            //forwardThread.Join();
 
             File.Delete(readFilename);
             File.Delete(writeFilename);

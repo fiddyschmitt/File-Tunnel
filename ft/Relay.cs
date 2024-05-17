@@ -12,19 +12,21 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream, int readDurationMillis)
+        public Relay(Stream fromStream, Stream toStream)
         {
+            var bufferSize = (int)((Program.SHARED_FILE_SIZE / 2d) * 0.9d);
+
             Task.Factory.StartNew(() =>
             {
                 try
                 {
-                    Extensions.CopyTo(fromStream, toStream, 131000, bytesRead =>
+                    Extensions.CopyTo(fromStream, toStream, bufferSize, bytesRead =>
                     {
                         if (bytesRead > 0)
                         {
                             Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                         }
-                    }, null, readDurationMillis);
+                    }, null);
                 }
                 catch (Exception ex)
                 {

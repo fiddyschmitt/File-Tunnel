@@ -44,11 +44,9 @@ namespace ft
         //Never trust buffer.Length
         public static readonly ArrayPool<byte> BufferPool = ArrayPool<byte>.Create(ARBITARY_MEDIUM_SIZE_BUFFER + 1, 50);
 
-        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource, int readDurationMillis)
+        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource)
         {
             var buffer = BufferPool.Rent(bufferSize);
-
-            var maxQuietDurationMillis = (int)Math.Max(1, readDurationMillis / 4d);
 
             var read = 0;
             while (true)
@@ -58,16 +56,7 @@ namespace ft
                     break;
                 }
 
-                if (input is not NetworkStream inputNetworkStream || readDurationMillis <= 0)
-                {
-                    read = input.Read(buffer, 0, bufferSize);
-                }
-                else
-                {
-                    //Speed optimisation.
-                    //We want to avoid writing tiny amounts of data to file, because IO is expensive. Let's accumulate n milliseconds worth of data.
-                    read = inputNetworkStream.Read(buffer, 0, bufferSize, readDurationMillis, maxQuietDurationMillis);
-                }
+                read = input.Read(buffer, 0, bufferSize);
 
                 if (read == 0)
                 {
@@ -178,6 +167,39 @@ namespace ft
             {
                 return "Unknown stream";
             }
+        }
+
+        public static string BytesToString(this uint bytes)
+        {
+            var result = BytesToString((ulong)bytes);
+            return result;
+        }
+
+        public static string BytesToString(this int bytes)
+        {
+            var result = BytesToString((ulong)bytes);
+            return result;
+        }
+
+        public static string BytesToString(this long bytes)
+        {
+            var result = BytesToString((ulong)bytes);
+            return result;
+        }
+
+        public static string BytesToString(this ulong bytes)
+        {
+            string[] UNITS = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+            int c;
+            for (c = 0; c < UNITS.Length; c++)
+            {
+                ulong m = (ulong)1 << ((c + 1) * 10);
+                if (bytes < m)
+                    break;
+            }
+
+            double n = bytes / (double)((ulong)1 << (c * 10));
+            return string.Format("{0:0.##} {1}", n, UNITS[c]);
         }
     }
 }
