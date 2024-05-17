@@ -32,7 +32,7 @@ namespace ft.Listeners
 
                         var remoteEndpoint = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
 
-                        Program.Log($"{DateTime.Now}: Accepted connection from {client.Client.RemoteEndPoint}");
+                        Program.Log($"Accepted connection from {client.Client.RemoteEndPoint}");
 
                         var clientStream = client.GetStream();
 
