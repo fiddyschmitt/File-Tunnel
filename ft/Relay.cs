@@ -68,7 +68,7 @@ namespace ft
 
 
 
-            Program.Log($"Closed relay. {FromStream.Name(true)} -> {ToStream.Name(true)}");
+            Program.Log($"Closed relay. {FromStream.Name(true)} -> {ToStream.Name(false)}");
         }
     }
 }
