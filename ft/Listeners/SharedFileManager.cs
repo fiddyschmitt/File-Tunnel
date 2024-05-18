@@ -36,12 +36,15 @@ namespace ft.Streams
         readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
         public void ReportBandwidth()
         {
+            var readFromFilename = Path.GetFileName(ReadFromFilename);
+            var writeToFilename = Path.GetFileName(WriteToFilename);
+
             while (true)
             {
                 var sentBandwidthStr = sentBandwidth.GetBandwidth();
                 var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
 
-                var bwStr = $"Received: {receivedBandwidthStr,-15} Sent: {sentBandwidthStr}";
+                var bwStr = $"Read from {readFromFilename}: {receivedBandwidthStr,-25} Wrote to {writeToFilename}: {sentBandwidthStr}";
                 Program.Log(bwStr);
 
                 Thread.Sleep(reportIntervalMs);
