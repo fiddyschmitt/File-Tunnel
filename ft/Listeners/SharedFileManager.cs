@@ -1,4 +1,5 @@
-﻿using ft.Commands;
+﻿using ft.Bandwidth;
+using ft.Commands;
 using ft.Listeners;
 using ft.Utilities;
 using System;
@@ -27,6 +28,24 @@ namespace ft.Streams
 
             Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
             Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ReportBandwidth, TaskCreationOptions.LongRunning);
+        }
+
+        const int reportIntervalMs = 1000;
+        readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
+        readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
+        public void ReportBandwidth()
+        {
+            while (true)
+            {
+                var sentBandwidthStr = sentBandwidth.GetBandwidth();
+                var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
+
+                var bwStr = $"Received: {receivedBandwidthStr,-15} Sent: {sentBandwidthStr}";
+                Program.Log(bwStr);
+
+                Thread.Sleep(reportIntervalMs);
+            }
         }
 
         public byte[]? Read(int connectionId)
@@ -95,6 +114,12 @@ namespace ft.Streams
                     fileWriter.Write((byte)1);
                     fileWriter.Flush();
 
+                    if (message is Forward forward && forward.Payload != null)
+                    {
+                        var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
+                        sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
+                    }
+
                     //wait for the counterpart to acknowledge the batch, by setting the first byte to zero
                     fileStream.Seek(0, SeekOrigin.Begin);
                     while (true)
@@ -121,9 +146,6 @@ namespace ft.Streams
                 Environment.Exit(1);
             }
         }
-
-        public ulong TotalBytesReceived = 0;
-        public DateTime started = DateTime.Now;
 
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
@@ -168,30 +190,7 @@ namespace ft.Streams
                         Environment.Exit(1);
                     }
 
-                    //if (command is Forward fwd)
-                    //{
-                    //    TotalBytesReceived += (ulong)(fwd.Payload?.Length ?? 0);
-
-                    //    var rate = TotalBytesReceived * 8 / (double)(DateTime.Now - started).TotalSeconds;
-
-                    //    var ordinals = new[] { "", "K", "M", "G", "T", "P", "E" };
-                    //    var ordinal = 0;
-                    //    while (rate > 1024)
-                    //    {
-                    //        rate /= 1024;
-                    //        ordinal++;
-                    //    }
-                    //    var bw = Math.Round(rate, 2, MidpointRounding.AwayFromZero);
-                    //    var bwStr = $"{bw} {ordinals[ordinal]}b/s";
-
-                    //    Program.Log($"[Received packet {fwd.PacketNumber:N0}] [File position {posBeforeCommand:N0}] [{fwd.GetType().Name}] [{fwd.Payload?.Length ?? 0:N0} bytes] [{bwStr}]");
-                    //}
-                    //else
-                    //{
-                    //    Program.Log($"[Received packet {command.PacketNumber:N0}] [File position {posBeforeCommand:N0}] {command.GetType().Name}");
-                    //}
-
-                    if (command is Forward forward)
+                    if (command is Forward forward && forward.Payload != null)
                     {
                         if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                         {
@@ -199,17 +198,18 @@ namespace ft.Streams
                             ReceiveQueue.Add(forward.ConnectionId, connectionReceiveQueue);
                         }
 
-                        if (forward.Payload != null)
-                        {
-                            connectionReceiveQueue.Add(forward.Payload);
+                        connectionReceiveQueue.Add(forward.Payload);
 
-                            //Not working yet. Causes iperf to not finish correctly.
-                            //wait for it to be sent to the real server, making the connection synchronous
-                            //while (connectionReceiveQueue.Count > 0 && ReceiveQueue.ContainsKey(forward.ConnectionId))
-                            //{
-                            //    Delay.Wait(1);
-                            //}
-                        }
+                        var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
+                        receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
+
+
+                        //Not working yet. Causes iperf to not finish correctly.
+                        //wait for it to be sent to the real server, making the connection synchronous
+                        //while (connectionReceiveQueue.Count > 0 && ReceiveQueue.ContainsKey(forward.ConnectionId))
+                        //{
+                        //    Delay.Wait(1);
+                        //}
                     }
                     else if (command is Connect connect)
                     {

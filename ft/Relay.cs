@@ -24,7 +24,7 @@ namespace ft
                     {
                         if (bytesRead > 0)
                         {
-                            Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
+                            //Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                         }
                     }, null);
                 }
