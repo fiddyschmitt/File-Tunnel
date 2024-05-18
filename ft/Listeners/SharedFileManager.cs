@@ -153,15 +153,29 @@ namespace ft.Streams
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
         {
+            FileStream? fileStream = null;
+            BinaryReader? binaryReader = null;
+            BinaryWriter? binaryWriter = null;
+
             try
             {
-                var fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
+                fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
                 fileStream.SetLength(Program.SHARED_FILE_SIZE);
 
-                var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
-                var binaryWriter = new BinaryWriter(fileStream);
+                binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+                binaryWriter = new BinaryWriter(fileStream);
+            }
+            catch (Exception ex)
+            {
+                Program.Log(ex.ToString());
+                Environment.Exit(1);
+                return;
+            }
 
-                while (true)
+
+            while (true)
+            {
+                try
                 {
                     while (true)
                     {
@@ -238,14 +252,19 @@ namespace ft.Streams
                     fileStream.Seek(0, SeekOrigin.Begin);
                     binaryWriter.Write((byte)0);
                     fileStream.Seek(0, SeekOrigin.Begin);
+
                 }
-
-
-            }
-            catch (Exception ex)
-            {
-                Program.Log(ex.ToString());
-                Environment.Exit(1);
+                catch (FileNotFoundException fileNotFoundException)
+                {
+                    //This happens once in a while on network shares. So just try again
+                    Program.Log(fileNotFoundException.ToString());
+                    Program.Log("Retrying.");
+                }
+                catch (Exception ex)
+                {
+                    Program.Log(ex.ToString());
+                    Environment.Exit(1);
+                }
             }
         }
 
