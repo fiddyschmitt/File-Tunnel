@@ -155,7 +155,6 @@ namespace ft.Streams
         {
             FileStream? fileStream = null;
             BinaryReader? binaryReader = null;
-            BinaryWriter? binaryWriter = null;
 
             try
             {
@@ -163,7 +162,6 @@ namespace ft.Streams
                 fileStream.SetLength(Program.SHARED_FILE_SIZE);
 
                 binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
-                binaryWriter = new BinaryWriter(fileStream);
             }
             catch (Exception ex)
             {
@@ -250,7 +248,8 @@ namespace ft.Streams
 
                     //signal that we have processed their message
                     fileStream.Seek(0, SeekOrigin.Begin);
-                    binaryWriter.Write((byte)0);
+                    fileStream.WriteByte(0);
+                    fileStream.Flush();
                     fileStream.Seek(0, SeekOrigin.Begin);
 
                 }
