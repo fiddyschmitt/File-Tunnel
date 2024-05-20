@@ -48,6 +48,9 @@ namespace ft
         {
             var buffer = BufferPool.Rent(bufferSize);
 
+            var readDurationMillis = 50;
+            var maxQuietDurationMillis = (int)Math.Max(1, readDurationMillis / 4d);
+
             var read = 0;
             while (true)
             {
@@ -56,7 +59,16 @@ namespace ft
                     break;
                 }
 
-                read = input.Read(buffer, 0, bufferSize);
+                if (input is not NetworkStream inputNetworkStream || readDurationMillis <= 0)
+                {
+                    read = input.Read(buffer, 0, bufferSize);
+                }
+                else
+                {
+                    //Speed optimisation.
+                    //We want to avoid writing tiny amounts of data to file, because IO is expensive. Let's accumulate n milliseconds worth of data.
+                    read = inputNetworkStream.Read(buffer, 0, bufferSize, readDurationMillis, maxQuietDurationMillis);
+                }
 
                 if (read == 0)
                 {
