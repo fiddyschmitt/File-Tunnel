@@ -107,14 +107,14 @@ namespace ft.Streams
                 {
                     //signal that the batch is not ready to read
                     fileStream.Seek(0, SeekOrigin.Begin);
-                    fileWriter.Write((byte)0);
+                    fileStream.WriteByte(0);
 
                     //write the message to file
                     message.Serialise(fileWriter);
 
                     //signal that the batch is ready
                     fileStream.Seek(0, SeekOrigin.Begin);
-                    fileWriter.Write((byte)1);
+                    fileStream.WriteByte(1);
                     fileWriter.Flush();
 
                     if (message is Forward forward && forward.Payload != null)
