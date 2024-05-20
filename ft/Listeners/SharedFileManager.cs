@@ -92,6 +92,7 @@ namespace ft.Streams
             ReceiveQueue.Remove(connectionId);
         }
 
+        readonly List<long> fileLatencies = [];
         public void SendPump()
         {
             try
@@ -101,6 +102,8 @@ namespace ft.Streams
 
                 var fileWriter = new BinaryWriter(fileStream);
                 var fileReader = new BinaryReader(fileStream, Encoding.ASCII);
+
+                var stopwatch = new Stopwatch();
 
                 //write messages to disk
                 foreach (var message in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
@@ -115,6 +118,8 @@ namespace ft.Streams
                     //signal that the batch is ready
                     fileStream.Seek(0, SeekOrigin.Begin);
                     fileStream.WriteByte(1);
+
+                    stopwatch.Restart();
                     fileWriter.Flush();
 
                     if (message is Forward forward && forward.Payload != null)
@@ -141,6 +146,17 @@ namespace ft.Streams
                             Delay.Wait(1);  //avoids a tight loop
                         }
                     }
+
+                    stopwatch.Stop();
+
+                    if (fileLatencies.Count > 10)
+                    {
+                        fileLatencies.Remove(0);
+                    }
+                    fileLatencies.Add(stopwatch.ElapsedMilliseconds);
+                    var avgFileLatency = fileLatencies.Average();
+
+                    Program.Log($"File latency: {stopwatch.ElapsedMilliseconds:N0} ms. Average: {avgFileLatency:N2} ms.");
                 }
             }
             catch (Exception ex)
