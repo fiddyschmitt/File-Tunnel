@@ -128,16 +128,14 @@ namespace ft.Streams
                 var binaryWriter = new BinaryWriter(fileStream);
                 var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
 
-                var setReadyToReadStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                 setReadyToRead = new ToggleWriter(
-                    new BinaryReader(setReadyToReadStream, Encoding.ASCII),
-                    new BinaryWriter(setReadyToReadStream),
+                    binaryReader,
+                    binaryWriter,
                     READY_TO_READ_FLAG_POS);
 
-                var setMessageProcessedStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                 setMessageProcessed = new ToggleWriter(
-                    new BinaryReader(setMessageProcessedStream, Encoding.ASCII),
-                    new BinaryWriter(setMessageProcessedStream),
+                    binaryReader,
+                    binaryWriter,
                     MESSAGE_PROCESSED_FLAG_POS);
 
 
@@ -146,14 +144,17 @@ namespace ft.Streams
                 foreach (var message in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                 {
                     //write the message to file
-                    fileStream.Seek(MESSAGE_POS, SeekOrigin.Begin);
-                    message.Serialise(binaryWriter);
+                    lock (fileStream)
+                    {
+                        fileStream.Seek(MESSAGE_POS, SeekOrigin.Begin);
+                        message.Serialise(binaryWriter);
 
-                    //signal that the message is ready
-                    setReadyToRead.Toggle();
+                        //signal that the message is ready
+                        setReadyToRead.Toggle();
 
-                    stopwatch.Restart();
-                    binaryWriter.Flush();
+                        stopwatch.Restart();
+                        binaryWriter.Flush();
+                    }
 
 
 
@@ -204,14 +205,12 @@ namespace ft.Streams
                         fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
 
-                        var isReadyToReadStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isReadyToRead = new ToggleReader(
-                            new BinaryReader(isReadyToReadStream, Encoding.ASCII),
+                            binaryReader,
                             READY_TO_READ_FLAG_POS);
 
-                        var isMessageProcessedStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isMessageProcessed = new ToggleReader(
-                            new BinaryReader(isMessageProcessedStream, Encoding.ASCII),
+                            binaryReader,
                             MESSAGE_PROCESSED_FLAG_POS);
 
                     }
@@ -228,9 +227,13 @@ namespace ft.Streams
                         //wait for the counterpart to signal that the message is ready to be read
                         isReadyToRead.Wait();
 
-                        fileStream.Seek(MESSAGE_POS, SeekOrigin.Begin);
+                        Command? command;
+                        lock (fileStream)
+                        {
+                            fileStream.Seek(MESSAGE_POS, SeekOrigin.Begin);
 
-                        var command = Command.Deserialise(binaryReader) ?? throw new Exception($"Could not read command at file position {MESSAGE_POS:N0}. [{ReadFromFilename}]");
+                            command = Command.Deserialise(binaryReader) ?? throw new Exception($"Could not read command at file position {MESSAGE_POS:N0}. [{ReadFromFilename}]");
+                        }
 
                         if (command is Forward forward && forward.Payload != null)
                         {

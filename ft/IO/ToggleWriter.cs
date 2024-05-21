@@ -23,13 +23,16 @@ namespace ft.IO
 
         public void Toggle()
         {
-            Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
-            var originalValue = Reader.PeekChar();
+            lock (Reader.BaseStream)
+            {
+                Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
+                var originalValue = Reader.PeekChar();
 
-            var newValue = originalValue == 0 ? (byte)1 : (byte)0;
+                var newValue = originalValue == 0 ? (byte)1 : (byte)0;
 
-            Writer.Write(newValue);
-            Writer.Flush();
+                Writer.Write(newValue);
+                Writer.Flush();
+            }
         }
     }
 }
