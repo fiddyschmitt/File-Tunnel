@@ -112,23 +112,26 @@ namespace ft.Streams
                 var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
                 fileStream.SetLength(Program.SHARED_FILE_SIZE);
 
+                var fileWriter = new BinaryWriter(fileStream);
+                var fileReader = new BinaryReader(fileStream, Encoding.ASCII);
+
                 //write acks to file
                 Task.Factory.StartNew(() =>
                 {
-                    var ackFileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-                    var ackWriter = new BinaryWriter(ackFileStream);
                     foreach (var ack in LocallyAckedPacketNumber.GetConsumingEnumerable())
                     {
-                        ackWriter.Write(ack);
-                        ackWriter.Flush();
+                        lock (fileStream)
+                        {
+                            fileStream.Seek(0, SeekOrigin.Begin);
 
-                        ackWriter.Seek(0, SeekOrigin.Begin);
+                            fileWriter.Write(ack);
+                            fileWriter.Flush();
+                        }
                     }
 
                 }, TaskCreationOptions.LongRunning);
 
-                var fileWriter = new BinaryWriter(fileStream);
-                var fileReader = new BinaryReader(fileStream, Encoding.ASCII);
+                
 
                 var stopwatch = new Stopwatch();
 
@@ -138,16 +141,19 @@ namespace ft.Streams
                 foreach (var message in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                 {
                     //write the message to file
-                    fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);       //skip the remote ack's
-                    fileStream.Seek(sizeof(ulong), SeekOrigin.Current);     //skip the 'ready' packet number
-                    message.Serialise(fileWriter);
+                    lock (fileStream)
+                    {
+                        fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);       //skip the remote ack's
+                        fileStream.Seek(sizeof(ulong), SeekOrigin.Current);     //skip the 'ready' packet number
+                        message.Serialise(fileWriter);
 
-                    //signal that the message is ready
-                    fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);
-                    fileWriter.Write(message.PacketNumber);
+                        //signal that the message is ready
+                        fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);
+                        fileWriter.Write(message.PacketNumber);
 
-                    stopwatch.Restart();
-                    fileWriter.Flush();
+                        stopwatch.Restart();
+                        fileWriter.Flush();
+                    }
 
                     if (message is Forward forward && forward.Payload != null)
                     {
@@ -186,12 +192,8 @@ namespace ft.Streams
 
             try
             {
-                using (fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
-                {
-                    fileStream.SetLength(Program.SHARED_FILE_SIZE);
-                }
-
-                fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
+                fileStream.SetLength(Program.SHARED_FILE_SIZE);
                 binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
             }
             catch (Exception ex)
