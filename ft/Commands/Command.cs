@@ -25,7 +25,7 @@ namespace ft.Commands
         {
             writer.Write(CommandId);
 
-            PacketNumber = SentPacketCount++;
+            PacketNumber = ++SentPacketCount;   //start at 1, because the Ack Reader will first read 0 from file
             writer.Write(PacketNumber);
 
             Serialize(writer);

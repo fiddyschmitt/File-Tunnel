@@ -112,24 +112,39 @@ namespace ft.Streams
                 var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
                 fileStream.SetLength(Program.SHARED_FILE_SIZE);
 
+                //write acks to file
+                Task.Factory.StartNew(() =>
+                {
+                    var ackFileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                    var ackWriter = new BinaryWriter(ackFileStream);
+                    foreach (var ack in LocallyAckedPacketNumber.GetConsumingEnumerable())
+                    {
+                        ackWriter.Write(ack);
+                        ackWriter.Flush();
+
+                        ackWriter.Seek(0, SeekOrigin.Begin);
+                    }
+
+                }, TaskCreationOptions.LongRunning);
+
                 var fileWriter = new BinaryWriter(fileStream);
                 var fileReader = new BinaryReader(fileStream, Encoding.ASCII);
 
                 var stopwatch = new Stopwatch();
 
+                var remotelyAckedPacketNumberCE = RemotelyAckedPacketNumber.GetConsumingEnumerable();
+
                 //write messages to disk
                 foreach (var message in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                 {
-                    //signal that the batch is not ready to read
-                    fileStream.Seek(0, SeekOrigin.Begin);
-                    fileStream.WriteByte(0);
-
                     //write the message to file
+                    fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);       //skip the remote ack's
+                    fileStream.Seek(sizeof(ulong), SeekOrigin.Current);     //skip the 'ready' packet number
                     message.Serialise(fileWriter);
 
-                    //signal that the batch is ready
-                    fileStream.Seek(0, SeekOrigin.Begin);
-                    fileStream.WriteByte(1);
+                    //signal that the message is ready
+                    fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);
+                    fileWriter.Write(message.PacketNumber);
 
                     stopwatch.Restart();
                     fileWriter.Flush();
@@ -140,22 +155,12 @@ namespace ft.Streams
                         sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
                     }
 
-                    //wait for the counterpart to acknowledge the batch, by setting the first byte to zero
-                    fileStream.Seek(0, SeekOrigin.Begin);
-                    while (true)
+                    //wait for the counterpart to acknowledge the message
+                    foreach (var remoteAck in remotelyAckedPacketNumberCE)
                     {
-                        var nextByte = fileReader.PeekChar();
-
-                        if (nextByte == 0)
+                        if (remoteAck == message.PacketNumber)
                         {
                             break;
-                        }
-                        else
-                        {
-                            //Console.WriteLine($"[{ReadFromFilename}] Waiting for data at position {fileStream.Position:N0}");
-                            fileStream.Flush(); //force read from file
-
-                            Delay.Wait(1);  //avoids a tight loop
                         }
                     }
 
@@ -170,6 +175,9 @@ namespace ft.Streams
             }
         }
 
+        readonly BlockingCollection<ulong> LocallyAckedPacketNumber = new(1);
+        readonly BlockingCollection<ulong> RemotelyAckedPacketNumber = new(1);
+
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
         {
@@ -178,9 +186,12 @@ namespace ft.Streams
 
             try
             {
-                fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
-                fileStream.SetLength(Program.SHARED_FILE_SIZE);
+                using (fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
+                {
+                    fileStream.SetLength(Program.SHARED_FILE_SIZE);
+                }
 
+                fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
             }
             catch (Exception ex)
@@ -190,30 +201,65 @@ namespace ft.Streams
                 return;
             }
 
+            //read acks from file
+            Task.Factory.StartNew(() =>
+            {
+                var ackFileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                var ackReader = new BinaryReader(ackFileStream);
 
+                var latestReadAck = 0UL;
+                while (true)
+                {
+                    ackFileStream.Seek(0, SeekOrigin.Begin);
+                    var newAck = ackReader.ReadUInt64();
+                    if (latestReadAck != newAck)
+                    {
+                        latestReadAck = newAck;
+                        RemotelyAckedPacketNumber.Add(newAck);
+                    }
+
+                    //ackFileStream.Flush();  //force read. (Not needed now because bufferSize = 1 and SequentialScan)
+
+                    Delay.Wait(1);
+                }
+            }, TaskCreationOptions.LongRunning);
+
+            var packetNumberFileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+            var packetNumberReader = new BinaryReader(packetNumberFileStream);
+
+            var expectedPacketNumber = 1UL;
             while (true)
             {
                 try
                 {
                     while (true)
                     {
-                        var nextByte = binaryReader.PeekChar();
+                        var packetInFile = ulong.MaxValue;
 
-                        if (nextByte == -1 || nextByte == 0)
+                        try
                         {
-                            //Console.WriteLine($"[{ReadFromFilename}] Waiting for data at position {fileStream.Position:N0}");
-                            fileStream.Flush(); //force read from file
-                            Delay.Wait(1);  //avoids a tight loop
+                            packetNumberFileStream.Seek(sizeof(ulong), SeekOrigin.Begin);
+                            packetInFile = packetNumberReader.ReadUInt64();
+
+                            if (packetInFile != expectedPacketNumber)
+                            {
+                                //Program.Log($"[{ReadFromFilename}] In file: {packetInFile:N0}. Waiting for packet {expectedPacketNumber:N0}");
+                                //packetNumberFileStream.Flush();   //force read. (Not needed now because bufferSize = 1 and SequentialScan)
+                                Delay.Wait(1);  //avoids a tight loop
+                            }
+                            else
+                            {
+                                break;
+                            }
                         }
-                        else
+                        catch (Exception)
                         {
-                            break;
+                            Program.Log("Retrying read of packet number");
                         }
                     }
 
-                    //skip the byte that signalled that the batch was ready
-                    fileStream.Seek(1, SeekOrigin.Current);
-
+                    fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);   //skip ack ulong
+                    fileStream.Seek(sizeof(ulong), SeekOrigin.Current);   //skip packet number ulong
 
                     var posBeforeCommand = fileStream.Position;
 
@@ -267,17 +313,9 @@ namespace ft.Streams
 
 
                     //signal that we have processed their message
-                    fileStream.Seek(0, SeekOrigin.Begin);
-                    fileStream.WriteByte(0);
-                    fileStream.Flush();
-                    fileStream.Seek(0, SeekOrigin.Begin);
+                    LocallyAckedPacketNumber.Add(command.PacketNumber);
 
-                }
-                catch (FileNotFoundException fileNotFoundException)
-                {
-                    //This happens once in a while on network shares. So just try again
-                    Program.Log(fileNotFoundException.ToString());
-                    Program.Log("Retrying.");
+                    expectedPacketNumber = command.PacketNumber + 1;
                 }
                 catch (Exception ex)
                 {
