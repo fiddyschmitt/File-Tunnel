@@ -1,5 +1,6 @@
 ﻿using ft.Bandwidth;
 using ft.Commands;
+using ft.IO;
 using ft.Listeners;
 using ft.Utilities;
 using System;
@@ -28,38 +29,42 @@ namespace ft.Streams
 
             Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
             Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(ReportBandwidth, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ReportNetworkPerformance, TaskCreationOptions.LongRunning);
         }
 
         const int reportIntervalMs = 1000;
         readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
         readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
-        public void ReportBandwidth()
+        public void ReportNetworkPerformance()
         {
-            var readFromFilename = Path.GetFileName(ReadFromFilename);
-            var writeToFilename = Path.GetFileName(WriteToFilename);
-
             while (true)
             {
-                var sentBandwidthStr = sentBandwidth.GetBandwidth();
-                var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
-
-                var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
-
-                var fileLatencyWindow = DateTime.Now.AddMilliseconds(-reportIntervalMs);
-                lock (fileLatencies)
+                try
                 {
-                    fileLatencies.RemoveAll(sample => sample.DateTime < fileLatencyWindow);
-                    if (fileLatencies.Count > 0)
+                    var sentBandwidthStr = sentBandwidth.GetBandwidth();
+                    var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
+
+                    var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
+
+                    var fileLatencyWindow = DateTime.Now.AddMilliseconds(-reportIntervalMs);
+                    lock (fileLatencies)
                     {
-                        var avgFileLatency = fileLatencies.Average(rec => rec.LatencyMs);
-                        logStr += $" File latency: {avgFileLatency:N0} ms ({fileLatencies.Count:N0} samples)";
+                        fileLatencies.RemoveAll(sample => sample.DateTime < fileLatencyWindow);
+                        if (fileLatencies.Count > 0)
+                        {
+                            var avgFileLatency = fileLatencies.Average(rec => rec.LatencyMs);
+                            logStr += $" File latency: {avgFileLatency:N0} ms ({fileLatencies.Count:N0} samples)";
+                        }
                     }
+
+                    Program.Log(logStr);
+
+                    Thread.Sleep(reportIntervalMs);
                 }
-
-                Program.Log(logStr);
-
-                Thread.Sleep(reportIntervalMs);
+                catch (Exception ex)
+                {
+                    Program.Log($"{ex}");
+                }
             }
         }
 
@@ -104,56 +109,53 @@ namespace ft.Streams
             ReceiveQueue.Remove(connectionId);
         }
 
+        const int READY_TO_READ_FLAG_POS = 0;
+        const int MESSAGE_PROCESSED_FLAG_POS = 1;
+        const int MESSAGE_POS = 2;
+
+        ToggleWriter? setReadyToRead;
+        ToggleWriter? setMessageProcessed;
+
         readonly List<(DateTime DateTime, long LatencyMs)> fileLatencies = [];
         public void SendPump()
         {
             try
             {
-                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
-                fileStream.SetLength(Program.SHARED_FILE_SIZE);
+                //the writer always creates the file
+                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                fileStream.SetLength(MESSAGE_POS);
 
-                var fileWriter = new BinaryWriter(fileStream);
-                var fileReader = new BinaryReader(fileStream, Encoding.ASCII);
+                var binaryWriter = new BinaryWriter(fileStream);
+                var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
 
-                //write acks to file
-                Task.Factory.StartNew(() =>
-                {
-                    foreach (var ack in LocallyAckedPacketNumber.GetConsumingEnumerable())
-                    {
-                        lock (fileStream)
-                        {
-                            fileStream.Seek(0, SeekOrigin.Begin);
+                var setReadyToReadStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                setReadyToRead = new ToggleWriter(
+                    new BinaryReader(setReadyToReadStream, Encoding.ASCII),
+                    new BinaryWriter(setReadyToReadStream),
+                    READY_TO_READ_FLAG_POS);
 
-                            fileWriter.Write(ack);
-                            fileWriter.Flush();
-                        }
-                    }
+                var setMessageProcessedStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                setMessageProcessed = new ToggleWriter(
+                    new BinaryReader(setMessageProcessedStream, Encoding.ASCII),
+                    new BinaryWriter(setMessageProcessedStream),
+                    MESSAGE_PROCESSED_FLAG_POS);
 
-                }, TaskCreationOptions.LongRunning);
-
-                
 
                 var stopwatch = new Stopwatch();
 
-                var remotelyAckedPacketNumberCE = RemotelyAckedPacketNumber.GetConsumingEnumerable();
-
-                //write messages to disk
                 foreach (var message in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                 {
                     //write the message to file
-                    lock (fileStream)
-                    {
-                        fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);       //skip the remote ack's
-                        fileStream.Seek(sizeof(ulong), SeekOrigin.Current);     //skip the 'ready' packet number
-                        message.Serialise(fileWriter);
+                    fileStream.Seek(MESSAGE_POS, SeekOrigin.Begin);
+                    message.Serialise(binaryWriter);
 
-                        //signal that the message is ready
-                        fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);
-                        fileWriter.Write(message.PacketNumber);
+                    //signal that the message is ready
+                    setReadyToRead.Toggle();
 
-                        stopwatch.Restart();
-                        fileWriter.Flush();
-                    }
+                    stopwatch.Restart();
+                    binaryWriter.Flush();
+
+
 
                     if (message is Forward forward && forward.Payload != null)
                     {
@@ -162,13 +164,7 @@ namespace ft.Streams
                     }
 
                     //wait for the counterpart to acknowledge the message
-                    foreach (var remoteAck in remotelyAckedPacketNumberCE)
-                    {
-                        if (remoteAck == message.PacketNumber)
-                        {
-                            break;
-                        }
-                    }
+                    isMessageProcessed?.Wait();
 
                     stopwatch.Stop();
                     fileLatencies.Add((DateTime.Now, stopwatch.ElapsedMilliseconds));
@@ -181,8 +177,8 @@ namespace ft.Streams
             }
         }
 
-        readonly BlockingCollection<ulong> LocallyAckedPacketNumber = new(1);
-        readonly BlockingCollection<ulong> RemotelyAckedPacketNumber = new(1);
+        ToggleReader? isReadyToRead;
+        ToggleReader? isMessageProcessed;
 
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
@@ -190,139 +186,100 @@ namespace ft.Streams
             FileStream? fileStream = null;
             BinaryReader? binaryReader = null;
 
-            try
-            {
-                fileStream = new FileStream(ReadFromFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
-                fileStream.SetLength(Program.SHARED_FILE_SIZE);
-                binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
-            }
-            catch (Exception ex)
-            {
-                Program.Log(ex.ToString());
-                Environment.Exit(1);
-                return;
-            }
-
-            //read acks from file
-            Task.Factory.StartNew(() =>
-            {
-                var ackFileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-                var ackReader = new BinaryReader(ackFileStream);
-
-                var latestReadAck = 0UL;
-                while (true)
-                {
-                    ackFileStream.Seek(0, SeekOrigin.Begin);
-                    var newAck = ackReader.ReadUInt64();
-                    if (latestReadAck != newAck)
-                    {
-                        latestReadAck = newAck;
-                        RemotelyAckedPacketNumber.Add(newAck);
-                    }
-
-                    //ackFileStream.Flush();  //force read. (Not needed now because bufferSize = 1 and SequentialScan)
-
-                    Delay.Wait(1);
-                }
-            }, TaskCreationOptions.LongRunning);
-
-            var packetNumberFileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-            var packetNumberReader = new BinaryReader(packetNumberFileStream);
-
-            var expectedPacketNumber = 1UL;
             while (true)
             {
                 try
                 {
-                    while (true)
+                    try
                     {
-                        var packetInFile = ulong.MaxValue;
-
-                        try
+                        while (true)
                         {
-                            packetNumberFileStream.Seek(sizeof(ulong), SeekOrigin.Begin);
-                            packetInFile = packetNumberReader.ReadUInt64();
-
-                            if (packetInFile != expectedPacketNumber)
-                            {
-                                //Program.Log($"[{ReadFromFilename}] In file: {packetInFile:N0}. Waiting for packet {expectedPacketNumber:N0}");
-                                //packetNumberFileStream.Flush();   //force read. (Not needed now because bufferSize = 1 and SequentialScan)
-                                Delay.Wait(1);  //avoids a tight loop
-                            }
-                            else
+                            if (File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0)
                             {
                                 break;
                             }
+                            Thread.Sleep(200);
                         }
-                        catch (Exception)
-                        {
-                            Program.Log("Retrying read of packet number");
-                        }
+
+                        fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                        binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+
+                        var isReadyToReadStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                        isReadyToRead = new ToggleReader(
+                            new BinaryReader(isReadyToReadStream, Encoding.ASCII),
+                            READY_TO_READ_FLAG_POS);
+
+                        var isMessageProcessedStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                        isMessageProcessed = new ToggleReader(
+                            new BinaryReader(isMessageProcessedStream, Encoding.ASCII),
+                            MESSAGE_PROCESSED_FLAG_POS);
+
                     }
-
-                    fileStream.Seek(sizeof(ulong), SeekOrigin.Begin);   //skip ack ulong
-                    fileStream.Seek(sizeof(ulong), SeekOrigin.Current);   //skip packet number ulong
-
-                    var posBeforeCommand = fileStream.Position;
-
-                    var command = Command.Deserialise(binaryReader);
-
-                    if (command == null)
+                    catch (Exception ex)
                     {
-                        Program.Log($"Could not read command at file position {posBeforeCommand:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
+                        Program.Log(ex.ToString());
                         Environment.Exit(1);
+                        return;
                     }
 
-                    if (command is Forward forward && forward.Payload != null)
+                    while (true)
                     {
-                        if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+
+                        //wait for the counterpart to signal that the message is ready to be read
+                        isReadyToRead.Wait();
+
+                        fileStream.Seek(MESSAGE_POS, SeekOrigin.Begin);
+
+                        var command = Command.Deserialise(binaryReader) ?? throw new Exception($"Could not read command at file position {MESSAGE_POS:N0}. [{ReadFromFilename}]");
+
+                        if (command is Forward forward && forward.Payload != null)
                         {
-                            connectionReceiveQueue = [];
-                            ReceiveQueue.Add(forward.ConnectionId, connectionReceiveQueue);
+                            if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+                            {
+                                connectionReceiveQueue = [];
+                                ReceiveQueue.Add(forward.ConnectionId, connectionReceiveQueue);
+                            }
+
+                            connectionReceiveQueue.Add(forward.Payload);
+
+                            var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
+                            receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
+
+
+                            //Wait for the data to be sent to the real server, making the connection synchronous
+                            while (connectionReceiveQueue.Count > 0 && ReceiveQueue.ContainsKey(forward.ConnectionId))
+                            {
+                                Delay.Wait(1);
+                            }
+                        }
+                        else if (command is Connect connect)
+                        {
+                            if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
+                            {
+                                ReceiveQueue.Add(connect.ConnectionId, []);
+
+                                var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
+                                StreamEstablished?.Invoke(this, sharedFileStream);
+                            }
+                        }
+                        else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+                        {
+                            Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
+
+                            ReceiveQueue.Remove(teardown.ConnectionId);
+
+                            connectionReceiveQueue.CompleteAdding();
                         }
 
-                        connectionReceiveQueue.Add(forward.Payload);
 
-                        var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
-                        receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
-
-
-                        //Not working yet. Causes iperf to not finish correctly.
-                        //wait for it to be sent to the real server, making the connection synchronous
-                        //while (connectionReceiveQueue.Count > 0 && ReceiveQueue.ContainsKey(forward.ConnectionId))
-                        //{
-                        //    Delay.Wait(1);
-                        //}
+                        //signal that we have processed their message
+                        setMessageProcessed?.Toggle();
                     }
-                    else if (command is Connect connect)
-                    {
-                        if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
-                        {
-                            ReceiveQueue.Add(connect.ConnectionId, []);
-
-                            var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                            StreamEstablished?.Invoke(this, sharedFileStream);
-                        }
-                    }
-                    else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
-                    {
-                        Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
-
-                        ReceiveQueue.Remove(teardown.ConnectionId);
-
-                        connectionReceiveQueue.CompleteAdding();
-                    }
-
-
-                    //signal that we have processed their message
-                    LocallyAckedPacketNumber.Add(command.PacketNumber);
-
-                    expectedPacketNumber = command.PacketNumber + 1;
                 }
                 catch (Exception ex)
                 {
-                    Program.Log(ex.ToString());
-                    Environment.Exit(1);
+                    Program.Log($"{nameof(ReceivePump)}: {ex.Message}");
+                    Program.Log($"Restarting {nameof(ReceivePump)}");
                 }
             }
         }
