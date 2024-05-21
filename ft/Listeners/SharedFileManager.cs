@@ -44,8 +44,20 @@ namespace ft.Streams
                 var sentBandwidthStr = sentBandwidth.GetBandwidth();
                 var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
 
-                var bwStr = $"Read from {readFromFilename}: {receivedBandwidthStr,-25} Wrote to {writeToFilename}: {sentBandwidthStr}";
-                Program.Log(bwStr);
+                var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
+
+                var fileLatencyWindow = DateTime.Now.AddMilliseconds(-reportIntervalMs);
+                lock (fileLatencies)
+                {
+                    fileLatencies.RemoveAll(sample => sample.DateTime < fileLatencyWindow);
+                    if (fileLatencies.Count > 0)
+                    {
+                        var avgFileLatency = fileLatencies.Average(rec => rec.LatencyMs);
+                        logStr += $" File latency: {avgFileLatency:N0} ms ({fileLatencies.Count:N0} samples)";
+                    }
+                }
+
+                Program.Log(logStr);
 
                 Thread.Sleep(reportIntervalMs);
             }
@@ -92,7 +104,7 @@ namespace ft.Streams
             ReceiveQueue.Remove(connectionId);
         }
 
-        readonly List<long> fileLatencies = [];
+        readonly List<(DateTime DateTime, long LatencyMs)> fileLatencies = [];
         public void SendPump()
         {
             try
@@ -148,15 +160,7 @@ namespace ft.Streams
                     }
 
                     stopwatch.Stop();
-
-                    if (fileLatencies.Count > 10)
-                    {
-                        fileLatencies.Remove(0);
-                    }
-                    fileLatencies.Add(stopwatch.ElapsedMilliseconds);
-                    var avgFileLatency = fileLatencies.Average();
-
-                    Program.Log($"File latency: {stopwatch.ElapsedMilliseconds:N0} ms. Average: {avgFileLatency:N2} ms.");
+                    fileLatencies.Add((DateTime.Now, stopwatch.ElapsedMilliseconds));
                 }
             }
             catch (Exception ex)
