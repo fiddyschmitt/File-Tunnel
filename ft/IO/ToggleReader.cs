@@ -25,14 +25,12 @@ namespace ft.IO
 
         public void Wait()
         {
+            Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
+
             int currentValue;
             while (true)
             {
-                lock (Reader.BaseStream)
-                {
-                    Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
-                    currentValue = Reader.PeekChar();
-                }
+                currentValue = Reader.PeekChar();
 
                 if (currentValue != lastReadValue)
                 {
