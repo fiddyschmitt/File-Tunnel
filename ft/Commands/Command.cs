@@ -23,27 +23,17 @@ namespace ft.Commands
 
         public void Serialise(BinaryWriter writer)
         {
-            var messageStartPos = writer.BaseStream.Position;
-
-            writer.BaseStream.WriteByte(0);    //command not ready
+            writer.Write(CommandId);
 
             PacketNumber = ++SentPacketCount;   //start at 1, because the Ack Reader will first read 0 from file
             writer.Write(PacketNumber);
 
             Serialize(writer);
 
-            var messageEndPos = writer.BaseStream.Position;
-
             writer.BaseStream.WriteByte(0);  //command not ready (the following command)
+            writer.BaseStream.Seek(-1, SeekOrigin.Current);
 
             writer.BaseStream.Flush();
-
-            //finally write the CommandId, signalling that the command is ready
-            writer.BaseStream.Seek(messageStartPos, SeekOrigin.Begin);
-            writer.Write(CommandId);
-            writer.BaseStream.Flush();
-
-            writer.BaseStream.Seek(messageEndPos, SeekOrigin.Begin);
         }
 
         public static Command? Deserialise(BinaryReader reader)
@@ -56,6 +46,7 @@ namespace ft.Commands
                 Forward.COMMAND_ID => new Forward(),
                 Purge.COMMAND_ID => new Purge(),
                 TearDown.COMMAND_ID => new TearDown(),
+                Ping.COMMAND_ID => new Ping(),
                 _ => null
             };
 

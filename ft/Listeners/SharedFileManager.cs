@@ -35,8 +35,12 @@ namespace ft.Streams
         const int reportIntervalMs = 1000;
         readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
         readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
+        readonly BlockingCollection<Ping> pingResponses = [];
         public void ReportNetworkPerformance()
         {
+            var pingRequest = new Ping(EnumPingType.Request);
+            var pingStopwatch = new Stopwatch();
+
             while (true)
             {
                 try
@@ -44,7 +48,27 @@ namespace ft.Streams
                     var sentBandwidthStr = sentBandwidth.GetBandwidth();
                     var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
 
+                    pingStopwatch.Restart();
+                    SendQueue.Add(pingRequest);
+                    var pingResponse = pingResponses.GetConsumingEnumerable().First();
+                    string? pingDurationStr = null;
+                    //if (pingResponse.ResponseToPacketNumber == pingRequest.PacketNumber)
+                    {
+                        pingStopwatch.Stop();
+                        pingDurationStr = $"RTT: {pingStopwatch.ElapsedMilliseconds:N0} ms";
+                    }
+                    //else
+                    //{
+                    //    Program.Log($"Unexpected ping response. Expected: {pingRequest.PacketNumber:N0}, received: {pingResponse.ResponseToPacketNumber:N0}");
+                    //}
+
+
+
                     var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
+                    if (pingDurationStr != null)
+                    {
+                        logStr += $" {pingDurationStr}";
+                    }
 
                     Program.Log(logStr);
 
@@ -110,7 +134,7 @@ namespace ft.Streams
             try
             {
                 //the writer always creates the file
-                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
+                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, Program.SHARED_FILE_SIZE * 2); //large buffer to prevent FileStream from autoflushing
                 fileStream.SetLength(Program.SHARED_FILE_SIZE);
 
                 var binaryWriter = new BinaryWriter(fileStream);
@@ -149,7 +173,6 @@ namespace ft.Streams
                         Program.Log($"Other side is now ready for purge of {Path.GetFileName(WriteToFilename)}.");
 
                         fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-
                         fileStream.WriteByte(0);    //command not ready
                         fileStream.Flush();
 
@@ -295,6 +318,22 @@ namespace ft.Streams
                             ReceiveQueue.Remove(teardown.ConnectionId);
 
                             connectionReceiveQueue.CompleteAdding();
+                        }
+                        else if (command is Ping ping)
+                        {
+                            if (ping.PingType == EnumPingType.Request)
+                            {
+                                var response = new Ping(EnumPingType.Response)
+                                {
+                                    ResponseToPacketNumber = ping.PacketNumber
+                                };
+                                SendQueue.Add(response);
+                            }
+
+                            if (ping.PingType == EnumPingType.Response)
+                            {
+                                pingResponses.Add(ping);
+                            }
                         }
                     }
                 }
