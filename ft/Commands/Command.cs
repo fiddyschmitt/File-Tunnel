@@ -25,15 +25,12 @@ namespace ft.Commands
         {
             writer.Write(CommandId);
 
-            PacketNumber = ++SentPacketCount;   //start at 1, because the Ack Reader will first read 0 from file
+            PacketNumber = SentPacketCount++;
             writer.Write(PacketNumber);
 
             Serialize(writer);
 
-            writer.BaseStream.WriteByte(0);  //command not ready (the following command)
-            writer.BaseStream.Seek(-1, SeekOrigin.Current);
-
-            writer.BaseStream.Flush();
+            writer.Flush();
         }
 
         public static Command? Deserialise(BinaryReader reader)

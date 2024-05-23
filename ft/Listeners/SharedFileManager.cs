@@ -35,7 +35,7 @@ namespace ft.Streams
         const int reportIntervalMs = 1000;
         readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
         readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
-        readonly BlockingCollection<Ping> pingResponses = [];
+        readonly AutoResetEvent pingResponseReceived = new(false);
         public void ReportNetworkPerformance()
         {
             var pingRequest = new Ping(EnumPingType.Request);
@@ -50,18 +50,14 @@ namespace ft.Streams
 
                     pingStopwatch.Restart();
                     SendQueue.Add(pingRequest);
-                    var pingResponse = pingResponses.GetConsumingEnumerable().First();
+
                     string? pingDurationStr = null;
-                    //if (pingResponse.ResponseToPacketNumber == pingRequest.PacketNumber)
+
+                    if (pingResponseReceived.WaitOne(5000))
                     {
                         pingStopwatch.Stop();
                         pingDurationStr = $"RTT: {pingStopwatch.ElapsedMilliseconds:N0} ms";
                     }
-                    //else
-                    //{
-                    //    Program.Log($"Unexpected ping response. Expected: {pingRequest.PacketNumber:N0}, received: {pingResponse.ResponseToPacketNumber:N0}");
-                    //}
-
 
 
                     var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
@@ -83,16 +79,16 @@ namespace ft.Streams
 
         public byte[]? Read(int connectionId)
         {
-            if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? queue))
+            if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
             {
-                queue = [];
-                ReceiveQueue.Add(connectionId, queue);
+                connectionReceiveQueue = new();
+                ReceiveQueue.Add(connectionId, connectionReceiveQueue);
             }
 
             byte[]? result = null;
             try
             {
-                result = queue.Take(cancellationTokenSource.Token);
+                result = connectionReceiveQueue.Take(cancellationTokenSource.Token);
             }
             catch (InvalidOperationException)
             {
@@ -135,7 +131,7 @@ namespace ft.Streams
             {
                 //the writer always creates the file
                 var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, Program.SHARED_FILE_SIZE * 2); //large buffer to prevent FileStream from autoflushing
-                fileStream.SetLength(Program.SHARED_FILE_SIZE);
+                fileStream.SetLength(MESSAGE_WRITE_POS);
 
                 var binaryWriter = new BinaryWriter(fileStream);
                 var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
@@ -157,35 +153,35 @@ namespace ft.Streams
 
                 fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
-                foreach (var message in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
+                foreach (var command in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                 {
                     ms.SetLength(0);
-                    message.Serialise(msWriter);
+                    command.Serialise(msWriter);
 
-                    if (fileStream.Position + ms.Length >= fileStream.Length - 10)
+                    if (fileStream.Position + ms.Length >= Program.SHARED_FILE_SIZE - 10)
                     {
                         var purge = new Purge();
                         purge.Serialise(binaryWriter);
-                        binaryWriter.Flush();
 
                         Program.Log($"Waiting for other side to be ready for purge.");
                         isReadyForPurge?.Wait();
                         Program.Log($"Other side is now ready for purge of {Path.GetFileName(WriteToFilename)}.");
 
                         fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                        fileStream.WriteByte(0);    //command not ready
-                        fileStream.Flush();
-
-                        fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                        fileStream.SetLength(MESSAGE_WRITE_POS);
 
                         setPurgeComplete.Toggle();
                         Program.Log($"Purge is now complete: {Path.GetFileName(WriteToFilename)}.");
                     }
 
                     //write the message to file
-                    message.Serialise(binaryWriter);
+                    var commandStartPos = fileStream.Position;
+                    command.Serialise(binaryWriter);
+                    var commandEndPos = fileStream.Position;
 
-                    if (message is Forward forward && forward.Payload != null)
+                    //Program.Log($"Wrote packet number {command.PacketNumber:N0} ({command.GetType().Name}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+
+                    if (command is Forward forward && forward.Payload != null)
                     {
                         var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
                         sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
@@ -205,6 +201,8 @@ namespace ft.Streams
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
         {
+            var readFileShortName = Path.GetFileName(ReadFromFilename);
+
             while (true)
             {
                 try
@@ -214,16 +212,32 @@ namespace ft.Streams
 
                     try
                     {
-                        while (true)
+                        var fileAlreadyExisted = File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0;
+                        if (!fileAlreadyExisted)
                         {
-                            if (File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0)
+                            while (true)
                             {
-                                break;
+                                if (File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0)
+                                {
+                                    Program.Log($"[{readFileShortName}] now exists. Reading.");
+                                    break;
+                                }
+                                Thread.Sleep(200);
                             }
-                            Thread.Sleep(200);
                         }
 
                         fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+
+                        if (fileAlreadyExisted)
+                        {
+                            Program.Log($"[{readFileShortName}] already existed. Seeking to end ({fileStream.Length:N0})");
+                            fileStream.Seek(0, SeekOrigin.End);
+                        }
+                        else
+                        {
+                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                        }
+
                         binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
 
                         var isReadyForPurgeStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
@@ -235,7 +249,6 @@ namespace ft.Streams
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
                             PURGE_COMPLETE_FLAG);
-
                     }
                     catch (Exception ex)
                     {
@@ -244,33 +257,46 @@ namespace ft.Streams
                         return;
                     }
 
-                    fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
                     while (true)
                     {
                         while (true)
                         {
                             var nextByte = binaryReader.PeekChar();
-                            if (nextByte != 0)
+                            if (nextByte != -1 && nextByte != 0)
                             {
                                 break;
                             }
 
                             fileStream.Flush();     //force read
+
+                            if (fileStream.Position > fileStream.Length)
+                            {
+                                throw new Exception($"[{readFileShortName}] has been restarted.");
+                            }
+
+                            //Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.")
+
                             WindowsDelay.Wait(1);
                         }
 
-                        var posBeforeCommand = fileStream.Position;
+                        var commandStartPos = fileStream.Position;
+                        var command = Command.Deserialise(binaryReader);
+                        var commandEndPos = fileStream.Position;
 
-                        var command = Command.Deserialise(binaryReader) ?? throw new Exception($"Could not read command at file position {posBeforeCommand:N0}. [{ReadFromFilename}]");
+                        if (command == null)
+                        {
+                            Program.Log($"Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
+                            Environment.Exit(1);
+                        }
 
-                        //Program.Log($"Received {command.GetType().Name}");
+                        //Program.Log($"Received packet number {command.PacketNumber:N0} ({command.GetType().Name}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
                         if (command is Forward forward && forward.Payload != null)
                         {
                             if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                             {
-                                connectionReceiveQueue = [];
+                                connectionReceiveQueue = new();
                                 ReceiveQueue.Add(forward.ConnectionId, connectionReceiveQueue);
                             }
 
@@ -278,19 +304,13 @@ namespace ft.Streams
 
                             var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
                             receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
-
-
-                            //Wait for the data to be sent to the real server, making the connection synchronous
-                            //while (connectionReceiveQueue.Count > 0 && ReceiveQueue.ContainsKey(forward.ConnectionId))
-                            //{
-                            //    Delay.Wait(1);
-                            //}
                         }
                         else if (command is Connect connect)
                         {
                             if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
                             {
-                                ReceiveQueue.Add(connect.ConnectionId, []);
+                                var connectionReceiveQueue = new BlockingCollection<byte[]>();
+                                ReceiveQueue.Add(connect.ConnectionId, connectionReceiveQueue);
 
                                 var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
                                 StreamEstablished?.Invoke(this, sharedFileStream);
@@ -310,6 +330,9 @@ namespace ft.Streams
 
                             Program.Log($"Informed purge is now complete. Resuming as normal.");
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+
+                            //force re-read of file
+                            fileStream.Flush();
                         }
                         else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                         {
@@ -332,7 +355,7 @@ namespace ft.Streams
 
                             if (ping.PingType == EnumPingType.Response)
                             {
-                                pingResponses.Add(ping);
+                                pingResponseReceived.Set();
                             }
                         }
                     }

@@ -8,18 +8,11 @@ using System.Threading.Tasks;
 
 namespace ft.IO
 {
-    public class ToggleWriter
+    public class ToggleWriter(BinaryReader reader, BinaryWriter writer, long position)
     {
-        readonly BinaryReader Reader;
-        readonly BinaryWriter Writer;
-        readonly long Position;
-
-        public ToggleWriter(BinaryReader reader, BinaryWriter writer, long position)
-        {
-            Reader = reader;
-            Writer = writer;
-            Position = position;
-        }
+        readonly BinaryReader Reader = reader;
+        readonly BinaryWriter Writer = writer;
+        readonly long Position = position;
 
         public void Toggle()
         {
