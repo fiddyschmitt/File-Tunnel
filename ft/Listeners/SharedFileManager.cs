@@ -393,20 +393,6 @@ namespace ft.Streams
             cancellationTokenSource.Cancel();
             receiveTask.Wait();
             sendTask.Wait();
-
-            try
-            {
-                Program.Log($"Deleting {ReadFromFilename}");
-                File.Delete(ReadFromFilename);
-            }
-            catch { }
-
-            try
-            {
-                Program.Log($"Deleting {WriteToFilename}");
-                File.Delete(WriteToFilename);
-            }
-            catch { }
             */
         }
 
