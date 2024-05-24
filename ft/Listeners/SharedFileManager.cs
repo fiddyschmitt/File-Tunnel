@@ -35,7 +35,7 @@ namespace ft.Streams
         const int reportIntervalMs = 1000;
         readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
         readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
-        readonly AutoResetEvent pingResponseReceived = new(false);
+        readonly BlockingCollection<Ping> pingResponsesReceived = [];
         public void ReportNetworkPerformance()
         {
             var pingRequest = new Ping(EnumPingType.Request);
@@ -53,11 +53,21 @@ namespace ft.Streams
 
                     string? pingDurationStr = null;
 
-                    if (pingResponseReceived.WaitOne(5000))
+                    var responseTimeout = new CancellationTokenSource(5000);
+                    try
                     {
-                        pingStopwatch.Stop();
-                        pingDurationStr = $"RTT: {pingStopwatch.ElapsedMilliseconds:N0} ms";
+                        while (true)
+                        {
+                            var pingResponse = pingResponsesReceived.GetConsumingEnumerable(responseTimeout.Token).First();
+                            if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
+                            {
+                                pingStopwatch.Stop();
+                                pingDurationStr = $"RTT: {pingStopwatch.ElapsedMilliseconds:N0} ms";
+                                break;
+                            }
+                        }
                     }
+                    catch { }
 
 
                     var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
@@ -355,7 +365,7 @@ namespace ft.Streams
 
                             if (ping.PingType == EnumPingType.Response)
                             {
-                                pingResponseReceived.Set();
+                                pingResponsesReceived.Add(ping);
                             }
                         }
                     }
