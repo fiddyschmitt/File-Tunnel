@@ -137,6 +137,8 @@ namespace ft.Streams
 
         public void SendPump()
         {
+            var writeFileShortName = Path.GetFileName(WriteToFilename);
+
             try
             {
                 //the writer always creates the file
@@ -170,18 +172,19 @@ namespace ft.Streams
 
                     if (fileStream.Position + ms.Length >= Program.SHARED_FILE_SIZE - 10)
                     {
+                        Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
+
                         var purge = new Purge();
                         purge.Serialise(binaryWriter);
 
-                        Program.Log($"Waiting for other side to be ready for purge.");
                         isReadyForPurge?.Wait();
-                        Program.Log($"Other side is now ready for purge of {Path.GetFileName(WriteToFilename)}.");
+                        //Program.Log($"[{writeFileShortName}] Counterpart is now ready for purge of {Path.GetFileName(WriteToFilename)}.");
 
                         fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                         fileStream.SetLength(MESSAGE_WRITE_POS);
 
                         setPurgeComplete.Toggle();
-                        Program.Log($"Purge is now complete: {Path.GetFileName(WriteToFilename)}.");
+                        Program.Log($"[{writeFileShortName}] Purge complete.");
                     }
 
                     //write the message to file
@@ -189,7 +192,7 @@ namespace ft.Streams
                     command.Serialise(binaryWriter);
                     var commandEndPos = fileStream.Position;
 
-                    //Program.Log($"Wrote packet number {command.PacketNumber:N0} ({command.GetType().Name}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                    //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetType().Name}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
                     if (command is Forward forward && forward.Payload != null)
                     {
@@ -200,7 +203,7 @@ namespace ft.Streams
             }
             catch (Exception ex)
             {
-                Program.Log(ex.ToString());
+                Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
                 Environment.Exit(1);
             }
         }
@@ -262,7 +265,7 @@ namespace ft.Streams
                     }
                     catch (Exception ex)
                     {
-                        Program.Log(ex.ToString());
+                        Program.Log($"[{readFileShortName}] Establish file: {ex}");
                         Environment.Exit(1);
                         return;
                     }
@@ -296,11 +299,11 @@ namespace ft.Streams
 
                         if (command == null)
                         {
-                            Program.Log($"Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
+                            Program.Log($"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
                             Environment.Exit(1);
                         }
 
-                        //Program.Log($"Received packet number {command.PacketNumber:N0} ({command.GetType().Name}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        //Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetType().Name}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
                         if (command is Forward forward && forward.Payload != null)
                         {
@@ -328,25 +331,24 @@ namespace ft.Streams
                         }
                         else if (command is Purge)
                         {
-                            Program.Log($"Was asked to prepare for purge.");
+                            Program.Log($"[{readFileShortName}] Counterpart is about to purge this file.");
 
                             //signal that we're ready
                             setReadyForPurge?.Toggle();
-                            Program.Log($"Informed counterpart we are ready for purge.");
+                            //Program.Log($"[{readFileShortName}] Informed counterpart we are ready for purge.");
 
                             //wait for the purge to be complete
-                            Program.Log($"Waiting for purge to be complete.");
+                            //Program.Log($"[{readFileShortName}] Waiting for purge to be complete.");
                             isPurgeComplete.Wait();
 
-                            Program.Log($"Informed purge is now complete. Resuming as normal.");
-                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            Program.Log($"[{readFileShortName}] Purge is complete.");
 
-                            //force re-read of file
-                            fileStream.Flush();
+                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            fileStream.Flush(); //force re-read of file
                         }
                         else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                         {
-                            Program.Log($"Was asked to tear down connection {teardown.ConnectionId}");
+                            Program.Log($"[{readFileShortName}] Counterpart asked to tear down connection {teardown.ConnectionId}");
 
                             ReceiveQueue.Remove(teardown.ConnectionId);
 
@@ -372,8 +374,8 @@ namespace ft.Streams
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"{nameof(ReceivePump)}: {ex.Message}");
-                    Program.Log($"Restarting {nameof(ReceivePump)}");
+                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
+                    Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
                 }
             }
         }
