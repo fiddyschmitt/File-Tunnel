@@ -14,7 +14,7 @@ namespace ft.Utilities
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                Thread.Sleep(1);
+                Thread.Sleep(ms);
                 return;
             }
 

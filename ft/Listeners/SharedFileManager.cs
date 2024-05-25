@@ -290,7 +290,7 @@ namespace ft.Streams
 
                             //Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.")
 
-                            WindowsDelay.Wait(1);
+                            Delay.Wait(1);
                         }
 
                         var commandStartPos = fileStream.Position;
