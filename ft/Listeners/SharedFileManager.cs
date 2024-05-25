@@ -128,9 +128,10 @@ namespace ft.Streams
             ReceiveQueue.Remove(connectionId);
         }
 
-        const int READY_FOR_PURGE_FLAG = 0;
-        const int PURGE_COMPLETE_FLAG = 1;
-        const int MESSAGE_WRITE_POS = 2;
+        const long SESSION_ID = 0;
+        const int READY_FOR_PURGE_FLAG = sizeof(long);
+        const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
+        const int MESSAGE_WRITE_POS = PURGE_COMPLETE_FLAG + 1;
 
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
@@ -147,6 +148,10 @@ namespace ft.Streams
 
                 var binaryWriter = new BinaryWriter(fileStream);
                 var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+
+                var sessionId = Program.Random.NextInt64();
+                binaryWriter.Write(sessionId);
+                //Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
 
                 var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                 setReadyForPurge = new ToggleWriter(
@@ -211,6 +216,17 @@ namespace ft.Streams
         ToggleReader? isReadyForPurge;
         ToggleReader? isPurgeComplete;
 
+        public static long ReadSessionId(BinaryReader binaryReader)
+        {
+            var originalPos = binaryReader.BaseStream.Position;
+            binaryReader.BaseStream.Seek(SESSION_ID, SeekOrigin.Begin);
+            var result = binaryReader.ReadInt64();
+
+            binaryReader.BaseStream.Seek(originalPos, SeekOrigin.Begin);
+
+            return result;
+        }
+
         readonly CancellationTokenSource cancellationTokenSource = new();
         public void ReceivePump()
         {
@@ -222,6 +238,7 @@ namespace ft.Streams
                 {
                     FileStream? fileStream = null;
                     BinaryReader? binaryReader = null;
+                    long currentSessionId;
 
                     try
                     {
@@ -253,6 +270,10 @@ namespace ft.Streams
 
                         binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
 
+                        currentSessionId = ReadSessionId(binaryReader);
+                        //Program.Log($"[{readFileShortName}] Read Session ID: {currentSessionId}");
+
+
                         var isReadyForPurgeStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
@@ -270,7 +291,8 @@ namespace ft.Streams
                         return;
                     }
 
-
+                    var checkForSessionChange = new Stopwatch();
+                    checkForSessionChange.Start();
                     while (true)
                     {
                         while (true)
@@ -283,9 +305,22 @@ namespace ft.Streams
 
                             fileStream.Flush();     //force read
 
-                            if (fileStream.Position > fileStream.Length)
+                            //This doesn't work in Linux
+                            //if (fileStream.Position > fileStream.Length)
+                            //{
+                            //    throw new Exception($"[{readFileShortName}] has been restarted.");
+                            //}
+
+                            if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
-                                throw new Exception($"[{readFileShortName}] has been restarted.");
+                                var latestSessionId = ReadSessionId(binaryReader);
+
+                                if (latestSessionId != currentSessionId)
+                                {
+                                    throw new Exception($"New session detected.");
+                                }
+
+                                checkForSessionChange.Restart();
                             }
 
                             //Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.")

@@ -172,6 +172,7 @@ namespace ft
         }
 
         static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;
+        public static readonly Random Random = new();
 
         public static void Log(string str, ConsoleColor? color = null)
         {
