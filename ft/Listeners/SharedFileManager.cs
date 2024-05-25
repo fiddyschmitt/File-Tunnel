@@ -231,6 +231,7 @@ namespace ft.Streams
         public void ReceivePump()
         {
             var readFileShortName = Path.GetFileName(ReadFromFilename);
+            var checkForSessionChange = new Stopwatch();
 
             while (true)
             {
@@ -291,8 +292,7 @@ namespace ft.Streams
                         return;
                     }
 
-                    var checkForSessionChange = new Stopwatch();
-                    checkForSessionChange.Start();
+                    checkForSessionChange.Restart();
                     while (true)
                     {
                         while (true)
@@ -305,7 +305,7 @@ namespace ft.Streams
 
                             fileStream.Flush();     //force read
 
-                            //This doesn't work in Linux
+                            //This doesn't work in Linux (Length doesn't seem to be refreshed after Flush())
                             //if (fileStream.Position > fileStream.Length)
                             //{
                             //    throw new Exception($"[{readFileShortName}] has been restarted.");
