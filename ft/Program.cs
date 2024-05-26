@@ -24,7 +24,6 @@ namespace ft
 
 
         static int connectionId = 0;
-        public const int SHARED_FILE_SIZE = 10 * 1024 * 1024;
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
         public static void Main(string[] args)
@@ -57,7 +56,7 @@ namespace ft
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim());
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim(), o.PurgeSizeInBytes);
 
                        var relayStreamCreator = new Func<Stream>(() =>
                        {
@@ -73,8 +72,8 @@ namespace ft
                        {
                            var secondaryStream = relayStreamCreator();
 
-                           var relay1 = new Relay(stream, secondaryStream);
-                           var relay2 = new Relay(secondaryStream, stream);
+                           var relay1 = new Relay(stream, secondaryStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                           var relay2 = new Relay(secondaryStream, stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
 
                            void tearDown()
                            {
@@ -92,7 +91,7 @@ namespace ft
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo);
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo, o.PurgeSizeInBytes);
 
                        if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
                        {
@@ -117,8 +116,8 @@ namespace ft
 
                                Log($"Connected to {o.TcpConnectTo}");
 
-                               var relay1 = new Relay(tcpClient.GetStream(), stream);
-                               var relay2 = new Relay(stream, tcpClient.GetStream());
+                               var relay1 = new Relay(tcpClient.GetStream(), stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                               var relay2 = new Relay(stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
 
                                void tearDown()
                                {
@@ -142,8 +141,8 @@ namespace ft
 
                                Log($"Will send data to {o.UdpSendTo} from {o.UdpListenTo}");
 
-                               var relay1 = new Relay(udpStream, stream);
-                               var relay2 = new Relay(stream, udpStream);
+                               var relay1 = new Relay(udpStream, stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                               var relay2 = new Relay(stream, udpStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
 
                                void tearDown()
                                {

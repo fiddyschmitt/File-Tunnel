@@ -22,10 +22,11 @@ namespace ft.Streams
         readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
 
-        public SharedFileManager(string readFromFilename, string writeToFilename)
+        public SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes)
         {
             ReadFromFilename = readFromFilename;
             WriteToFilename = writeToFilename;
+            PurgeSizeInBytes = purgeSizeInBytes;
 
             Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
             Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
@@ -143,7 +144,7 @@ namespace ft.Streams
             try
             {
                 //the writer always creates the file
-                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, Program.SHARED_FILE_SIZE * 2); //large buffer to prevent FileStream from autoflushing
+                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, PurgeSizeInBytes * 2); //large buffer to prevent FileStream from autoflushing
                 fileStream.SetLength(MESSAGE_WRITE_POS);
 
                 var binaryWriter = new BinaryWriter(fileStream);
@@ -175,7 +176,7 @@ namespace ft.Streams
                     ms.SetLength(0);
                     command.Serialise(msWriter);
 
-                    if (fileStream.Position + ms.Length >= Program.SHARED_FILE_SIZE - 10)
+                    if (fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
                     {
                         Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
 
@@ -432,6 +433,7 @@ namespace ft.Streams
         }
 
         public string WriteToFilename { get; }
+        public int PurgeSizeInBytes { get; }
         public string ReadFromFilename { get; }
     }
 }

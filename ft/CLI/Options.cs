@@ -36,6 +36,11 @@ namespace ft.CLI
         public string? ReadFrom { get; set; }
 
 
+        [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
+        public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;
+
+        [Option("read-duration", Required = false, HelpText = @"The duration (in milliseconds) to read data from a TCP connection. Larger values increase throughput (by reducing the number of small writes to file), whereas smaller values improve responsiveness.")]
+        public int ReadDurationMillis { get; set; } = 50;
 
 
 

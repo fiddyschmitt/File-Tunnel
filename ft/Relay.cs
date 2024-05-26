@@ -12,9 +12,9 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream)
+        public Relay(Stream fromStream, Stream toStream, int purgeSizeInBytes, int readDurationMillis)
         {
-            var bufferSize = (int)((Program.SHARED_FILE_SIZE / 2d) * 0.9d);
+            var bufferSize = (int)(purgeSizeInBytes / 2d * 0.9d);
 
             Task.Factory.StartNew(() =>
             {
@@ -26,7 +26,7 @@ namespace ft
                         {
                             //Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                         }
-                    }, null);
+                    }, null, readDurationMillis);
                 }
                 catch (Exception ex)
                 {

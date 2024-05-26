@@ -44,11 +44,10 @@ namespace ft
         //Never trust buffer.Length
         public static readonly ArrayPool<byte> BufferPool = ArrayPool<byte>.Create(ARBITARY_MEDIUM_SIZE_BUFFER + 1, 50);
 
-        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource)
+        public static void CopyTo(this Stream input, Stream output, int bufferSize, Action<int> callBack, CancellationTokenSource? cancellationTokenSource, int readDurationMillis)
         {
             var buffer = BufferPool.Rent(bufferSize);
 
-            var readDurationMillis = 50;
             var maxQuietDurationMillis = (int)Math.Max(1, readDurationMillis / 4d);
 
             var read = 0;
