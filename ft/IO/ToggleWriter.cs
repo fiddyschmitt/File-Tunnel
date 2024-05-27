@@ -8,20 +8,15 @@ using System.Threading.Tasks;
 
 namespace ft.IO
 {
-    public class ToggleWriter(BinaryReader reader, BinaryWriter writer, long position)
+    public class ToggleWriter(BinaryWriter writer, long position)
     {
-        readonly BinaryReader Reader = reader;
         readonly BinaryWriter Writer = writer;
         readonly long Position = position;
 
-        public void Toggle()
+        public void Set(byte value)
         {
-            Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
-            var originalValue = Reader.PeekChar();
-
-            var newValue = originalValue == 0 ? (byte)1 : (byte)0;
-
-            Writer.Write(newValue);
+            Writer.BaseStream.Seek(Position, SeekOrigin.Begin);
+            Writer.Write(value);
             Writer.Flush();
         }
     }

@@ -12,7 +12,6 @@ namespace ft.IO
     {
         readonly BinaryReader Reader;
         readonly long Position;
-        int lastReadValue;
 
         public ToggleReader(BinaryReader reader, long position)
         {
@@ -20,10 +19,9 @@ namespace ft.IO
             Position = position;
 
             Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
-            lastReadValue = Reader.PeekChar();
         }
 
-        public void Wait()
+        public void Wait(byte value)
         {
             Reader.BaseStream.Seek(Position, SeekOrigin.Begin);
 
@@ -32,15 +30,13 @@ namespace ft.IO
             {
                 currentValue = Reader.PeekChar();
 
-                if (currentValue != lastReadValue)
+                if (currentValue == value)
                 {
                     break;
                 }
 
                 Delay.Wait(1);
             }
-
-            lastReadValue = currentValue;
         }
     }
 }

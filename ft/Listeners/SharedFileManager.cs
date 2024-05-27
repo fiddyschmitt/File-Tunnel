@@ -173,13 +173,11 @@ namespace ft.Streams
 
                 var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                 setReadyForPurge = new ToggleWriter(
-                    new BinaryReader(setReadyForPurgeStream, Encoding.ASCII),
                     new BinaryWriter(setReadyForPurgeStream),
                     READY_FOR_PURGE_FLAG);
 
                 var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                 setPurgeComplete = new ToggleWriter(
-                    new BinaryReader(setPurgeCompleteStream, Encoding.ASCII),
                     new BinaryWriter(setPurgeCompleteStream),
                     PURGE_COMPLETE_FLAG);
 
@@ -200,13 +198,22 @@ namespace ft.Streams
                         var purge = new Purge();
                         purge.Serialise(binaryWriter);
 
-                        isReadyForPurge?.Wait();
-                        //Program.Log($"[{writeFileShortName}] Counterpart is now ready for purge of {Path.GetFileName(WriteToFilename)}.");
+                        //wait for counterpart to be ready for purge
+                        isReadyForPurge?.Wait(1);
 
+                        //perform the purge
                         fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                         fileStream.SetLength(MESSAGE_WRITE_POS);
 
-                        setPurgeComplete.Toggle();
+                        //signal that the purge is complete
+                        setPurgeComplete.Set(1);
+                        
+                        //wait for counterpart clear their ready flag
+                        isReadyForPurge?.Wait(0);
+
+                        //clear our complete flag
+                        setPurgeComplete.Set(0);
+
                         Program.Log($"[{writeFileShortName}] Purge complete.");
                     }
 
@@ -385,18 +392,23 @@ namespace ft.Streams
                         {
                             Program.Log($"[{readFileShortName}] Counterpart is about to purge this file.");
 
-                            //signal that we're ready
-                            setReadyForPurge?.Toggle();
-                            //Program.Log($"[{readFileShortName}] Informed counterpart we are ready for purge.");
-
+                            //signal that we're ready for purge
+                            setReadyForPurge?.Set(1);
+                            
                             //wait for the purge to be complete
-                            //Program.Log($"[{readFileShortName}] Waiting for purge to be complete.");
-                            isPurgeComplete.Wait();
+                            isPurgeComplete.Wait(1);
 
-                            Program.Log($"[{readFileShortName}] Purge is complete.");
-
+                            //go back to the beginning
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                             fileStream.Flush(); //force re-read of file
+
+                            //clear our ready flag
+                            setReadyForPurge?.Set(0);
+
+                            //wait for counterpart to clear the complete flag
+                            isPurgeComplete.Wait(0);
+
+                            Program.Log($"[{readFileShortName}] File was purged by counterpart.");
                         }
                         else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                         {
