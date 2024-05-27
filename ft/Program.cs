@@ -35,7 +35,6 @@ namespace ft
                {
                    if (o.PrintVersion)
                    {
-                       Log($"{PROGRAM_NAME} {VERSION}");
                        Environment.Exit(0);
                    }
 
