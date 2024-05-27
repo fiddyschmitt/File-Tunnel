@@ -9,7 +9,7 @@ namespace ft.Commands
 {
     public class TearDown : Command
     {
-        public const byte COMMAND_ID = 5;
+        public const byte COMMAND_ID = 50;
         public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }

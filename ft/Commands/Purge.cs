@@ -9,7 +9,7 @@ namespace ft.Commands
 {
     public class Purge : Command
     {
-        public const byte COMMAND_ID = 3;
+        public const byte COMMAND_ID = 40;
         public override byte CommandId => COMMAND_ID;
 
         public Purge()

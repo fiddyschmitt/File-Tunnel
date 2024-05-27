@@ -9,7 +9,7 @@ namespace ft.Commands
 {
     public class Ping : Command
     {
-        public const byte COMMAND_ID = 6;
+        public const byte COMMAND_ID = 30;
 
         public EnumPingType PingType { get; protected set; }
         public ulong ResponseToPacketNumber { get; set; }

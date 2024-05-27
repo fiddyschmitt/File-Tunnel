@@ -10,6 +10,7 @@ namespace ft.Listeners
     public abstract class StreamEstablisher
     {
         public EventHandler<Stream>? StreamEstablished;
+        public abstract void Start();
         public abstract void Stop();
     }
 }

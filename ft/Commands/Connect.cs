@@ -9,7 +9,7 @@ namespace ft.Commands
 {
     public class Connect : Command
     {
-        public const byte COMMAND_ID = 1;
+        public const byte COMMAND_ID = 10;
         public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }

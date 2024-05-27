@@ -27,10 +27,6 @@ namespace ft.Streams
             ReadFromFilename = readFromFilename;
             WriteToFilename = writeToFilename;
             PurgeSizeInBytes = purgeSizeInBytes;
-
-            Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(ReportNetworkPerformance, TaskCreationOptions.LongRunning);
         }
 
         const int reportIntervalMs = 1000;
@@ -71,13 +67,29 @@ namespace ft.Streams
                     catch { }
 
 
-                    var logStr = $"Read from file: {receivedBandwidthStr,-12} Wrote to file: {sentBandwidthStr,-12}";
+
+                    Console.Write($"{DateTime.Now}: Counterpart: ");
+
+                    if (IsOnline)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.Write($"{"Online",-10}");
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.Write($"{"Offline",-10}");
+                    }
+
+
+                    var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
                     if (pingDurationStr != null)
                     {
                         logStr += $" {pingDurationStr}";
                     }
 
-                    Program.Log(logStr);
+                    Console.ForegroundColor = Program.OriginalConsoleColour;
+                    Console.WriteLine(logStr);
 
                     Thread.Sleep(reportIntervalMs);
                 }
@@ -92,8 +104,7 @@ namespace ft.Streams
         {
             if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
             {
-                connectionReceiveQueue = new();
-                ReceiveQueue.Add(connectionId, connectionReceiveQueue);
+                return null;
             }
 
             byte[]? result = null;
@@ -113,6 +124,12 @@ namespace ft.Streams
         {
             var connectCommand = new Connect(connectionId);
             SendQueue.Add(connectCommand);
+
+            if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+            {
+                connectionReceiveQueue = [];
+                ReceiveQueue.Add(connectionId, connectionReceiveQueue);
+            }
         }
 
         public void Write(int connectionId, byte[] data)
@@ -339,20 +356,19 @@ namespace ft.Streams
                             Environment.Exit(1);
                         }
 
+                        lastContactWithCounterpart = DateTime.Now;
+
                         //Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetType().Name}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
                         if (command is Forward forward && forward.Payload != null)
                         {
-                            if (!ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+                            if (ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
                             {
-                                connectionReceiveQueue = new();
-                                ReceiveQueue.Add(forward.ConnectionId, connectionReceiveQueue);
+                                connectionReceiveQueue.Add(forward.Payload);
+
+                                var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
+                                receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
                             }
-
-                            connectionReceiveQueue.Add(forward.Payload);
-
-                            var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
-                            receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
                         }
                         else if (command is Connect connect)
                         {
@@ -416,24 +432,69 @@ namespace ft.Streams
             }
         }
 
+        public override void Start()
+        {
+            Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ReportNetworkPerformance, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(MonitorOnlineStatus, TaskCreationOptions.LongRunning);
+        }
+
+        DateTime? lastContactWithCounterpart = null;
+        public bool IsOnline { get; protected set; } = false;
+        public event EventHandler<OnlineStatusEventArgs>? OnlineStatusChanged;
+
+        private void MonitorOnlineStatus()
+        {
+            try
+            {
+                while (true)
+                {
+                    if (lastContactWithCounterpart != null)
+                    {
+                        var orig = IsOnline;
+
+                        var timeSinceLastContact = DateTime.Now - lastContactWithCounterpart.Value;
+                        IsOnline = timeSinceLastContact.TotalMilliseconds < 5000;
+
+                        if (orig != IsOnline)
+                        {
+                            OnlineStatusChanged?.Invoke(this, new OnlineStatusEventArgs(IsOnline));
+                        }
+                    }
+
+                    Thread.Sleep(100);
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"{nameof(MonitorOnlineStatus)}: {ex.Message}");
+            }
+        }
+
         public override void Stop()
         {
-            /*
-            ConnectionIds
-                .ForEach(connectionId =>
+            ReceiveQueue
+                .Keys
+                .ToList()
+                .ForEach(key =>
                 {
-                    var teardownCommand = new TearDown(connectionId);
+                    var teardownCommand = new TearDown(key);
                     SendQueue.Add(teardownCommand);
-                });
 
-            cancellationTokenSource.Cancel();
-            receiveTask.Wait();
-            sendTask.Wait();
-            */
+                    var receiveQueue = ReceiveQueue[key];
+                    receiveQueue.CompleteAdding();
+                    ReceiveQueue.Remove(key);
+                });
         }
 
         public string WriteToFilename { get; }
         public int PurgeSizeInBytes { get; }
         public string ReadFromFilename { get; }
+    }
+
+    public class OnlineStatusEventArgs(bool isOnline)
+    {
+        public bool IsOnline { get; } = isOnline;
     }
 }

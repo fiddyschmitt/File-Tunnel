@@ -12,12 +12,18 @@ namespace ft.Listeners
 {
     public class UdpServer : StreamEstablisher
     {
-        readonly UdpClient listener;
-        readonly Task listenerTask;
+        UdpClient? listener;
+        Task? listenerTask;
+        string ListenEndpointStr { get; }
 
         public UdpServer(string listenEndpointStr)
         {
-            var listenEndpoint = IPEndPoint.Parse(listenEndpointStr);
+            ListenEndpointStr = listenEndpointStr;
+        }
+
+        public override void Start()
+        {
+            var listenEndpoint = IPEndPoint.Parse(ListenEndpointStr);
 
             listener = new UdpClient(listenEndpoint);
 
@@ -55,7 +61,7 @@ namespace ft.Listeners
         {
             try
             {
-                listener.Close();
+                listener?.Close();
             }
             catch (Exception ex)
             {
@@ -65,13 +71,12 @@ namespace ft.Listeners
 
             try
             {
-                listenerTask.Wait();
+                listenerTask?.Wait();
             }
             catch (Exception ex)
             {
                 Program.Log($"Stop(): {ex}");
             }
-
         }
     }
 }

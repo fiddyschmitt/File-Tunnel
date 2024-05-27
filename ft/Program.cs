@@ -20,7 +20,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "1.1.0";
+        const string VERSION = "2.0.0";
 
 
         static int connectionId = 0;
@@ -46,6 +46,12 @@ namespace ft
                        if (!string.IsNullOrEmpty(o.TcpListenTo)) listener = new TcpServer(o.TcpListenTo);
                        if (!string.IsNullOrEmpty(o.UdpListenTo)) listener = new UdpServer(o.UdpListenTo);
 
+                       if (listener == null)
+                       {
+                           Log("No listener specified by args");
+                           return;
+                       }
+
                        var listenToStr = o.TcpListenTo;
                        if (string.IsNullOrEmpty(listenToStr)) listenToStr = o.UdpListenTo;
 
@@ -57,6 +63,18 @@ namespace ft
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
                        var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim(), o.PurgeSizeInBytes);
+
+                       sharedFileManager.OnlineStatusChanged += (sender, args) =>
+                       {
+                           if (args.IsOnline)
+                           {
+                               listener.Start();
+                           }
+                           else
+                           {
+                               listener.Stop();
+                           }
+                       };
 
                        var relayStreamCreator = new Func<Stream>(() =>
                        {
@@ -84,6 +102,8 @@ namespace ft
                            relay1.RelayFinished += (s, a) => tearDown();
                            relay2.RelayFinished += (s, a) => tearDown();
                        };
+
+                       sharedFileManager.Start();
                    }
 
                    if (!string.IsNullOrEmpty(o.TcpConnectTo) || !string.IsNullOrEmpty(o.UdpSendTo))
@@ -105,6 +125,14 @@ namespace ft
                        Log($"Will listen to: {o.ReadFrom}");
                        Log($"and forward to: {forwardToStr}");
                        if (!string.IsNullOrEmpty(o.WriteTo)) Log($"and when they respond, will write the response to: {o.WriteTo}");
+
+                       sharedFileManager.OnlineStatusChanged += (sender, args) =>
+                       {
+                           if (!args.IsOnline)
+                           {
+                               sharedFileManager.Stop();
+                           }
+                       };
 
                        sharedFileManager.StreamEstablished += (sender, stream) =>
                        {
@@ -154,6 +182,8 @@ namespace ft
                                relay2.RelayFinished += (s, a) => tearDown();
                            }
                        };
+
+                       sharedFileManager.Start();
                    }
                });
 
@@ -170,7 +200,7 @@ namespace ft
             }
         }
 
-        static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;
+        public static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;
         public static readonly Random Random = new();
 
         public static void Log(string str, ConsoleColor? color = null)

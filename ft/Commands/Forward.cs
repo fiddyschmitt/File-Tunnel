@@ -10,7 +10,7 @@ namespace ft.Commands
 {
     public class Forward : Command
     {
-        public const byte COMMAND_ID = 2;
+        public const byte COMMAND_ID = 20;
         public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }

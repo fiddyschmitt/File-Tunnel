@@ -12,11 +12,18 @@ namespace ft.Listeners
     public class TcpServer : StreamEstablisher
     {
         TcpListener? listener;
-        readonly Task listenerTask;
+        Task? listenerTask;
+
+        public string EndpointStr { get; }
 
         public TcpServer(string endpointStr)
         {
-            var listenEndpoint = IPEndPoint.Parse(endpointStr);
+            EndpointStr = endpointStr;
+        }
+
+        public override void Start()
+        {
+            var listenEndpoint = IPEndPoint.Parse(EndpointStr);
 
             listenerTask = Task.Factory.StartNew(() =>
             {
@@ -24,7 +31,7 @@ namespace ft.Listeners
                 {
                     listener = new TcpListener(listenEndpoint);
                     listener.Start();
-                    Program.Log($"Listening on {endpointStr}");
+                    Program.Log($"Listening on {EndpointStr}");
 
                     while (true)
                     {
@@ -41,7 +48,7 @@ namespace ft.Listeners
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"TcpServer error: {ex}");
+                    Program.Log($"TcpServer error: {ex.Message}");
                 }
             }, TaskCreationOptions.LongRunning);
         }
@@ -60,7 +67,7 @@ namespace ft.Listeners
 
             try
             {
-                listenerTask.Wait();
+                listenerTask?.Wait();
             }
             catch (Exception ex)
             {
