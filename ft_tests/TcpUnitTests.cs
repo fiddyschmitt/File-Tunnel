@@ -79,7 +79,29 @@ namespace ft_tests
                 .Select(connection =>
                 {
                     var originClient = new TcpClient();
-                    originClient.Connect(IPEndPoint.Parse(listenPoint));
+
+                    var startTime = DateTime.Now;
+
+                    while (true)
+                    {
+                        var duration = DateTime.Now - startTime;
+                        if (duration.TotalSeconds > 10)
+                        {
+                            throw new Exception("Could not connect");
+                        }
+
+                        try
+                        {
+                            originClient.Connect(IPEndPoint.Parse(listenPoint));
+                        }
+                        catch
+                        {
+                            Thread.Sleep(200);
+                            continue;
+                        }
+
+                        break;
+                    }
 
                     var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
                     Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
@@ -128,13 +150,13 @@ namespace ft_tests
             ultimateDestination.Stop();
 
             listenThread.Interrupt();
-            //listenThread.Join();
+            listenThread.Join();
 
             forwardThread.Interrupt();
-            //forwardThread.Join();
+            forwardThread.Join();
 
-            File.Delete(readFilename);
-            File.Delete(writeFilename);
+            //File.Delete(readFilename);
+            //File.Delete(writeFilename);
         }
 
         static void TestDirection(string direction, TcpClient sender, TcpClient receiver, byte[] toSend)
