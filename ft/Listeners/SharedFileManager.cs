@@ -207,7 +207,7 @@ namespace ft.Streams
 
                         //signal that the purge is complete
                         setPurgeComplete.Set(1);
-                        
+
                         //wait for counterpart clear their ready flag
                         isReadyForPurge?.Wait(0);
 
@@ -328,7 +328,6 @@ namespace ft.Streams
                                 break;
                             }
 
-                            fileStream.Flush();     //force read
 
                             //This doesn't work in Linux (Length doesn't seem to be refreshed after Flush())
                             //if (fileStream.Position > fileStream.Length)
@@ -394,13 +393,12 @@ namespace ft.Streams
 
                             //signal that we're ready for purge
                             setReadyForPurge?.Set(1);
-                            
+
                             //wait for the purge to be complete
                             isPurgeComplete.Wait(1);
 
                             //go back to the beginning
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                            fileStream.Flush(); //force re-read of file
 
                             //clear our ready flag
                             setReadyForPurge?.Set(0);
