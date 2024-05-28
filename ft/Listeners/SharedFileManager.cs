@@ -328,13 +328,6 @@ namespace ft.Streams
                                 break;
                             }
 
-
-                            //This doesn't work in Linux (Length doesn't seem to be refreshed after Flush())
-                            //if (fileStream.Position > fileStream.Length)
-                            //{
-                            //    throw new Exception($"[{readFileShortName}] has been restarted.");
-                            //}
-
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
                                 var latestSessionId = ReadSessionId(binaryReader);
