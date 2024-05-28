@@ -328,6 +328,8 @@ namespace ft.Streams
                                 break;
                             }
 
+                            fileStream.Flush(); //force read
+
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
                                 var latestSessionId = ReadSessionId(binaryReader);
@@ -392,6 +394,7 @@ namespace ft.Streams
 
                             //go back to the beginning
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            fileStream.Flush(); //force read
 
                             //clear our ready flag
                             setReadyForPurge?.Set(0);
