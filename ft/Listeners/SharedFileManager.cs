@@ -17,17 +17,10 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileManager : StreamEstablisher
+    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes) : StreamEstablisher
     {
         readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
-
-        public SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes)
-        {
-            ReadFromFilename = readFromFilename;
-            WriteToFilename = writeToFilename;
-            PurgeSizeInBytes = purgeSizeInBytes;
-        }
 
         const int reportIntervalMs = 1000;
         readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
@@ -494,9 +487,9 @@ namespace ft.Streams
                 });
         }
 
-        public string WriteToFilename { get; }
-        public int PurgeSizeInBytes { get; }
-        public string ReadFromFilename { get; }
+        public string WriteToFilename { get; } = writeToFilename;
+        public int PurgeSizeInBytes { get; } = purgeSizeInBytes;
+        public string ReadFromFilename { get; } = readFromFilename;
     }
 
     public class OnlineStatusEventArgs(bool isOnline)

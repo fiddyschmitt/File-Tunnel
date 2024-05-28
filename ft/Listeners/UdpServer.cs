@@ -10,16 +10,11 @@ using System.Threading;
 
 namespace ft.Listeners
 {
-    public class UdpServer : StreamEstablisher
+    public class UdpServer(string listenEndpointStr) : StreamEstablisher
     {
         UdpClient? listener;
         Task? listenerTask;
-        string ListenEndpointStr { get; }
-
-        public UdpServer(string listenEndpointStr)
-        {
-            ListenEndpointStr = listenEndpointStr;
-        }
+        string ListenEndpointStr { get; } = listenEndpointStr;
 
         public override void Start()
         {

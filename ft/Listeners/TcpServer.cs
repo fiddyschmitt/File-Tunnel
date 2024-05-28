@@ -9,17 +9,12 @@ using System.IO;
 
 namespace ft.Listeners
 {
-    public class TcpServer : StreamEstablisher
+    public class TcpServer(string endpointStr) : StreamEstablisher
     {
         TcpListener? listener;
         Task? listenerTask;
 
-        public string EndpointStr { get; }
-
-        public TcpServer(string endpointStr)
-        {
-            EndpointStr = endpointStr;
-        }
+        public string EndpointStr { get; } = endpointStr;
 
         public override void Start()
         {
