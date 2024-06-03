@@ -9,7 +9,9 @@ Portable executables for Windows and Linux can be found over in the [releases](h
 
 <br />
 
-## Example 1 - RDP connection
+## Example 1 - Bypassing a firewall
+
+![ft_fw](img/ft_fw.png?raw=true "Bypass")
 
 You'd like to RDP from Host A to Host B, but a firewall is in the way. But both hosts have access to a shared folder.
 
