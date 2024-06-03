@@ -5,9 +5,7 @@ Tunnel TCP connections through a file.
 <br />
 
 ## Download
-Releases can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
-
-Linux and Windows are supported.
+Portable executables for Windows and Linux can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
 
 <br />
 
@@ -29,7 +27,7 @@ Now on Host A, open an RDP client and connect to: ``127.0.0.1:5000``
 
 ## Example 2 - Tunnel TCP through RDP (similar to SSH tunnel)
 
-You'd like to connect to a remote service, but only have access to Host B using RDP.
+You'd like to connect to a remote service (eg. ``192.168.1.50:8888``), but only have access to Host B using RDP.
 
 ### Host A
 ``ft.exe --tcp-listen 127.0.0.1:5000 --write "C:\Temp\1.dat" --read "C:\Temp\2.dat"``
