@@ -23,6 +23,13 @@ You'd like to connect from Host A to Host B, but a firewall is in the way. But b
 
 Now on Host A, configure the client to connect to: ``127.0.0.1:5000``
 
+<br />
+<br />
+
+This is what the File Tunnel looks like when operating:
+
+<br />
+
 ![Screenshot](img/ft_rdp_screenshot.PNG?raw=true "Screenshot")
 
 <br />
