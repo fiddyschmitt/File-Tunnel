@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -211,6 +212,32 @@ namespace ft
 
             double n = bytes / (double)((ulong)1 << (c * 10));
             return string.Format("{0:0.##} {1}", n, UNITS[c]);
+        }
+
+        public static bool IsValidEndpoint(this string endpointStr)
+        {
+            var result = false;
+
+            if (!string.IsNullOrEmpty(endpointStr))
+            {
+                if (IPEndPoint.TryParse(endpointStr, out var ep))
+                {
+                    if (ep.Port > 0)
+                    {
+                        result = true;
+                    }
+                }
+                else
+                {
+                    var tokens = endpointStr.Split([":"], StringSplitOptions.None);
+                    if (tokens.Length == 2 && int.TryParse(tokens[1], out var _))
+                    {
+                        result = true;
+                    }
+                }
+            }
+
+            return result;
         }
     }
 }

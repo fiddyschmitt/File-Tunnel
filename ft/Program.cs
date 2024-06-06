@@ -54,6 +54,13 @@ namespace ft
                        var listenToStr = o.TcpListenTo;
                        if (string.IsNullOrEmpty(listenToStr)) listenToStr = o.UdpListenTo;
 
+                       if (listenToStr != null && !listenToStr.IsValidEndpoint())
+                       {
+                           Log($"Invalid endpoint specified: {listenToStr}");
+                           Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
+                           return;
+                       }
+
                        Log($"Will listen to: {listenToStr}");
                        Log($"and forward to: {o.WriteTo}");
                        if (!string.IsNullOrEmpty(o.ReadFrom)) Log($"and read responses from: {o.ReadFrom}");
@@ -120,6 +127,13 @@ namespace ft
 
                        var forwardToStr = o.TcpConnectTo;
                        if (string.IsNullOrEmpty(forwardToStr)) forwardToStr = o.UdpSendTo;
+
+                       if (forwardToStr != null && !forwardToStr.IsValidEndpoint())
+                       {
+                           Log($"Invalid endpoint specified: {forwardToStr}");
+                           Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
+                           return;
+                       }
 
                        Log($"Will listen to: {o.ReadFrom}");
                        Log($"and forward to: {forwardToStr}");
