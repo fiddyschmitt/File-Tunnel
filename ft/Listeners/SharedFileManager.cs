@@ -17,7 +17,7 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes) : StreamEstablisher
+    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes, int tunnelTimeoutMilliseconds) : StreamEstablisher
     {
         readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
@@ -43,7 +43,7 @@ namespace ft.Streams
 
                     string? pingDurationStr = null;
 
-                    var responseTimeout = new CancellationTokenSource(5000);
+                    var responseTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
                     try
                     {
                         while (true)

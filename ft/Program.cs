@@ -61,7 +61,7 @@ namespace ft
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim(), o.PurgeSizeInBytes);
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
 
                        sharedFileManager.OnlineStatusChanged += (sender, args) =>
                        {
@@ -110,7 +110,7 @@ namespace ft
                        if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
                        if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo, o.PurgeSizeInBytes);
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo, o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
 
                        if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
                        {

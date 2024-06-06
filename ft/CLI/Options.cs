@@ -16,6 +16,9 @@ namespace ft.CLI
         [Option("tcp-connect", Required = false, HelpText = "Connect to a TCP server. Example --tcp-connect 127.0.0.1:22")]
         public string? TcpConnectTo { get; set; }
 
+        [Option("read-duration", Required = false, HelpText = @"The duration (in milliseconds) to read data from a TCP connection. Larger values increase throughput (by reducing the number of small writes to file), whereas smaller values improve responsiveness.")]
+        public int ReadDurationMillis { get; set; } = 50;
+
 
 
         [Option("udp-listen", Required = false, HelpText = "A local address on which to listen for UDP data. Example --udp-listen 127.0.0.1:11000")]
@@ -36,12 +39,12 @@ namespace ft.CLI
         public string? ReadFrom { get; set; }
 
 
+
         [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
-        public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;
+        public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;        
 
-        [Option("read-duration", Required = false, HelpText = @"The duration (in milliseconds) to read data from a TCP connection. Larger values increase throughput (by reducing the number of small writes to file), whereas smaller values improve responsiveness.")]
-        public int ReadDurationMillis { get; set; } = 50;
-
+        [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point.")]
+        public int TunnelTimeoutMilliseconds { get; set; } = 10000;
 
 
 
