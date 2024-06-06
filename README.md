@@ -25,6 +25,15 @@ Now on Host A, configure the client to connect to: ``127.0.0.1:5000``
 
 <br />
 <br />
+
+This is what the File Tunnel looks like when operating:
+
+<br />
+
+![Screenshot](img/ft_rdp_screenshot.PNG?raw=true "Screenshot")
+
+<br />
+<br />
 <br />
 
 ## Example 2 - Tunnel TCP through RDP (similar to SSH tunnel)
