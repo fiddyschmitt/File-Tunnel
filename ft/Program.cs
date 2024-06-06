@@ -137,9 +137,17 @@ namespace ft
                        {
                            if (!string.IsNullOrEmpty(o.TcpConnectTo))
                            {
-                               var connectToEndpoint = IPEndPoint.Parse(o.TcpConnectTo);
                                var tcpClient = new TcpClient();
-                               tcpClient.Connect(connectToEndpoint);
+
+                               if (IPEndPoint.TryParse(o.TcpConnectTo, out var connectToEndpoint))
+                               {
+                                   tcpClient.Connect(connectToEndpoint);
+                               }
+                               else
+                               {
+                                   var tokens = o.TcpConnectTo.Split([":"], StringSplitOptions.None);
+                                   tcpClient.Connect(tokens[0], int.Parse(tokens[1]));
+                               }
 
                                Log($"Connected to {o.TcpConnectTo}");
 
