@@ -454,7 +454,7 @@ namespace ft.Streams
                         var orig = IsOnline;
 
                         var timeSinceLastContact = DateTime.Now - lastContactWithCounterpart.Value;
-                        IsOnline = timeSinceLastContact.TotalMilliseconds < 5000;
+                        IsOnline = timeSinceLastContact.TotalMilliseconds < tunnelTimeoutMilliseconds;
 
                         if (orig != IsOnline)
                         {
