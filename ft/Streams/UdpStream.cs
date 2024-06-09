@@ -19,7 +19,7 @@ namespace ft.Streams
             Client = client;
             SendTo = sendTo;
 
-            Task.Factory.StartNew(() =>
+            Threads.StartNew(() =>
             {
                 try
                 {
@@ -36,7 +36,7 @@ namespace ft.Streams
                 {
                     Program.Log($"UDP Read Pump: {ex}");
                 }
-            }, TaskCreationOptions.LongRunning);
+            }, $"{nameof(UdpStream)} Receive loop");
         }
 
         public override bool CanRead => true;

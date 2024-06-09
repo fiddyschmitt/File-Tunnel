@@ -13,7 +13,7 @@ namespace ft.Listeners
     public class UdpServer(string listenEndpointStr) : StreamEstablisher
     {
         UdpClient? listener;
-        Task? listenerTask;
+        Thread? listenerTask;
         string ListenEndpointStr { get; } = listenEndpointStr;
 
         public override void Start()
@@ -24,7 +24,7 @@ namespace ft.Listeners
 
             var connections = new Dictionary<IPEndPoint, UdpStream>();
 
-            listenerTask = Task.Factory.StartNew(() =>
+            listenerTask = Threads.StartNew(() =>
             {
                 try
                 {
@@ -49,7 +49,7 @@ namespace ft.Listeners
                 {
                     Program.Log($"UdpServer error: {ex}");
                 }
-            }, TaskCreationOptions.LongRunning);
+            }, $"UDP listener {listenEndpoint}");
         }
 
         public override void Stop()
@@ -66,7 +66,7 @@ namespace ft.Listeners
 
             try
             {
-                listenerTask?.Wait();
+                listenerTask?.Join();
             }
             catch (Exception ex)
             {

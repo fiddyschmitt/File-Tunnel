@@ -433,10 +433,10 @@ namespace ft.Streams
 
         public override void Start()
         {
-            Task.Factory.StartNew(ReceivePump, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(SendPump, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(ReportNetworkPerformance, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(MonitorOnlineStatus, TaskCreationOptions.LongRunning);
+            Threads.StartNew(ReceivePump, nameof(ReceivePump));
+            Threads.StartNew(SendPump, nameof(SendPump));
+            Threads.StartNew(ReportNetworkPerformance, nameof(ReportNetworkPerformance));
+            Threads.StartNew(MonitorOnlineStatus, nameof(MonitorOnlineStatus));
         }
 
         DateTime? lastContactWithCounterpart = null;

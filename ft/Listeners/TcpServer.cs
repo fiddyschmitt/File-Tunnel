@@ -6,13 +6,14 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
+using System.Threading;
 
 namespace ft.Listeners
 {
     public class TcpServer(string endpointStr) : StreamEstablisher
     {
         TcpListener? listener;
-        Task? listenerTask;
+        Thread? listenerTask;
 
         public string EndpointStr { get; } = endpointStr;
 
@@ -20,7 +21,7 @@ namespace ft.Listeners
         {
             var listenEndpoint = IPEndPoint.Parse(EndpointStr);
 
-            listenerTask = Task.Factory.StartNew(() =>
+            listenerTask = Threads.StartNew(() =>
             {
                 try
                 {
@@ -45,7 +46,7 @@ namespace ft.Listeners
                 {
                     Program.Log($"TcpServer error: {ex.Message}");
                 }
-            }, TaskCreationOptions.LongRunning);
+            }, $"TCP listener {EndpointStr}");
         }
 
         public override void Stop()
@@ -62,7 +63,7 @@ namespace ft.Listeners
 
             try
             {
-                listenerTask?.Wait();
+                listenerTask?.Join();
             }
             catch (Exception ex)
             {

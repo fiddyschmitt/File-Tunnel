@@ -16,7 +16,7 @@ namespace ft
         {
             var bufferSize = (int)(purgeSizeInBytes / 2d * 0.9d);
 
-            Task.Factory.StartNew(() =>
+            Threads.StartNew(() =>
             {
                 try
                 {
@@ -37,7 +37,8 @@ namespace ft
                 }
 
                 RelayFinished?.Invoke(this, new EventArgs());
-            }, TaskCreationOptions.LongRunning);
+            }, $"{fromStream.Name(true)} -> {toStream.Name(false)}");
+
             FromStream = fromStream;
             ToStream = toStream;
         }

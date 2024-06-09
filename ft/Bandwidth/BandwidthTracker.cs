@@ -22,7 +22,7 @@ namespace ft.Bandwidth
             SampleIntervalMs = sampleIntervalMs;
             ReportingIntervalMs = reportingIntervalMs;
 
-            Task.Factory.StartNew(TakeSamples, TaskCreationOptions.LongRunning);
+            Threads.StartNew(TakeSamples, $"{nameof(BandwidthTracker)}.{nameof(TakeSamples)}");
         }
 
         public int SampleIntervalMs { get; }
