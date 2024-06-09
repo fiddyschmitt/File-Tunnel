@@ -54,9 +54,9 @@ namespace ft
             {
                 FromStream.Close();
             }
-            catch (Exception ex)
+            catch
             {
-                Program.Log($"Stop(): {ex}");
+                //Program.Log($"Stop(): {ex}");
             }
 
 
@@ -64,9 +64,9 @@ namespace ft
             {
                 ToStream.Close();
             }
-            catch (Exception ex)
+            catch
             {
-                Program.Log($"Stop(): {ex}");
+                //Program.Log($"Stop(): {ex}");
             }
 
 

@@ -95,7 +95,7 @@ namespace ft.Streams
 
         public byte[]? Read(int connectionId)
         {
-            if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+            if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
             {
                 return null;
             }
@@ -118,7 +118,7 @@ namespace ft.Streams
             var connectCommand = new Connect(connectionId);
             SendQueue.Add(connectCommand);
 
-            if (!ReceiveQueue.TryGetValue(connectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+            if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
             {
                 connectionReceiveQueue = [];
                 ReceiveQueue.Add(connectionId, connectionReceiveQueue);
@@ -136,7 +136,11 @@ namespace ft.Streams
             var teardownCommand = new TearDown(connectionId);
             SendQueue.Add(teardownCommand);
 
-            ReceiveQueue.Remove(connectionId);
+            if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
+            {
+                receiveQueue.CompleteAdding();
+                ReceiveQueue.Remove(connectionId);
+            }
         }
 
         const long SESSION_ID = 0;
@@ -356,7 +360,7 @@ namespace ft.Streams
 
                         if (command is Forward forward && forward.Payload != null)
                         {
-                            if (ReceiveQueue.TryGetValue(forward.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+                            if (ReceiveQueue.TryGetValue(forward.ConnectionId, out var connectionReceiveQueue))
                             {
                                 connectionReceiveQueue.Add(forward.Payload);
 
@@ -397,7 +401,7 @@ namespace ft.Streams
 
                             Program.Log($"[{readFileShortName}] File was purged by counterpart.");
                         }
-                        else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out BlockingCollection<byte[]>? connectionReceiveQueue))
+                        else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out var connectionReceiveQueue))
                         {
                             Program.Log($"[{readFileShortName}] Counterpart asked to tear down connection {teardown.ConnectionId}");
 
@@ -437,6 +441,33 @@ namespace ft.Streams
             Threads.StartNew(SendPump, nameof(SendPump));
             Threads.StartNew(ReportNetworkPerformance, nameof(ReportNetworkPerformance));
             Threads.StartNew(MonitorOnlineStatus, nameof(MonitorOnlineStatus));
+
+            if (Debugger.IsAttached)
+            {
+                Threads.StartNew(WriteThreadReport, nameof(WriteThreadReport));
+            }
+        }
+
+        public static void WriteThreadReport()
+        {
+            while (true)
+            {
+                var threads = Threads
+                                    .CreatedThreads
+                                    .Where(thread => thread.ThreadState != System.Threading.ThreadState.Stopped)
+                                    .OrderBy(thread => thread.ThreadState)
+                                    .ThenBy(thread => thread.Name)
+                                    .Where(thread => !string.IsNullOrEmpty(thread.Name))
+                                    .ToList();
+
+                var threadStr = threads
+                                    .Select((thread, index) => $"{index + 1:N0}/{threads.Count:N0} [{thread.ThreadState}] (Id {thread.ManagedThreadId}) {thread.Name}")
+                                    .ToString(Environment.NewLine);
+
+                Console.WriteLine(threadStr);
+
+                Thread.Sleep(10000);
+            }
         }
 
         DateTime? lastContactWithCounterpart = null;
@@ -476,14 +507,9 @@ namespace ft.Streams
             ReceiveQueue
                 .Keys
                 .ToList()
-                .ForEach(key =>
+                .ForEach(connectionId =>
                 {
-                    var teardownCommand = new TearDown(key);
-                    SendQueue.Add(teardownCommand);
-
-                    var receiveQueue = ReceiveQueue[key];
-                    receiveQueue.CompleteAdding();
-                    ReceiveQueue.Remove(key);
+                    TearDown(connectionId);
                 });
         }
 

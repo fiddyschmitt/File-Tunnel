@@ -129,11 +129,30 @@ namespace ft
                 {
                     break;
                 }
+
+                if (!input.Socket.SocketConnected())
+                {
+                    break;
+                }
             }
 
             totalTime.Stop();
 
             return totalBytesRead;
+        }
+
+        public static bool SocketConnected(this Socket s)
+        {
+            var part1 = s.Poll(1000, SelectMode.SelectRead);
+            var part2 = s.Available == 0;
+            if (part1 && part2)
+            {
+                return false;
+            }
+            else
+            {
+                return true;
+            }
         }
 
         static readonly Dictionary<Stream, (string ReadString, string WriteString)> StreamNames = [];
@@ -237,6 +256,12 @@ namespace ft
                 }
             }
 
+            return result;
+        }
+
+        public static string ToString(this IEnumerable<string> list, string seperator)
+        {
+            var result = string.Join(seperator, list);
             return result;
         }
     }

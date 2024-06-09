@@ -34,7 +34,7 @@ namespace ft.Listeners
 
                         var data = listener.Receive(ref remoteIpEndPoint);
 
-                        if (!connections.TryGetValue(remoteIpEndPoint, out UdpStream? udpStream))
+                        if (!connections.TryGetValue(remoteIpEndPoint, out var udpStream))
                         {
                             udpStream = new UdpStream(listener, remoteIpEndPoint);
                             connections.Add(remoteIpEndPoint, udpStream);

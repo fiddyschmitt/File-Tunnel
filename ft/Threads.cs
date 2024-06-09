@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -9,6 +11,8 @@ namespace ft
 {
     public static class Threads
     {
+        public readonly static ConcurrentBag<Thread> CreatedThreads = [];
+
         public static Thread StartNew(Action action, string threadName)
         {
             var thread = new Thread(() =>
@@ -20,6 +24,11 @@ namespace ft
                 IsBackground = true
             };
             thread.Start();
+
+            if (Debugger.IsAttached)
+            {
+                CreatedThreads.Add(thread);
+            }
 
             return thread;
         }
