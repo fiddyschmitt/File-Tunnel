@@ -60,29 +60,31 @@ namespace ft.Streams
                     catch { }
 
 
-
-                    Console.Write($"{DateTime.Now}: Counterpart: ");
-
-                    if (IsOnline)
+                    lock (Program.ConsoleOutputLock)
                     {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.Write($"{"Online",-10}");
-                    }
-                    else
-                    {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.Write($"{"Offline",-10}");
-                    }
+                        Console.Write($"{DateTime.Now}: Counterpart: ");
+
+                        if (IsOnline)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.Write($"{"Online",-10}");
+                        }
+                        else
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.Write($"{"Offline",-10}");
+                        }
 
 
-                    var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
-                    if (pingDurationStr != null)
-                    {
-                        logStr += $" {pingDurationStr}";
-                    }
+                        var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
+                        if (pingDurationStr != null)
+                        {
+                            logStr += $" {pingDurationStr}";
+                        }
 
-                    Console.ForegroundColor = Program.OriginalConsoleColour;
-                    Console.WriteLine(logStr);
+                        Console.ForegroundColor = Program.OriginalConsoleColour;
+                        Console.WriteLine(logStr);
+                    }
 
                     Thread.Sleep(reportIntervalMs);
                 }

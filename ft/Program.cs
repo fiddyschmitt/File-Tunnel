@@ -224,18 +224,23 @@ namespace ft
         public static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;
         public static readonly Random Random = new();
 
+        public static readonly object ConsoleOutputLock = new();
+
         public static void Log(string str, ConsoleColor? color = null)
         {
-            // Change color if specified
-            if (color.HasValue)
+            lock (ConsoleOutputLock)
             {
-                Console.ForegroundColor = color.Value;
+                // Change color if specified
+                if (color.HasValue)
+                {
+                    Console.ForegroundColor = color.Value;
+                }
+
+                Console.WriteLine($"{DateTime.Now}: {str}");
+
+                // Reset to original color
+                Console.ForegroundColor = OriginalConsoleColour;
             }
-
-            Console.WriteLine($"{DateTime.Now}: {str}");
-
-            // Reset to original color
-            Console.ForegroundColor = OriginalConsoleColour;
         }
     }
 }
