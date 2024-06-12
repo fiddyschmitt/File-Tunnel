@@ -8,6 +8,7 @@ using ft_tests.Utilities;
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
+using System.Text;
 
 namespace ft_tests
 {
@@ -31,6 +32,80 @@ namespace ft_tests
         public void MultipleConnections_FullDuplex()
         {
             TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 10);
+        }
+
+        [TestMethod]
+        public void ServerSendsFirst()
+        {
+            var listenPoint = "127.0.0.1:5000";
+            var connectPoint = "127.0.0.1:6000";
+
+            var writeFilename = Path.GetTempFileName();
+            var readFilename = Path.GetTempFileName();
+
+
+            var listenThread = new Thread(() =>
+            {
+                var listenArgsString = $@"--tcp-listen {listenPoint} --write ""{writeFilename}"" --read ""{readFilename}""";
+
+                var listenArgs = StringUtility.CommandLineToArgs(listenArgsString);
+                ft.Program.Main(listenArgs);
+            });
+            listenThread.Start();
+
+            var forwardThread = new Thread(() =>
+            {
+                var forwardArgsString = $@"--read ""{writeFilename}"" --tcp-connect {connectPoint} --write ""{readFilename}""";
+
+                var forwardArgs = StringUtility.CommandLineToArgs(forwardArgsString);
+                ft.Program.Main(forwardArgs);
+            });
+            forwardThread.Start();
+
+
+            var ultimateDestination = new TcpListener(IPEndPoint.Parse(connectPoint));
+            ultimateDestination.Start();
+            var ultimateDestinationAcceptCT = new CancellationTokenSource();
+            var ultimateDestinationClients = new BlockingCollection<TcpClient>();
+
+            var bytesToSend = Encoding.ASCII.GetBytes("hello");
+
+            Task.Factory.StartNew(() =>
+            {
+                var client = ultimateDestination.AcceptTcpClient();
+
+                client.GetStream().Write(bytesToSend);
+
+            }, TaskCreationOptions.LongRunning);
+
+
+            var originClient = new TcpClient();
+            var startTime = DateTime.Now;
+            while (true)
+            {
+                var duration = DateTime.Now - startTime;
+                if (duration.TotalSeconds > 10)
+                {
+                    throw new Exception("Could not connect");
+                }
+                try
+                {
+                    originClient.Connect(IPEndPoint.Parse(listenPoint));
+                }
+                catch
+                {
+                    Thread.Sleep(200);
+                    continue;
+                }
+                break;
+            }
+
+            var buffer = new byte[1024];
+            var bytesRead = originClient.GetStream().Read(buffer);
+
+            var receivedMatchesSent = bytesToSend.SequenceEqual(buffer.Take(bytesRead).ToArray());
+
+            Assert.IsTrue(receivedMatchesSent, $"Received buffer does not match sent buffer");
         }
 
         public static void TestTransfer(int bytesToSend, string listenPoint, string connectPoint, string writeFilename, string readFilename, bool fullDuplex, int connections)
