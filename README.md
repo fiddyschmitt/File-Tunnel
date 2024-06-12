@@ -5,7 +5,7 @@ Tunnel TCP connections through a file.
 <br />
 
 ## Download
-Portable executables for Windows and Linux can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
+Portable executables for Windows, Linux and Mac can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
 
 <br />
 
@@ -51,6 +51,19 @@ Connect to Host B.
 ``ft.exe --read "\\tsclient\c\Temp\1.dat" --tcp-connect 192.168.1.50:8888 --write "\\tsclient\c\Temp\2.dat"``
 
 Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `192.168.1.50:8888`
+
+<br />
+<br />
+<br />
+
+## Compatibility
+|                 | SMB                          | NFS                          | AFP                          |
+| :---            | :---:                        | :---:                        | :---:                        |
+| windows-x64     | Y                            | Y                            | Unknown - please let me know |
+| linux-x64       | Y                            | Y                            | Unknown - please let me know |
+| linux-arm64     | Unknown - please let me know | Unknown - please let me know | Unknown - please let me know |
+| osx-x64         | Unknown - please let me know | Unknown - please let me know | Unknown - please let me know |
+| osx-arm64       | Unknown - please let me know | Unknown - please let me know | Unknown - please let me know |
 
 <br />
 <br />
