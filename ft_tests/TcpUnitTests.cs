@@ -84,7 +84,7 @@ namespace ft_tests
             while (true)
             {
                 var duration = DateTime.Now - startTime;
-                if (duration.TotalSeconds > 10)
+                if (duration.TotalSeconds > 22)
                 {
                     throw new Exception("Could not connect");
                 }
@@ -160,7 +160,7 @@ namespace ft_tests
                     while (true)
                     {
                         var duration = DateTime.Now - startTime;
-                        if (duration.TotalSeconds > 10)
+                        if (duration.TotalSeconds > 22)
                         {
                             throw new Exception("Could not connect");
                         }

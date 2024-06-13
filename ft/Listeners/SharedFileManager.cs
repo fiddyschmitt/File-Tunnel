@@ -162,12 +162,12 @@ namespace ft.Streams
                 //the writer always creates the file
                 var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, PurgeSizeInBytes * 2); //large buffer to prevent FileStream from autoflushing
                 fileStream.SetLength(MESSAGE_WRITE_POS);
-
                 var binaryWriter = new BinaryWriter(fileStream);
                 var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
 
                 var sessionId = Program.Random.NextInt64();
                 binaryWriter.Write(sessionId);
+                binaryWriter.Flush();
                 //Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
 
                 var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
