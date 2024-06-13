@@ -39,7 +39,13 @@ namespace ft.Streams
                     var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
 
                     pingStopwatch.Restart();
-                    SendQueue.Add(pingRequest);
+
+                    try
+                    {
+                        var sendTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
+                        SendQueue.Add(pingRequest, sendTimeout.Token);
+                    }
+                    catch { }
 
                     string? pingDurationStr = null;
 
@@ -157,83 +163,99 @@ namespace ft.Streams
         {
             var writeFileShortName = Path.GetFileName(WriteToFilename);
 
-            try
+            while (true)
             {
-                //the writer always creates the file
-                var fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, PurgeSizeInBytes * 2); //large buffer to prevent FileStream from autoflushing
-                fileStream.SetLength(MESSAGE_WRITE_POS);
-                var binaryWriter = new BinaryWriter(fileStream);
-                var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+                FileStream fileStream;
 
-                var sessionId = Program.Random.NextInt64();
-                binaryWriter.Write(sessionId);
-                binaryWriter.Flush();
-                //Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
-
-                var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-                setReadyForPurge = new ToggleWriter(
-                    new BinaryWriter(setReadyForPurgeStream),
-                    READY_FOR_PURGE_FLAG);
-
-                var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-                setPurgeComplete = new ToggleWriter(
-                    new BinaryWriter(setPurgeCompleteStream),
-                    PURGE_COMPLETE_FLAG);
-
-                var ms = new MemoryStream();
-                var msWriter = new BinaryWriter(ms);
-
-                fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-
-                foreach (var command in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
+                try
                 {
-                    ms.SetLength(0);
-                    command.Serialise(msWriter);
+                    //the writer always creates the file
+                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, PurgeSizeInBytes * 2); //large buffer to prevent FileStream from autoflushing
+                }
+                catch (Exception ex)
+                {
+                    Program.Log($"Could not create file ({WriteToFilename}): {ex.Message}");
+                    Thread.Sleep(1000);
+                    continue;
+                }
 
-                    if (fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                try
+                {
+                    fileStream.SetLength(MESSAGE_WRITE_POS);
+                    var binaryWriter = new BinaryWriter(fileStream);
+                    var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+
+                    var sessionId = Program.Random.NextInt64();
+                    binaryWriter.Write(sessionId);
+                    binaryWriter.Flush();
+                    //Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
+
+                    var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                    setReadyForPurge = new ToggleWriter(
+                        new BinaryWriter(setReadyForPurgeStream),
+                        READY_FOR_PURGE_FLAG);
+
+                    var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                    setPurgeComplete = new ToggleWriter(
+                        new BinaryWriter(setPurgeCompleteStream),
+                        PURGE_COMPLETE_FLAG);
+
+                    var ms = new MemoryStream();
+                    var msWriter = new BinaryWriter(ms);
+
+                    fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+
+                    foreach (var command in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
                     {
-                        Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
+                        ms.SetLength(0);
+                        command.Serialise(msWriter);
 
-                        var purge = new Purge();
-                        purge.Serialise(binaryWriter);
+                        if (fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                        {
+                            Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
 
-                        //wait for counterpart to be ready for purge
-                        isReadyForPurge?.Wait(1);
+                            var purge = new Purge();
+                            purge.Serialise(binaryWriter);
 
-                        //perform the purge
-                        fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                        fileStream.SetLength(MESSAGE_WRITE_POS);
+                            //wait for counterpart to be ready for purge
+                            isReadyForPurge?.Wait(1);
 
-                        //signal that the purge is complete
-                        setPurgeComplete.Set(1);
+                            //perform the purge
+                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            fileStream.SetLength(MESSAGE_WRITE_POS);
 
-                        //wait for counterpart clear their ready flag
-                        isReadyForPurge?.Wait(0);
+                            //signal that the purge is complete
+                            setPurgeComplete.Set(1);
 
-                        //clear our complete flag
-                        setPurgeComplete.Set(0);
+                            //wait for counterpart clear their ready flag
+                            isReadyForPurge?.Wait(0);
 
-                        Program.Log($"[{writeFileShortName}] Purge complete.");
-                    }
+                            //clear our complete flag
+                            setPurgeComplete.Set(0);
 
-                    //write the message to file
-                    var commandStartPos = fileStream.Position;
-                    command.Serialise(binaryWriter);
-                    var commandEndPos = fileStream.Position;
+                            Program.Log($"[{writeFileShortName}] Purge complete.");
+                        }
 
-                    //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetType().Name}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        //write the message to file
+                        var commandStartPos = fileStream.Position;
+                        command.Serialise(binaryWriter);
+                        var commandEndPos = fileStream.Position;
 
-                    if (command is Forward forward && forward.Payload != null)
-                    {
-                        var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
-                        sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
+                        //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetType().Name}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+
+                        if (command is Forward forward && forward.Payload != null)
+                        {
+                            var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
+                            sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
-                Environment.Exit(1);
+                catch (Exception ex)
+                {
+                    Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
+                    Program.Log($"[{writeFileShortName}] Restarting {nameof(SendPump)}");
+                    Thread.Sleep(1000);
+                }
             }
         }
 
@@ -311,9 +333,7 @@ namespace ft.Streams
                     }
                     catch (Exception ex)
                     {
-                        Program.Log($"[{readFileShortName}] Establish file: {ex}");
-                        Environment.Exit(1);
-                        return;
+                        throw new Exception($"[{readFileShortName}] Establish file: {ex}");
                     }
 
                     checkForSessionChange.Restart();
@@ -352,8 +372,7 @@ namespace ft.Streams
 
                         if (command == null)
                         {
-                            Program.Log($"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]", ConsoleColor.Red);
-                            Environment.Exit(1);
+                            throw new Exception($"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]");
                         }
 
                         lastContactWithCounterpart = DateTime.Now;
@@ -433,6 +452,7 @@ namespace ft.Streams
                 {
                     Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
+                    Thread.Sleep(1000);
                 }
             }
         }
@@ -446,7 +466,7 @@ namespace ft.Streams
 
             if (Debugger.IsAttached)
             {
-                Threads.StartNew(WriteThreadReport, nameof(WriteThreadReport));
+                //Threads.StartNew(WriteThreadReport, nameof(WriteThreadReport));
             }
         }
 
