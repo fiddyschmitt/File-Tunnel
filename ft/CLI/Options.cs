@@ -44,7 +44,7 @@ namespace ft.CLI
         public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;        
 
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point.")]
-        public int TunnelTimeoutMilliseconds { get; set; } = 10000;
+        public int TunnelTimeoutMilliseconds { get; set; } = 5000;
 
 
 
