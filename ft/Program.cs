@@ -79,6 +79,7 @@ namespace ft
                            else
                            {
                                listener.Stop();
+                               sharedFileManager.TearDownAllConnections();
                            }
                        };
 
@@ -143,7 +144,7 @@ namespace ft
                        {
                            if (!args.IsOnline)
                            {
-                               sharedFileManager.Stop();
+                               sharedFileManager.TearDownAllConnections();
                            }
                        };
 
@@ -151,31 +152,38 @@ namespace ft
                        {
                            if (!string.IsNullOrEmpty(o.TcpConnectTo))
                            {
-                               var tcpClient = new TcpClient();
-
-                               if (IPEndPoint.TryParse(o.TcpConnectTo, out var connectToEndpoint))
+                               try
                                {
-                                   tcpClient.Connect(connectToEndpoint);
+                                   var tcpClient = new TcpClient();
+
+                                   if (IPEndPoint.TryParse(o.TcpConnectTo, out var connectToEndpoint))
+                                   {
+                                       tcpClient.Connect(connectToEndpoint);
+                                   }
+                                   else
+                                   {
+                                       var tokens = o.TcpConnectTo.Split([":"], StringSplitOptions.None);
+                                       tcpClient.Connect(tokens[0], int.Parse(tokens[1]));
+                                   }
+
+                                   Log($"Connected to {o.TcpConnectTo}");
+
+                                   var relay1 = new Relay(tcpClient.GetStream(), stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                                   var relay2 = new Relay(stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
+
+                                   void tearDown()
+                                   {
+                                       relay1.Stop();
+                                       relay2.Stop();
+                                   }
+
+                                   relay1.RelayFinished += (s, a) => tearDown();
+                                   relay2.RelayFinished += (s, a) => tearDown();
                                }
-                               else
+                               catch (Exception ex)
                                {
-                                   var tokens = o.TcpConnectTo.Split([":"], StringSplitOptions.None);
-                                   tcpClient.Connect(tokens[0], int.Parse(tokens[1]));
+                                   Log($"Error during connection to {o.TcpConnectTo}. {ex.Message}");
                                }
-
-                               Log($"Connected to {o.TcpConnectTo}");
-
-                               var relay1 = new Relay(tcpClient.GetStream(), stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                               var relay2 = new Relay(stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
-
-                               void tearDown()
-                               {
-                                   relay1.Stop();
-                                   relay2.Stop();
-                               }
-
-                               relay1.RelayFinished += (s, a) => tearDown();
-                               relay2.RelayFinished += (s, a) => tearDown();
                            }
 
                            if (!string.IsNullOrEmpty(o.UdpSendFrom) && !string.IsNullOrEmpty(o.UdpSendTo))

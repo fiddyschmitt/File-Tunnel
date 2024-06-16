@@ -28,43 +28,12 @@ namespace ft.Streams
         readonly BlockingCollection<Ping> pingResponsesReceived = [];
         public void ReportNetworkPerformance()
         {
-            var pingRequest = new Ping(EnumPingType.Request);
-            var pingStopwatch = new Stopwatch();
-
             while (true)
             {
                 try
                 {
                     var sentBandwidthStr = sentBandwidth.GetBandwidth();
                     var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
-
-                    pingStopwatch.Restart();
-
-                    try
-                    {
-                        var sendTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
-                        SendQueue.Add(pingRequest, sendTimeout.Token);
-                    }
-                    catch { }
-
-                    string? pingDurationStr = null;
-
-                    var responseTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
-                    try
-                    {
-                        while (true)
-                        {
-                            var pingResponse = pingResponsesReceived.GetConsumingEnumerable(responseTimeout.Token).First();
-                            if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
-                            {
-                                pingStopwatch.Stop();
-                                pingDurationStr = $"RTT: {pingStopwatch.ElapsedMilliseconds:N0} ms";
-                                break;
-                            }
-                        }
-                    }
-                    catch { }
-
 
                     lock (Program.ConsoleOutputLock)
                     {
@@ -74,22 +43,38 @@ namespace ft.Streams
                         {
                             Console.ForegroundColor = ConsoleColor.Green;
                             Console.Write($"{"Online",-10}");
+
+                            var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
+
+
+                            if (latestRTT != null)
+                            {
+                                logStr += $" {latestRTT.Value.Milliseconds:N0} ms";
+                                latestRTT = null;
+                            }
+
+                            Console.ForegroundColor = Program.OriginalConsoleColour;
+                            Console.WriteLine(logStr);
                         }
                         else
                         {
                             Console.ForegroundColor = ConsoleColor.Red;
                             Console.Write($"{"Offline",-10}");
+
+                            var offlineReason = "Counterpart is not responding.";
+
+                            if (!receiveFileEstablished)
+                            {
+                                offlineReason = $"Receive file ({Path.GetFileName(ReadFromFilename)}) is not established.";
+                            }
+                            else if (!sendFileEstablished)
+                            {
+                                offlineReason = $"Send file ({Path.GetFileName(WriteToFilename)}) is not established.";
+                            }
+
+                            Console.ForegroundColor = Program.OriginalConsoleColour;
+                            Console.WriteLine(offlineReason);
                         }
-
-
-                        var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
-                        if (pingDurationStr != null)
-                        {
-                            logStr += $" {pingDurationStr}";
-                        }
-
-                        Console.ForegroundColor = Program.OriginalConsoleColour;
-                        Console.WriteLine(logStr);
                     }
 
                     Thread.Sleep(reportIntervalMs);
@@ -111,7 +96,7 @@ namespace ft.Streams
             byte[]? result = null;
             try
             {
-                result = connectionReceiveQueue.Take(cancellationTokenSource.Token);
+                result = connectionReceiveQueue.Take(tunnelCancellationTokenSource.Token);
             }
             catch (InvalidOperationException)
             {
@@ -142,7 +127,11 @@ namespace ft.Streams
         public void TearDown(int connectionId)
         {
             var teardownCommand = new TearDown(connectionId);
-            SendQueue.Add(teardownCommand);
+
+            if (IsOnline)
+            {
+                SendQueue.Add(teardownCommand);
+            }
 
             if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
             {
@@ -159,12 +148,15 @@ namespace ft.Streams
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
 
+        bool sendFileEstablished = false;
+
         public void SendPump()
         {
             var writeFileShortName = Path.GetFileName(WriteToFilename);
 
             while (true)
             {
+                sendFileEstablished = false;
                 FileStream fileStream;
 
                 try
@@ -205,7 +197,9 @@ namespace ft.Streams
 
                     fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
-                    foreach (var command in SendQueue.GetConsumingEnumerable(cancellationTokenSource.Token))
+                    sendFileEstablished = true;
+
+                    foreach (var command in SendQueue.GetConsumingEnumerable(tunnelCancellationTokenSource.Token))
                     {
                         ms.SetLength(0);
                         command.Serialise(msWriter);
@@ -241,7 +235,7 @@ namespace ft.Streams
                         command.Serialise(binaryWriter);
                         var commandEndPos = fileStream.Position;
 
-                        //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetType().Name}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
                         if (command is Forward forward && forward.Payload != null)
                         {
@@ -273,45 +267,49 @@ namespace ft.Streams
             return result;
         }
 
-        readonly CancellationTokenSource cancellationTokenSource = new();
+        readonly CancellationTokenSource tunnelCancellationTokenSource = new();
+
+        bool receiveFileEstablished = false;
+
         public void ReceivePump()
         {
             var readFileShortName = Path.GetFileName(ReadFromFilename);
             var checkForSessionChange = new Stopwatch();
 
+            long currentSessionId = 0;
+
             while (true)
             {
                 try
                 {
+                    receiveFileEstablished = false;
+
                     FileStream? fileStream = null;
                     BinaryReader? binaryReader = null;
-                    long currentSessionId;
+
 
                     try
                     {
-                        var fileAlreadyExisted = File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0;
-                        if (!fileAlreadyExisted)
+                        while (true)
                         {
-                            while (true)
+                            if (File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0)
                             {
-                                if (File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0)
-                                {
-                                    Program.Log($"[{readFileShortName}] now exists. Reading.");
-                                    break;
-                                }
-                                Thread.Sleep(200);
+                                Program.Log($"[{readFileShortName}] now exists. Reading.");
+                                break;
                             }
+                            Thread.Sleep(200);
                         }
 
                         fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
-                        if (fileAlreadyExisted)
+                        if (currentSessionId == 0)
                         {
                             Program.Log($"[{readFileShortName}] already existed. Seeking to end ({fileStream.Length:N0})");
                             fileStream.Seek(0, SeekOrigin.End);
                         }
                         else
                         {
+                            Program.Log($"[{readFileShortName}] opened. Seeking to ({MESSAGE_WRITE_POS:N0})");
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                         }
 
@@ -336,6 +334,8 @@ namespace ft.Streams
                         throw new Exception($"[{readFileShortName}] Establish file: {ex}");
                     }
 
+                    receiveFileEstablished = true;
+
                     checkForSessionChange.Restart();
                     while (true)
                     {
@@ -351,6 +351,8 @@ namespace ft.Streams
 
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
+                                //Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.");
+
                                 var latestSessionId = ReadSessionId(binaryReader);
 
                                 if (latestSessionId != currentSessionId)
@@ -360,8 +362,6 @@ namespace ft.Streams
 
                                 checkForSessionChange.Restart();
                             }
-
-                            //Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.")
 
                             Delay.Wait(1);
                         }
@@ -377,7 +377,7 @@ namespace ft.Streams
 
                         lastContactWithCounterpart = DateTime.Now;
 
-                        //Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetType().Name}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        //Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
                         if (command is Forward forward && forward.Payload != null)
                         {
@@ -396,8 +396,11 @@ namespace ft.Streams
                                 var connectionReceiveQueue = new BlockingCollection<byte[]>();
                                 ReceiveQueue.Add(connect.ConnectionId, connectionReceiveQueue);
 
-                                var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                                StreamEstablished?.Invoke(this, sharedFileStream);
+                                Threads.StartNew(() =>
+                                {
+                                    var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
+                                    StreamEstablished?.Invoke(this, sharedFileStream);
+                                }, "EstablishConnection");
                             }
                         }
                         else if (command is Purge)
@@ -457,10 +460,66 @@ namespace ft.Streams
             }
         }
 
+        public TimeSpan? latestRTT = null;
+        public void MeasureRTT()
+        {
+            var pingRequest = new Ping(EnumPingType.Request);
+            var pingStopwatch = new Stopwatch();
+
+            while (true)
+            {
+                try
+                {
+                    pingStopwatch.Restart();
+
+                    try
+                    {
+                        var sendTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
+                        SendQueue.Add(pingRequest, sendTimeout.Token);
+                    }
+                    catch
+                    {
+                        latestRTT = null;
+                        continue;
+                    }
+
+                    try
+                    {
+                        while (true)
+                        {
+                            var responseTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
+                            var pingResponse = pingResponsesReceived.GetConsumingEnumerable(responseTimeout.Token).First();
+                            if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
+                            {
+                                pingStopwatch.Stop();
+
+                                latestRTT = pingStopwatch.Elapsed;
+                                break;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        latestRTT = null;
+                        continue;
+                    }
+
+                    var durationToSleep = (int)(1000 - latestRTT?.TotalMilliseconds ?? 0);
+                    if (durationToSleep < 0) durationToSleep = 0;
+                    Thread.Sleep(durationToSleep);
+                }
+                catch (Exception ex)
+                {
+                    Program.Log($"{ex}");
+                }
+            }
+        }
+
         public override void Start()
         {
             Threads.StartNew(ReceivePump, nameof(ReceivePump));
             Threads.StartNew(SendPump, nameof(SendPump));
+            Threads.StartNew(MeasureRTT, nameof(MeasureRTT));
             Threads.StartNew(ReportNetworkPerformance, nameof(ReportNetworkPerformance));
             Threads.StartNew(MonitorOnlineStatus, nameof(MonitorOnlineStatus));
 
@@ -525,6 +584,11 @@ namespace ft.Streams
         }
 
         public override void Stop()
+        {
+
+        }
+
+        public void TearDownAllConnections()
         {
             ReceiveQueue
                 .Keys

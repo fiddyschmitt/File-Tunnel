@@ -1,4 +1,5 @@
-﻿using ft.Streams;
+﻿using ft.Commands;
+using ft.Streams;
 using ft.Utilities;
 using System;
 using System.Buffers;
@@ -82,6 +83,28 @@ namespace ft
             callBack?.Invoke(read);
 
             BufferPool.Return(buffer);
+        }
+
+        public static string GetName(this Command command)
+        {
+            string result;
+            if (command is Ping p)
+            {
+                if (p.PingType == EnumPingType.Request)
+                {
+                    result = $"Ping request";
+                }
+                else
+                {
+                    result = $"Ping response for {p.ResponseToPacketNumber:N0}";
+                }
+            }
+            else
+            {
+                result = $"{command.GetType().Name}";
+            }
+
+            return result;
         }
 
         public static int Read(this NetworkStream input, byte[] buffer, int offset, int count, int maxDurationMillis, int maxQuietDurationMillis)
