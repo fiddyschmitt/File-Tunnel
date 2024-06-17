@@ -276,7 +276,7 @@ namespace ft.Streams
             var readFileShortName = Path.GetFileName(ReadFromFilename);
             var checkForSessionChange = new Stopwatch();
 
-            long currentSessionId = 0;
+            long currentSessionId = -1;
 
             while (true)
             {
@@ -302,7 +302,7 @@ namespace ft.Streams
 
                         fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
-                        if (currentSessionId == 0)
+                        if (currentSessionId == -1)
                         {
                             Program.Log($"[{readFileShortName}] already existed. Seeking to end ({fileStream.Length:N0})");
                             fileStream.Seek(0, SeekOrigin.End);
