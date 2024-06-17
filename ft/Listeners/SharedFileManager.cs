@@ -277,6 +277,7 @@ namespace ft.Streams
             var checkForSessionChange = new Stopwatch();
 
             long currentSessionId = -1;
+            long? retryPos = null;
 
             while (true)
             {
@@ -302,7 +303,13 @@ namespace ft.Streams
 
                         fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
-                        if (currentSessionId == -1)
+                        if (retryPos != null)
+                        {
+                            Program.Log($"[{readFileShortName}] opened. Retrying read from position ({retryPos.Value:N0})");
+                            fileStream.Seek(retryPos.Value, SeekOrigin.Begin);
+                            retryPos = null;
+                        }
+                        else if (currentSessionId == -1)
                         {
                             Program.Log($"[{readFileShortName}] already existed. Seeking to end ({fileStream.Length:N0})");
                             fileStream.Seek(0, SeekOrigin.End);
@@ -367,7 +374,19 @@ namespace ft.Streams
                         }
 
                         var commandStartPos = fileStream.Position;
-                        var command = Command.Deserialise(binaryReader);
+                        Command? command;
+
+                        try
+                        {
+                            command = Command.Deserialise(binaryReader);
+                        }
+                        catch
+                        {
+                            retryPos = commandStartPos;
+                            Thread.Sleep(500);
+                            throw;
+                        }
+
                         var commandEndPos = fileStream.Position;
 
                         if (command == null)

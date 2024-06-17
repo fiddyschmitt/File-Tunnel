@@ -107,6 +107,24 @@ namespace ft
             return result;
         }
 
+        public static string GetMD5(this byte[] data)
+        {
+            var stream = new MemoryStream(data);
+            var result = stream.GetMD5();
+            return result;
+        }
+
+        public static string GetMD5(this Stream stream)
+        {
+            stream.Seek(0, SeekOrigin.Begin);
+
+            using var md5Instance = System.Security.Cryptography.MD5.Create();
+            var hashResult = md5Instance.ComputeHash(stream);
+
+            var result = BitConverter.ToString(hashResult).Replace("-", "").ToLowerInvariant(); ;
+            return result;
+        }
+
         public static int Read(this NetworkStream input, byte[] buffer, int offset, int count, int maxDurationMillis, int maxQuietDurationMillis)
         {
             var totalTime = new Stopwatch();
