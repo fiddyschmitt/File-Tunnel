@@ -16,7 +16,6 @@ namespace ft.Commands
         public override byte CommandId => COMMAND_ID;
 
         public int ConnectionId { get; protected set; }
-        public string? PayloadMD5 { get; protected set; }
         public byte[]? Payload { get; protected set; }
 
         public Forward() { }
@@ -24,14 +23,12 @@ namespace ft.Commands
         public Forward(int connectionId, byte[] payload)
         {
             ConnectionId = connectionId;
-            PayloadMD5 = payload.GetMD5();
             Payload = payload;
         }
 
         protected override void Serialize(BinaryWriter writer)
         {
             writer.Write(ConnectionId);
-            writer.Write(PayloadMD5 ?? "");
             writer.Write(Payload?.Length ?? 0);
 
             if (Payload != null)
@@ -43,7 +40,7 @@ namespace ft.Commands
         protected override void Deserialize(BinaryReader reader)
         {
             ConnectionId = reader.ReadInt32();
-            PayloadMD5 = reader.ReadString();
+
             var expectedPayloadLength = reader.ReadInt32();
             Payload = new byte[expectedPayloadLength];
 
@@ -55,17 +52,6 @@ namespace ft.Commands
                 totalRead += read;
             }
             while (totalRead < expectedPayloadLength);
-
-            if (PayloadMD5 != Payload.GetMD5())
-            {
-                if (Debugger.IsAttached)
-                {
-                    var payloadHex = string.Concat(Array.ConvertAll(Payload, x => x.ToString("X2")));
-                    Program.Log($"{payloadHex}");
-                }
-
-                throw new Exception($"Payload is invalid.");
-            }
         }
     }
 }

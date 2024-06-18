@@ -174,8 +174,9 @@ namespace ft.Streams
                 try
                 {
                     fileStream.SetLength(MESSAGE_WRITE_POS);
-                    var binaryWriter = new BinaryWriter(fileStream);
-                    var binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+
+                    var hashingStream = new HashingStream(fileStream);
+                    var binaryWriter = new BinaryWriter(hashingStream);
 
                     var sessionId = Program.Random.NextInt64();
                     binaryWriter.Write(sessionId);
@@ -320,7 +321,8 @@ namespace ft.Streams
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                         }
 
-                        binaryReader = new BinaryReader(fileStream, Encoding.ASCII);
+                        var hashingStream = new HashingStream(fileStream);
+                        binaryReader = new BinaryReader(hashingStream, Encoding.ASCII);
 
                         currentSessionId = ReadSessionId(binaryReader);
                         //Program.Log($"[{readFileShortName}] Read Session ID: {currentSessionId}");
