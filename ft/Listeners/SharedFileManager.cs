@@ -19,7 +19,7 @@ namespace ft.Streams
 {
     public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes, int tunnelTimeoutMilliseconds) : StreamEstablisher
     {
-        readonly Dictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
+        readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
 
         const int reportIntervalMs = 1000;
@@ -114,7 +114,7 @@ namespace ft.Streams
             if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
             {
                 connectionReceiveQueue = [];
-                ReceiveQueue.Add(connectionId, connectionReceiveQueue);
+                ReceiveQueue.TryAdd(connectionId, connectionReceiveQueue);
             }
         }
 
@@ -136,7 +136,7 @@ namespace ft.Streams
             if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
             {
                 receiveQueue.CompleteAdding();
-                ReceiveQueue.Remove(connectionId);
+                ReceiveQueue.TryRemove(connectionId, out _);
             }
         }
 
@@ -418,7 +418,7 @@ namespace ft.Streams
                             if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
                             {
                                 var connectionReceiveQueue = new BlockingCollection<byte[]>();
-                                ReceiveQueue.Add(connect.ConnectionId, connectionReceiveQueue);
+                                ReceiveQueue.TryAdd(connect.ConnectionId, connectionReceiveQueue);
 
                                 Threads.StartNew(() =>
                                 {
@@ -453,7 +453,7 @@ namespace ft.Streams
                         {
                             Program.Log($"[{readFileShortName}] Counterpart asked to tear down connection {teardown.ConnectionId}");
 
-                            ReceiveQueue.Remove(teardown.ConnectionId);
+                            ReceiveQueue.Remove(teardown.ConnectionId, out _);
 
                             connectionReceiveQueue.CompleteAdding();
                         }
