@@ -15,6 +15,7 @@ namespace ft
         public Relay(Stream fromStream, Stream toStream, int purgeSizeInBytes, int readDurationMillis)
         {
             var bufferSize = (int)(purgeSizeInBytes / 2d * 0.9d);
+            bufferSize = Math.Max(bufferSize, 1024 * 1024);
 
             Threads.StartNew(() =>
             {

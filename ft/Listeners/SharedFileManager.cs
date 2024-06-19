@@ -161,8 +161,11 @@ namespace ft.Streams
 
                 try
                 {
+                    var bufferSize = PurgeSizeInBytes * 2;
+                    bufferSize = Math.Max(bufferSize, 1024 * 1024 * 1024);
+
                     //the writer always creates the file
-                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, PurgeSizeInBytes * 2); //large buffer to prevent FileStream from autoflushing
+                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize); //large buffer to prevent FileStream from autoflushing
                 }
                 catch (Exception ex)
                 {
@@ -205,7 +208,7 @@ namespace ft.Streams
                         ms.SetLength(0);
                         command.Serialise(msWriter);
 
-                        if (fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                        if (PurgeSizeInBytes > 0 && fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
                         {
                             Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
 
@@ -474,7 +477,7 @@ namespace ft.Streams
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
+                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
                     Thread.Sleep(1000);
                 }
