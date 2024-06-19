@@ -193,7 +193,7 @@ namespace ft.Streams
                         new BinaryWriter(setPurgeCompleteStream),
                         PURGE_COMPLETE_FLAG);
 
-                    var ms = new MemoryStream();
+                    var ms = new HashingStream(new MemoryStream());
                     var msWriter = new BinaryWriter(ms);
 
                     fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
