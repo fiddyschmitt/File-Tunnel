@@ -477,7 +477,7 @@ namespace ft.Streams
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}");
+                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
                     Thread.Sleep(1000);
                 }
