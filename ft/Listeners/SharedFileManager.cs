@@ -465,7 +465,12 @@ namespace ft.Streams
                                 {
                                     ResponseToPacketNumber = ping.PacketNumber
                                 };
-                                SendQueue.Add(response);
+
+                                Task.Factory.StartNew(() =>
+                                {
+                                    //start in a new task, because we want to continue receiving messages while queuing this message may block
+                                    SendQueue.Add(response);
+                                });
                             }
 
                             if (ping.PingType == EnumPingType.Response)
