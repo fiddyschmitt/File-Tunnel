@@ -10,16 +10,30 @@ using System.Threading;
 
 namespace ft.Listeners
 {
-    public class TcpServer(string endpointStr) : StreamEstablisher
+    public class TcpServer : StreamEstablisher
     {
         TcpListener? listener;
         Thread? listenerTask;
 
-        public string EndpointStr { get; } = endpointStr;
+        public TcpServer(string listenOnEndpointStr, string forwardToEndpointStr)
+        {
+            ListenOnEndpointStr = listenOnEndpointStr;
+            ForwardToEndpointStr = forwardToEndpointStr;
+
+            if (!listenOnEndpointStr.IsValidEndpoint())
+            {
+                Program.Log($"Invalid endpoint specified: {listenOnEndpointStr}");
+                Program.Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
+                Environment.Exit(1);
+            }
+        }
+
+        public string ListenOnEndpointStr { get; }
+        public string ForwardToEndpointStr { get; }
 
         public override void Start()
         {
-            var listenEndpoint = IPEndPoint.Parse(EndpointStr);
+            var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
 
             listenerTask = Threads.StartNew(() =>
             {
@@ -27,7 +41,7 @@ namespace ft.Listeners
                 {
                     listener = new TcpListener(listenEndpoint);
                     listener.Start();
-                    Program.Log($"Listening on {EndpointStr}");
+                    Program.Log($"Listening on {ListenOnEndpointStr}");
 
                     while (true)
                     {
@@ -39,14 +53,14 @@ namespace ft.Listeners
 
                         var clientStream = client.GetStream();
 
-                        StreamEstablished?.Invoke(this, clientStream);
+                        StreamEstablished?.Invoke(this, new StreamEstablishedEventArgs(clientStream, ForwardToEndpointStr));
                     }
                 }
                 catch (Exception ex)
                 {
                     Program.Log($"TcpServer error: {ex.Message}");
                 }
-            }, $"TCP listener {EndpointStr}");
+            }, $"TCP listener {ListenOnEndpointStr}");
         }
 
         public override void Stop()
@@ -60,7 +74,6 @@ namespace ft.Listeners
                 Program.Log($"Stop(): {ex}");
             }
 
-
             try
             {
                 listenerTask?.Join();
@@ -69,7 +82,6 @@ namespace ft.Listeners
             {
                 Program.Log($"Stop(): {ex}");
             }
-
         }
     }
 }

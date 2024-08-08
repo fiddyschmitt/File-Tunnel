@@ -305,5 +305,45 @@ namespace ft
             var result = string.Join(seperator, list);
             return result;
         }
+
+        public static bool IsIPV6(this string ipStr)
+        {
+            var result = IPAddress.TryParse(ipStr, out var ip) && ip.AddressFamily == AddressFamily.InterNetworkV6;
+            return result;
+        }
+
+        public static string WrapIfIPV6(this string ipStr)
+        {
+            var result = ipStr.IsIPV6() ? $"[{ipStr}]" : ipStr;
+            return result;
+        }
+
+        public static IPEndPoint ToIpEndpoint(this EndPoint endPoint)
+        {
+            if (endPoint is IPEndPoint ipEndpoint)
+            {
+                return ipEndpoint;
+            }
+
+            if (endPoint is DnsEndPoint dnsEndPoint)
+            {
+                var addresses = Dns.GetHostAddresses(dnsEndPoint.Host);
+                if (addresses == null || addresses.Length == 0)
+                {
+                    throw new Exception($"Unable to retrieve IP address from specified host name: {dnsEndPoint.Host}");
+                }
+
+                return new IPEndPoint(addresses[0], dnsEndPoint.Port);
+            }
+
+            throw new Exception($"Unhandled Endpoint type: {endPoint.GetType()}");
+        }
+
+        public static IPEndPoint AsEndpoint(this string endpointStr)
+        {
+            var endpoint = NetworkUtilities.ParseEndpoint(endpointStr);
+            var result = endpoint.ToIpEndpoint();
+            return result;
+        }
     }
 }

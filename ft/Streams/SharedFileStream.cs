@@ -11,9 +11,9 @@ namespace ft.Streams
 {
     public class SharedFileStream(SharedFileManager sharedFileManager, int connectionId) : Stream
     {
-        public void EstablishConnection()
+        public void EstablishConnection(string destinationEndpointStr)
         {
-            SharedFileManager.Connect(ConnectionId);
+            SharedFileManager.Connect(ConnectionId, destinationEndpointStr);
         }
 
         public override bool CanRead => true;

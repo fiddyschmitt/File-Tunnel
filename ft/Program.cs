@@ -20,7 +20,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "2.1.0";
+        const string VERSION = "2.2.0";
 
 
         static int connectionId = 0;
@@ -30,7 +30,12 @@ namespace ft
         {
             Log($"{PROGRAM_NAME} {VERSION}");
 
-            Parser.Default.ParseArguments<Options>(args)
+            var parser = new Parser(settings =>
+            {
+                settings.AllowMultiInstance = true;
+            });
+
+            parser.ParseArguments<Options>(args)
                .WithParsed(o =>
                {
                    if (o.PrintVersion)
@@ -38,12 +43,11 @@ namespace ft
                        Environment.Exit(0);
                    }
 
-                   StreamEstablisher? listener = null;
-
-                   if (!string.IsNullOrEmpty(o.TcpListenTo) || !string.IsNullOrEmpty(o.UdpListenTo))
+                   if (o.TcpForwards.Any() || o.UdpForwards.Any())
                    {
-                       if (!string.IsNullOrEmpty(o.TcpListenTo)) listener = new TcpServer(o.TcpListenTo);
-                       if (!string.IsNullOrEmpty(o.UdpListenTo)) listener = new UdpServer(o.UdpListenTo);
+                       var listener = new MultiServer();
+                       if (o.TcpForwards.Any()) listener.Add("tcp", o.TcpForwards.ToList());
+                       if (o.UdpForwards.Any()) listener.Add("udp", o.UdpForwards.ToList());
 
                        if (listener == null)
                        {
@@ -51,25 +55,7 @@ namespace ft
                            return;
                        }
 
-                       var listenToStr = o.TcpListenTo;
-                       if (string.IsNullOrEmpty(listenToStr)) listenToStr = o.UdpListenTo;
-
-                       if (listenToStr != null && !listenToStr.IsValidEndpoint())
-                       {
-                           Log($"Invalid endpoint specified: {listenToStr}");
-                           Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
-                           return;
-                       }
-
-                       Log($"Will listen to: {listenToStr}");
-                       Log($"and forward to: {o.WriteTo}");
-                       if (!string.IsNullOrEmpty(o.ReadFrom)) Log($"and read responses from: {o.ReadFrom}");
-
-                       if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
-                       if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
-
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
-
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
                        sharedFileManager.OnlineStatusChanged += (sender, args) =>
                        {
                            if (args.IsOnline)
@@ -83,22 +69,16 @@ namespace ft
                            }
                        };
 
-                       var relayStreamCreator = new Func<Stream>(() =>
-                       {
-                           var cId = connectionId++;
-                           var sharedFileStream = new SharedFileStream(sharedFileManager, cId);
-                           sharedFileStream.EstablishConnection();
-                           return sharedFileStream;
-                       });
-
                        if (listener == null) return;
 
-                       listener.StreamEstablished += (sender, stream) =>
+                       listener.StreamEstablished += (sender, establishedArgs) =>
                        {
-                           var secondaryStream = relayStreamCreator();
+                           var cId = Interlocked.Increment(ref connectionId);
+                           var secondaryStream = new SharedFileStream(sharedFileManager, cId);
+                           secondaryStream.EstablishConnection(establishedArgs.DestinationEndpointString);
 
-                           var relay1 = new Relay(stream, secondaryStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                           var relay2 = new Relay(secondaryStream, stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                           var relay1 = new Relay(establishedArgs.Stream, secondaryStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                           var relay2 = new Relay(secondaryStream, establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
 
                            void tearDown()
                            {
@@ -112,34 +92,9 @@ namespace ft
 
                        sharedFileManager.Start();
                    }
-
-                   if (!string.IsNullOrEmpty(o.TcpConnectTo) || !string.IsNullOrEmpty(o.UdpSendTo))
+                   else
                    {
-                       if (string.IsNullOrEmpty(o.ReadFrom)) throw new Exception("Please supply --read");
-                       if (string.IsNullOrEmpty(o.WriteTo)) throw new Exception("Please supply --write");
-
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom, o.WriteTo, o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
-
-                       if (!string.IsNullOrEmpty(o.UdpSendTo) && string.IsNullOrEmpty(o.UdpSendFrom))
-                       {
-                           Log($"Please specify a (local) sender address to use for sending data, using the --udp-send-from argument.");
-                           Environment.Exit(1);
-                       }
-
-                       var forwardToStr = o.TcpConnectTo;
-                       if (string.IsNullOrEmpty(forwardToStr)) forwardToStr = o.UdpSendTo;
-
-                       if (forwardToStr != null && !forwardToStr.IsValidEndpoint())
-                       {
-                           Log($"Invalid endpoint specified: {forwardToStr}");
-                           Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
-                           return;
-                       }
-
-                       Log($"Will listen to: {o.ReadFrom}");
-                       Log($"and forward to: {forwardToStr}");
-                       if (!string.IsNullOrEmpty(o.WriteTo)) Log($"and when they respond, will write the response to: {o.WriteTo}");
-
+                       var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
                        sharedFileManager.OnlineStatusChanged += (sender, args) =>
                        {
                            if (!args.IsOnline)
@@ -148,58 +103,60 @@ namespace ft
                            }
                        };
 
-                       sharedFileManager.StreamEstablished += (sender, stream) =>
+                       sharedFileManager.StreamEstablished += (sender, establishedArgs) =>
                        {
-                           if (!string.IsNullOrEmpty(o.TcpConnectTo))
+                           var connectToTokens = establishedArgs.DestinationEndpointString.Split(["://"], StringSplitOptions.None);
+                           var protocol = connectToTokens[0];
+                           var destinationEndpointStr = connectToTokens[1];
+
+                           var destinationEndpoint = destinationEndpointStr.AsEndpoint();
+
+                           if (protocol.Equals("tcp"))
                            {
                                try
                                {
                                    var tcpClient = new TcpClient();
+                                   tcpClient.Connect(destinationEndpoint);
 
-                                   if (IPEndPoint.TryParse(o.TcpConnectTo, out var connectToEndpoint))
+
+                                   if (tcpClient.Connected)
                                    {
-                                       tcpClient.Connect(connectToEndpoint);
+                                       Log($"Connected to {destinationEndpointStr}");
+
+                                       var relay1 = new Relay(tcpClient.GetStream(), establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                                       var relay2 = new Relay(establishedArgs.Stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
+
+                                       void tearDown()
+                                       {
+                                           relay1.Stop();
+                                           relay2.Stop();
+                                       }
+
+                                       relay1.RelayFinished += (s, a) => tearDown();
+                                       relay2.RelayFinished += (s, a) => tearDown();
                                    }
                                    else
                                    {
-                                       var tokens = o.TcpConnectTo.Split([":"], StringSplitOptions.None);
-                                       tcpClient.Connect(tokens[0], int.Parse(tokens[1]));
+                                       Log($"Could not connect to: {destinationEndpointStr}");
                                    }
-
-                                   Log($"Connected to {o.TcpConnectTo}");
-
-                                   var relay1 = new Relay(tcpClient.GetStream(), stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                                   var relay2 = new Relay(stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
-
-                                   void tearDown()
-                                   {
-                                       relay1.Stop();
-                                       relay2.Stop();
-                                   }
-
-                                   relay1.RelayFinished += (s, a) => tearDown();
-                                   relay2.RelayFinished += (s, a) => tearDown();
                                }
                                catch (Exception ex)
                                {
-                                   Log($"Error during connection to {o.TcpConnectTo}. {ex.Message}");
+                                   Log($"Error during connection to {destinationEndpointStr}. {ex.Message}");
                                }
                            }
 
-                           if (!string.IsNullOrEmpty(o.UdpSendFrom) && !string.IsNullOrEmpty(o.UdpSendTo))
+                           if (protocol.Equals("udp"))
                            {
-                               var sendFromEndpoint = IPEndPoint.Parse(o.UdpSendFrom);
-                               var sendToEndpoint = IPEndPoint.Parse(o.UdpSendTo);
+                               var sendFromEndpoint = o.UdpSendFrom.AsEndpoint();
 
                                var udpClient = new UdpClient();
                                udpClient.Client.Bind(sendFromEndpoint);
 
-                               var udpStream = new UdpStream(udpClient, sendToEndpoint);
+                               var udpStream = new UdpStream(udpClient, destinationEndpoint);
 
-                               Log($"Will send data to {o.UdpSendTo} from {o.UdpListenTo}");
-
-                               var relay1 = new Relay(udpStream, stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                               var relay2 = new Relay(stream, udpStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                               var relay1 = new Relay(udpStream, establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                               var relay2 = new Relay(establishedArgs.Stream, udpStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
 
                                void tearDown()
                                {

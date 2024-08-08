@@ -106,9 +106,9 @@ namespace ft.Streams
             return result;
         }
 
-        public void Connect(int connectionId)
+        public void Connect(int connectionId, string destinationEndpointStr)
         {
-            var connectCommand = new Connect(connectionId);
+            var connectCommand = new Connect(connectionId, destinationEndpointStr);
             SendQueue.Add(connectCommand);
 
             if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
@@ -423,7 +423,7 @@ namespace ft.Streams
                                 Threads.StartNew(() =>
                                 {
                                     var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                                    StreamEstablished?.Invoke(this, sharedFileStream);
+                                    StreamEstablished?.Invoke(this, new StreamEstablishedEventArgs(sharedFileStream, connect.DestinationEndpointString));
                                 }, "EstablishConnection");
                             }
                         }

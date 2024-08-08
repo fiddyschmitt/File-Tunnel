@@ -9,6 +9,8 @@ using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Text;
+using ft;
+using ft.Utilities;
 
 namespace ft_tests
 {
@@ -19,26 +21,26 @@ namespace ft_tests
         [TestMethod]
         public void SingleConnection_HalfDuplex()
         {
-            TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), false, 1);
+            TestTransfer(50 * 1024 * 1024, "5001:127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), false, 1);
         }
 
         [TestMethod]
         public void SingleConnection_FullDuplex()
         {
-            TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 1);
+            TestTransfer(50 * 1024 * 1024, "5001:127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 1);
         }
 
         [TestMethod]
         public void MultipleConnections_FullDuplex()
         {
-            TestTransfer(50 * 1024 * 1024, "127.0.0.1:5001", "127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 10);
+            TestTransfer(50 * 1024 * 1024, "5001:127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 10);
         }
 
         [TestMethod]
         public void ServerSendsFirst()
         {
-            var listenPoint = "127.0.0.1:5000";
-            var connectPoint = "127.0.0.1:6000";
+            var forwardStr = "5000:127.0.0.1:6000";
+            (var lst, var dst) = NetworkUtilities.ParseForwardString(forwardStr);
 
             var writeFilename = Path.GetTempFileName();
             var readFilename = Path.GetTempFileName();
@@ -46,7 +48,7 @@ namespace ft_tests
 
             var listenThread = new Thread(() =>
             {
-                var listenArgsString = $@"--tcp-listen {listenPoint} --write ""{writeFilename}"" --read ""{readFilename}""";
+                var listenArgsString = $@"--L {forwardStr} --write ""{writeFilename}"" --read ""{readFilename}""";
 
                 var listenArgs = StringUtility.CommandLineToArgs(listenArgsString);
                 ft.Program.Main(listenArgs);
@@ -55,7 +57,7 @@ namespace ft_tests
 
             var forwardThread = new Thread(() =>
             {
-                var forwardArgsString = $@"--read ""{writeFilename}"" --tcp-connect {connectPoint} --write ""{readFilename}""";
+                var forwardArgsString = $@"--read ""{writeFilename}"" --write ""{readFilename}""";
 
                 var forwardArgs = StringUtility.CommandLineToArgs(forwardArgsString);
                 ft.Program.Main(forwardArgs);
@@ -63,7 +65,7 @@ namespace ft_tests
             forwardThread.Start();
 
 
-            var ultimateDestination = new TcpListener(IPEndPoint.Parse(connectPoint));
+            var ultimateDestination = new TcpListener(dst.AsEndpoint());
             ultimateDestination.Start();
             var ultimateDestinationAcceptCT = new CancellationTokenSource();
             var ultimateDestinationClients = new BlockingCollection<TcpClient>();
@@ -90,7 +92,7 @@ namespace ft_tests
                 }
                 try
                 {
-                    originClient.Connect(IPEndPoint.Parse(listenPoint));
+                    originClient.Connect(lst.AsEndpoint());
                 }
                 catch
                 {
@@ -108,11 +110,11 @@ namespace ft_tests
             Assert.IsTrue(receivedMatchesSent, $"Received buffer does not match sent buffer");
         }
 
-        public static void TestTransfer(int bytesToSend, string listenPoint, string connectPoint, string writeFilename, string readFilename, bool fullDuplex, int connections)
+        public static void TestTransfer(int bytesToSend, string forwardStr, string writeFilename, string readFilename, bool fullDuplex, int connections)
         {
             var listenThread = new Thread(() =>
             {
-                var listenArgsString = $@"--tcp-listen {listenPoint} --write ""{writeFilename}"" --read ""{readFilename}""";
+                var listenArgsString = $@"-L {forwardStr} --write ""{writeFilename}"" --read ""{readFilename}""";
 
                 var listenArgs = StringUtility.CommandLineToArgs(listenArgsString);
                 ft.Program.Main(listenArgs);
@@ -121,14 +123,16 @@ namespace ft_tests
 
             var forwardThread = new Thread(() =>
             {
-                var forwardArgsString = $@"--read ""{writeFilename}"" --tcp-connect {connectPoint} --write ""{readFilename}""";
+                var forwardArgsString = $@"--read ""{writeFilename}"" --write ""{readFilename}""";
 
                 var forwardArgs = StringUtility.CommandLineToArgs(forwardArgsString);
                 ft.Program.Main(forwardArgs);
             });
             forwardThread.Start();
 
-            var ultimateDestination = new TcpListener(IPEndPoint.Parse(connectPoint));
+            var (lst, dst) = NetworkUtilities.ParseForwardString(forwardStr);
+
+            var ultimateDestination = new TcpListener(dst.AsEndpoint());
             ultimateDestination.Start();
             var ultimateDestinationAcceptCT = new CancellationTokenSource();
             var ultimateDestinationClients = new BlockingCollection<TcpClient>();
@@ -167,7 +171,7 @@ namespace ft_tests
 
                         try
                         {
-                            originClient.Connect(IPEndPoint.Parse(listenPoint));
+                            originClient.Connect(lst.AsEndpoint());
                         }
                         catch
                         {

@@ -10,15 +10,30 @@ using System.Threading;
 
 namespace ft.Listeners
 {
-    public class UdpServer(string listenEndpointStr) : StreamEstablisher
+    public class UdpServer : StreamEstablisher
     {
         UdpClient? listener;
         Thread? listenerTask;
-        string ListenEndpointStr { get; } = listenEndpointStr;
+
+        public UdpServer(string listenOnEndpointStr, string forwardToEndpointStr)
+        {
+            ListenOnEndpointStr = listenOnEndpointStr;
+            ForwardToEndpointStr = forwardToEndpointStr;
+
+            if (!listenOnEndpointStr.IsValidEndpoint())
+            {
+                Program.Log($"Invalid endpoint specified: {listenOnEndpointStr}");
+                Program.Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
+                Environment.Exit(1);
+            }
+        }
+
+        public string ListenOnEndpointStr { get; }
+        public string ForwardToEndpointStr { get; }
 
         public override void Start()
         {
-            var listenEndpoint = IPEndPoint.Parse(ListenEndpointStr);
+            var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
 
             listener = new UdpClient(listenEndpoint);
 
@@ -39,7 +54,7 @@ namespace ft.Listeners
                             udpStream = new UdpStream(listener, remoteIpEndPoint);
                             connections.Add(remoteIpEndPoint, udpStream);
 
-                            StreamEstablished?.Invoke(this, udpStream);
+                            StreamEstablished?.Invoke(this, new StreamEstablishedEventArgs(udpStream, ForwardToEndpointStr));
                         }
 
                         udpStream.AddToReadQueue(data);
