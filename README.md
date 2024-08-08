@@ -56,19 +56,6 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 <br />
 <br />
 
-## Compatibility
-|                 | SMB                          | NFS                          | AFP                          |
-| :---            | :---:                        | :---:                        | :---:                        |
-| windows-x64     | Y                            | Y                            | Unknown - please let me know |
-| linux-x64       | Y                            | Y                            | Unknown - please let me know |
-| linux-arm64     | Unknown - please let me know | Unknown - please let me know | Unknown - please let me know |
-| osx-x64         | Unknown - please let me know | Unknown - please let me know | Unknown - please let me know |
-| osx-arm64       | Unknown - please let me know | Unknown - please let me know | Unknown - please let me know |
-
-<br />
-<br />
-<br />
-
 ## How does it work?
 The program starts a TCP listener, and when a connection is received it writes the TCP data into a file. This same file is read by the counterpart program, which establishes a TCP connection and onforwards the TCP data.
 To avoid the shared file growing indefinitely, it is purged whenever it gets larger than 10 MB.
