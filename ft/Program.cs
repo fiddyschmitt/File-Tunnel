@@ -33,16 +33,14 @@ namespace ft
             var parser = new Parser(settings =>
             {
                 settings.AllowMultiInstance = true;
+                settings.AutoHelp = true;
+                settings.HelpWriter = Console.Out;
+                settings.AutoVersion = true;
             });
 
             parser.ParseArguments<Options>(args)
                .WithParsed(o =>
                {
-                   if (o.PrintVersion)
-                   {
-                       Environment.Exit(0);
-                   }
-
                    if (o.TcpForwards.Any() || o.UdpForwards.Any())
                    {
                        var listener = new MultiServer();
@@ -171,6 +169,10 @@ namespace ft
 
                        sharedFileManager.Start();
                    }
+               })
+               .WithNotParsed(o =>
+               {
+                   Environment.Exit(1);
                });
 
             while (true)

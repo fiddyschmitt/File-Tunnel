@@ -10,10 +10,10 @@ namespace ft.CLI
 {
     public class Options
     {
-        [Option('L', Required = false, HelpText = @"SSH-style TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
+        [Option('L', Required = false, HelpText = @"TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> TcpForwards { get; set; } = new List<string>();
 
-        [Option('U', Required = false, HelpText = @"UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side.")]
+        [Option('U', Required = false, HelpText = @"UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> UdpForwards { get; set; } = new List<string>();
 
 
@@ -39,10 +39,5 @@ namespace ft.CLI
 
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point.")]
         public int TunnelTimeoutMilliseconds { get; set; } = 5000;
-
-
-
-        [Option('v', "version", Required = false, HelpText = "Print the version and exit.")]
-        public bool PrintVersion { get; set; }
     }
 }
