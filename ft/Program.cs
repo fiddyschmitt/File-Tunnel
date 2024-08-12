@@ -41,6 +41,8 @@ namespace ft
             parser.ParseArguments<Options>(args)
                .WithParsed(o =>
                {
+                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
+
                    if (o.TcpForwards.Any() || o.UdpForwards.Any())
                    {
                        var listener = new MultiServer();
@@ -53,7 +55,6 @@ namespace ft
                            return;
                        }
 
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
                        sharedFileManager.OnlineStatusChanged += (sender, args) =>
                        {
                            if (args.IsOnline)
@@ -87,88 +88,83 @@ namespace ft
                            relay1.RelayFinished += (s, a) => tearDown();
                            relay2.RelayFinished += (s, a) => tearDown();
                        };
-
-                       sharedFileManager.Start();
                    }
-                   else
+
+                   sharedFileManager.OnlineStatusChanged += (sender, args) =>
                    {
-                       var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
-                       sharedFileManager.OnlineStatusChanged += (sender, args) =>
+                       if (!args.IsOnline)
                        {
-                           if (!args.IsOnline)
-                           {
-                               sharedFileManager.TearDownAllConnections();
-                           }
-                       };
+                           sharedFileManager.TearDownAllConnections();
+                       }
+                   };
 
-                       sharedFileManager.StreamEstablished += (sender, establishedArgs) =>
+                   sharedFileManager.StreamEstablished += (sender, establishedArgs) =>
+                   {
+                       var connectToTokens = establishedArgs.DestinationEndpointString.Split(["://"], StringSplitOptions.None);
+                       var protocol = connectToTokens[0];
+                       var destinationEndpointStr = connectToTokens[1];
+
+                       var destinationEndpoint = destinationEndpointStr.AsEndpoint();
+
+                       if (protocol.Equals("tcp"))
                        {
-                           var connectToTokens = establishedArgs.DestinationEndpointString.Split(["://"], StringSplitOptions.None);
-                           var protocol = connectToTokens[0];
-                           var destinationEndpointStr = connectToTokens[1];
-
-                           var destinationEndpoint = destinationEndpointStr.AsEndpoint();
-
-                           if (protocol.Equals("tcp"))
+                           try
                            {
-                               try
+                               var tcpClient = new TcpClient();
+                               tcpClient.Connect(destinationEndpoint);
+
+
+                               if (tcpClient.Connected)
                                {
-                                   var tcpClient = new TcpClient();
-                                   tcpClient.Connect(destinationEndpoint);
+                                   Log($"Connected to {destinationEndpointStr}");
 
+                                   var relay1 = new Relay(tcpClient.GetStream(), establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                                   var relay2 = new Relay(establishedArgs.Stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
 
-                                   if (tcpClient.Connected)
+                                   void tearDown()
                                    {
-                                       Log($"Connected to {destinationEndpointStr}");
-
-                                       var relay1 = new Relay(tcpClient.GetStream(), establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                                       var relay2 = new Relay(establishedArgs.Stream, tcpClient.GetStream(), o.PurgeSizeInBytes, o.ReadDurationMillis);
-
-                                       void tearDown()
-                                       {
-                                           relay1.Stop();
-                                           relay2.Stop();
-                                       }
-
-                                       relay1.RelayFinished += (s, a) => tearDown();
-                                       relay2.RelayFinished += (s, a) => tearDown();
+                                       relay1.Stop();
+                                       relay2.Stop();
                                    }
-                                   else
-                                   {
-                                       Log($"Could not connect to: {destinationEndpointStr}");
-                                   }
+
+                                   relay1.RelayFinished += (s, a) => tearDown();
+                                   relay2.RelayFinished += (s, a) => tearDown();
                                }
-                               catch (Exception ex)
+                               else
                                {
-                                   Log($"Error during connection to {destinationEndpointStr}. {ex.Message}");
+                                   Log($"Could not connect to: {destinationEndpointStr}");
                                }
                            }
-
-                           if (protocol.Equals("udp"))
+                           catch (Exception ex)
                            {
-                               var sendFromEndpoint = o.UdpSendFrom.AsEndpoint();
-
-                               var udpClient = new UdpClient();
-                               udpClient.Client.Bind(sendFromEndpoint);
-
-                               var udpStream = new UdpStream(udpClient, destinationEndpoint);
-
-                               var relay1 = new Relay(udpStream, establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                               var relay2 = new Relay(establishedArgs.Stream, udpStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
-
-                               void tearDown()
-                               {
-                                   relay1.Stop();
-                                   relay2.Stop();
-                               }
-
-                               relay1.RelayFinished += (s, a) => tearDown();
-                               relay2.RelayFinished += (s, a) => tearDown();
+                               Log($"Error during connection to {destinationEndpointStr}. {ex.Message}");
                            }
-                       };
+                       }
 
-                       sharedFileManager.Start();
-                   }
+                       if (protocol.Equals("udp"))
+                       {
+                           var sendFromEndpoint = o.UdpSendFrom.AsEndpoint();
+
+                           var udpClient = new UdpClient();
+                           udpClient.Client.Bind(sendFromEndpoint);
+
+                           var udpStream = new UdpStream(udpClient, destinationEndpoint);
+
+                           var relay1 = new Relay(udpStream, establishedArgs.Stream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                           var relay2 = new Relay(establishedArgs.Stream, udpStream, o.PurgeSizeInBytes, o.ReadDurationMillis);
+
+                           void tearDown()
+                           {
+                               relay1.Stop();
+                               relay2.Stop();
+                           }
+
+                           relay1.RelayFinished += (s, a) => tearDown();
+                           relay2.RelayFinished += (s, a) => tearDown();
+                       }
+                   };
+
+                   sharedFileManager.Start();
                })
                .WithNotParsed(o =>
                {
