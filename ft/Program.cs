@@ -43,11 +43,11 @@ namespace ft
                {
                    var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
 
-                   if (o.TcpForwards.Any() || o.UdpForwards.Any())
+                   if (o.LocalTcpForwards.Any() || o.LocalUdpForwards.Any())
                    {
                        var listener = new MultiServer();
-                       if (o.TcpForwards.Any()) listener.Add("tcp", o.TcpForwards.ToList());
-                       if (o.UdpForwards.Any()) listener.Add("udp", o.UdpForwards.ToList());
+                       if (o.LocalTcpForwards.Any()) listener.Add("tcp", o.LocalTcpForwards.ToList());
+                       if (o.LocalUdpForwards.Any()) listener.Add("udp", o.LocalUdpForwards.ToList());
 
                        if (listener == null)
                        {

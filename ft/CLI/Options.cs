@@ -11,10 +11,10 @@ namespace ft.CLI
     public class Options
     {
         [Option('L', Required = false, HelpText = @"TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
-        public IEnumerable<string> TcpForwards { get; set; } = new List<string>();
+        public IEnumerable<string> LocalTcpForwards { get; set; } = new List<string>();
 
         [Option('U', Required = false, HelpText = @"UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
-        public IEnumerable<string> UdpForwards { get; set; } = new List<string>();
+        public IEnumerable<string> LocalUdpForwards { get; set; } = new List<string>();
 
 
 
