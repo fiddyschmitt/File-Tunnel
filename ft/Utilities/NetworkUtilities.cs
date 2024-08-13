@@ -72,7 +72,7 @@ namespace ft.Utilities
                 {
                     Program.Log($"Please supply arguments using the following syntax:");
                     Program.Log($"-L [bind_address:]port:host:hostport");
-                    Program.Log($"Specifies that the given port on the local (client) host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.");
+                    Program.Log($"Specifies that the given port on the local host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.");
                     Environment.Exit(1);
                 }
             }
