@@ -96,7 +96,7 @@ namespace ft.Streams
             byte[]? result = null;
             try
             {
-                result = connectionReceiveQueue.Take(tunnelCancellationTokenSource.Token);
+                result = connectionReceiveQueue.Take();
             }
             catch (InvalidOperationException)
             {
@@ -203,7 +203,7 @@ namespace ft.Streams
 
                     sendFileEstablished = true;
 
-                    foreach (var command in SendQueue.GetConsumingEnumerable(tunnelCancellationTokenSource.Token))
+                    foreach (var command in SendQueue.GetConsumingEnumerable())
                     {
                         ms.SetLength(0);
                         command.Serialise(msWriter);
