@@ -54,7 +54,7 @@ namespace ft.Listeners
                             udpStream = new UdpStream(listener, remoteIpEndPoint);
                             connections.Add(remoteIpEndPoint, udpStream);
 
-                            StreamEstablished?.Invoke(this, new StreamEstablishedEventArgs(udpStream, ForwardToEndpointStr));
+                            ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(udpStream, ForwardToEndpointStr));
                         }
 
                         udpStream.AddToReadQueue(data);

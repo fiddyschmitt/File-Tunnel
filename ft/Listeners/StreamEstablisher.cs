@@ -9,12 +9,12 @@ namespace ft.Listeners
 {
     public abstract class StreamEstablisher
     {
-        public EventHandler<StreamEstablishedEventArgs>? StreamEstablished;
+        public EventHandler<ConnectionAcceptedEventArgs>? ConnectionAccepted;
         public abstract void Start();
         public abstract void Stop();
     }
 
-    public class StreamEstablishedEventArgs(Stream stream, string destinationStr)
+    public class ConnectionAcceptedEventArgs(Stream stream, string destinationStr)
     {
         public Stream Stream { get; } = stream;
         public string DestinationEndpointString { get; } = destinationStr;

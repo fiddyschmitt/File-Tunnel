@@ -53,7 +53,7 @@ namespace ft.Listeners
 
                         var clientStream = client.GetStream();
 
-                        StreamEstablished?.Invoke(this, new StreamEstablishedEventArgs(clientStream, ForwardToEndpointStr));
+                        ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(clientStream, ForwardToEndpointStr));
                     }
                 }
                 catch (Exception ex)

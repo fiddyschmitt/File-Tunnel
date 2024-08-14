@@ -8,9 +8,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Pipes;
 using System.Linq;
-using System.Net.Mail;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +19,9 @@ namespace ft.Streams
     {
         readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
+
+        public event EventHandler<CreateLocalListenerEventArgs>? CreateLocalListenerRequested;
+        public event EventHandler? SessionChanged;
 
         const int reportIntervalMs = 1000;
         readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
@@ -109,19 +110,20 @@ namespace ft.Streams
         public void Connect(int connectionId, string destinationEndpointStr)
         {
             var connectCommand = new Connect(connectionId, destinationEndpointStr);
-            SendQueue.Add(connectCommand);
-
-            if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
+            if (EnqueueToSend(connectCommand))
             {
-                connectionReceiveQueue = [];
-                ReceiveQueue.TryAdd(connectionId, connectionReceiveQueue);
+                if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
+                {
+                    connectionReceiveQueue = [];
+                    ReceiveQueue.TryAdd(connectionId, connectionReceiveQueue);
+                }
             }
         }
 
         public void Write(int connectionId, byte[] data)
         {
             var forwardCommand = new Forward(connectionId, data);
-            SendQueue.Add(forwardCommand);
+            EnqueueToSend(forwardCommand);
         }
 
         public void TearDown(int connectionId)
@@ -130,7 +132,7 @@ namespace ft.Streams
 
             if (IsOnline)
             {
-                SendQueue.Add(teardownCommand);
+                EnqueueToSend(teardownCommand);
             }
 
             if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
@@ -138,6 +140,24 @@ namespace ft.Streams
                 receiveQueue.CompleteAdding();
                 ReceiveQueue.TryRemove(connectionId, out _);
             }
+        }
+
+        public bool EnqueueToSend(Command cmd)
+        {
+            var sendTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
+
+            bool result;
+            try
+            {
+                SendQueue.Add(cmd, sendTimeout.Token);
+                result = true;
+            }
+            catch
+            {
+                result = false;
+            }
+
+            return result;
         }
 
         const long SESSION_ID = 0;
@@ -271,8 +291,6 @@ namespace ft.Streams
             return result;
         }
 
-        readonly CancellationTokenSource tunnelCancellationTokenSource = new();
-
         bool receiveFileEstablished = false;
 
         public void ReceivePump()
@@ -291,7 +309,6 @@ namespace ft.Streams
 
                     FileStream? fileStream = null;
                     BinaryReader? binaryReader = null;
-
 
                     try
                     {
@@ -329,6 +346,7 @@ namespace ft.Streams
 
                         currentSessionId = ReadSessionId(binaryReader);
                         //Program.Log($"[{readFileShortName}] Read Session ID: {currentSessionId}");
+                        SessionChanged?.Invoke(this, new());
 
 
                         var isReadyForPurgeStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
@@ -423,9 +441,14 @@ namespace ft.Streams
                                 Threads.StartNew(() =>
                                 {
                                     var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                                    StreamEstablished?.Invoke(this, new StreamEstablishedEventArgs(sharedFileStream, connect.DestinationEndpointString));
-                                }, "EstablishConnection");
+                                    ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(sharedFileStream, connect.DestinationEndpointString));
+                                }, "ConnectionAccepted");
                             }
+                        }
+                        else if (command is CreateListener createListener)
+                        {
+                            var createLocalListenerEventArgs = new CreateLocalListenerEventArgs(createListener.Protocol, createListener.ForwardString);
+                            CreateLocalListenerRequested?.Invoke(this, createLocalListenerEventArgs);
                         }
                         else if (command is Purge)
                         {
@@ -469,7 +492,7 @@ namespace ft.Streams
                                 Task.Factory.StartNew(() =>
                                 {
                                     //start in a new task, because we want to continue receiving messages while queuing this message may block
-                                    SendQueue.Add(response);
+                                    EnqueueToSend(response);
                                 });
                             }
 
@@ -501,12 +524,7 @@ namespace ft.Streams
                 {
                     pingStopwatch.Restart();
 
-                    try
-                    {
-                        var sendTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
-                        SendQueue.Add(pingRequest, sendTimeout.Token);
-                    }
-                    catch
+                    if (!EnqueueToSend(pingRequest))
                     {
                         latestRTT = null;
                         continue;
@@ -636,5 +654,11 @@ namespace ft.Streams
     public class OnlineStatusEventArgs(bool isOnline)
     {
         public bool IsOnline { get; } = isOnline;
+    }
+
+    public class CreateLocalListenerEventArgs(string protocol, string forwardString)
+    {
+        public string Protocol { get; } = protocol;
+        public string ForwardString { get; } = forwardString;
     }
 }
