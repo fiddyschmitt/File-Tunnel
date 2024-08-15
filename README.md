@@ -45,7 +45,7 @@ You'd like to connect to a remote service (eg. ``192.168.1.50:8888``), but only 
 
 Run an RDP client and ensure local drives are shared as shown [here](https://github.com/fiddyschmitt/file_tunnel/assets/15338956/eb890310-47f5-4b46-9f74-471ec1735450).
 
-Connect to Host B.
+RDP to Host B.
 
 ### Host B
 ``ft.exe --read "\\tsclient\c\Temp\1.dat" --write "\\tsclient\c\Temp\2.dat"``
