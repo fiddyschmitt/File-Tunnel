@@ -64,7 +64,7 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 	
 * Use `-R` for remote forwarding. For example: `-R 5000:10.0.0.50:6000` instructs the _remote_ side to listen on port 5000, and when a connection is received forward it through the tunnel and onto 10.0.0.50:6000 via the local machine. This allows you to share a server running on your local machine, with other computers.
 	
-* The read and write files don't have to be in the same folder or even server,
+* The read and write files don't have to be in the same folder or even server.
 
 <br />
 <br />
