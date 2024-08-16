@@ -5,7 +5,7 @@ Tunnel TCP connections through a file.
 <br />
 
 ## Download
-Portable executables for Windows, Linux and Mac can be found over in the [releases](https://github.com/fiddyschmitt/file_tunnel/releases) section.
+Portable executables for Windows, Linux and Mac can be found over in the [releases](https://github.com/fiddyschmitt/File-Tunnel/releases/latest) section.
 
 <br />
 
