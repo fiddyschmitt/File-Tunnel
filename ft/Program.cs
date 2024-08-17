@@ -21,7 +21,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "2.2.0";
+        const string VERSION = "2.2.0_preallocated";
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
         public static void Main(string[] args)
@@ -46,10 +46,17 @@ namespace ft
                    var remoteListeners = new List<string>();
                    remoteListeners.AddRange(o.RemoteTcpForwards);
 
-                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
+                   if (!File.Exists(o.WriteTo))
+                   {
+                       using var fs = File.Create(o.WriteTo);
+                       fs.SetLength(o.WriteFileSize);
+                   }
+                   var writeFileSize = new FileInfo(o.WriteTo).Length;
 
-                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                   var remoteToLocalTunnel = new RemoteToLocalTunnel(remoteListeners, sharedFileManager, localToRemoteTunnel, o.PurgeSizeInBytes, o.ReadDurationMillis, o.UdpSendFrom);
+                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), writeFileSize, o.TunnelTimeoutMilliseconds);
+
+                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, writeFileSize, o.ReadDurationMillis);
+                   var remoteToLocalTunnel = new RemoteToLocalTunnel(remoteListeners, sharedFileManager, localToRemoteTunnel, writeFileSize, o.ReadDurationMillis, o.UdpSendFrom);
 
                    sharedFileManager.Start();
                })

@@ -39,7 +39,13 @@ namespace ft.Commands
             var crc = hashingStream.GetCrc32();
             writer.Write(crc);
 
+            //write 0 to indicate that the subsequent command is not ready
+            writer.Write((byte)0);
+
             writer.Flush();
+
+            //jump back one byte, ready to write the next command
+            writer.BaseStream.Seek(-1, SeekOrigin.Current);
         }
 
         public static Command? Deserialise(BinaryReader reader)

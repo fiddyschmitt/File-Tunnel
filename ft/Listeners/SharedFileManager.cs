@@ -15,7 +15,7 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes, int tunnelTimeoutMilliseconds) : StreamEstablisher
+    public class SharedFileManager(string readFromFilename, string writeToFilename, long writeFileSize, int tunnelTimeoutMilliseconds) : StreamEstablisher
     {
         readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
@@ -161,9 +161,10 @@ namespace ft.Streams
         }
 
         const long SESSION_ID = 0;
-        const int READY_FOR_PURGE_FLAG = sizeof(long);
-        const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
-        const int MESSAGE_WRITE_POS = PURGE_COMPLETE_FLAG + 1;
+        const int NEXT_COMMAND_POS = sizeof(long);                              //specifies where the next command will be written in the file
+        const int READY_FOR_PURGE_FLAG = NEXT_COMMAND_POS + sizeof(long);       //specifies that this side is ready to restart the file
+        const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;               //specifies that the file has been restarted
+        const int MESSAGE_WRITE_POS = PURGE_COMPLETE_FLAG + 1;                  //specifies the position where the first command in the file will be written
 
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
@@ -181,11 +182,10 @@ namespace ft.Streams
 
                 try
                 {
-                    var bufferSize = PurgeSizeInBytes * 2;
+                    var bufferSize = (int)WriteFileSize * 2;
                     bufferSize = Math.Max(bufferSize, 1024 * 1024 * 1024);
 
-                    //the writer always creates the file
-                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize); //large buffer to prevent FileStream from autoflushing
+                    fileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize); //large buffer to prevent FileStream from autoflushing
                 }
                 catch (Exception ex)
                 {
@@ -196,8 +196,6 @@ namespace ft.Streams
 
                 try
                 {
-                    fileStream.SetLength(MESSAGE_WRITE_POS);
-
                     var hashingStream = new HashingStream(fileStream);
                     var binaryWriter = new BinaryWriter(hashingStream);
 
@@ -206,15 +204,14 @@ namespace ft.Streams
                     binaryWriter.Flush();
                     //Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
 
+                    var nextCommandPosStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, sizeof(long), FileOptions.SequentialScan);
+                    var nextCommandPos = new ToggleWriter(new BinaryWriter(nextCommandPosStream), NEXT_COMMAND_POS);
+
                     var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-                    setReadyForPurge = new ToggleWriter(
-                        new BinaryWriter(setReadyForPurgeStream),
-                        READY_FOR_PURGE_FLAG);
+                    setReadyForPurge = new ToggleWriter(new BinaryWriter(setReadyForPurgeStream), READY_FOR_PURGE_FLAG);
 
                     var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-                    setPurgeComplete = new ToggleWriter(
-                        new BinaryWriter(setPurgeCompleteStream),
-                        PURGE_COMPLETE_FLAG);
+                    setPurgeComplete = new ToggleWriter(new BinaryWriter(setPurgeCompleteStream), PURGE_COMPLETE_FLAG);
 
                     var ms = new HashingStream(new MemoryStream());
                     var msWriter = new BinaryWriter(ms);
@@ -228,19 +225,26 @@ namespace ft.Streams
                         ms.SetLength(0);
                         command.Serialise(msWriter);
 
-                        if (PurgeSizeInBytes > 0 && fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                        if (fileStream.Position + ms.Length + 1 >= WriteFileSize - MESSAGE_WRITE_POS)
                         {
-                            Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
+                            Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for file restart.");
 
                             var purge = new Purge();
                             purge.Serialise(binaryWriter);
+
+                            nextCommandPos.Set(fileStream.Position);
+
 
                             //wait for counterpart to be ready for purge
                             isReadyForPurge?.Wait(1);
 
                             //perform the purge
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                            fileStream.SetLength(MESSAGE_WRITE_POS);
+
+                            //clear the existing message
+                            fileStream.WriteByte(0);
+                            fileStream.Seek(-1, SeekOrigin.Current);
+                            fileStream.Flush();
 
                             //signal that the purge is complete
                             setPurgeComplete.Set(1);
@@ -251,13 +255,15 @@ namespace ft.Streams
                             //clear our complete flag
                             setPurgeComplete.Set(0);
 
-                            Program.Log($"[{writeFileShortName}] Purge complete.");
+                            Program.Log($"[{writeFileShortName}] File restart complete.");
                         }
 
                         //write the message to file
                         var commandStartPos = fileStream.Position;
                         command.Serialise(binaryWriter);
                         var commandEndPos = fileStream.Position;
+
+                        nextCommandPos.Set(fileStream.Position);
 
                         //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
 
@@ -330,15 +336,15 @@ namespace ft.Streams
                             fileStream.Seek(retryPos.Value, SeekOrigin.Begin);
                             retryPos = null;
                         }
-                        else if (currentSessionId == -1)
-                        {
-                            Program.Log($"[{readFileShortName}] already existed. Seeking to end ({fileStream.Length:N0})");
-                            fileStream.Seek(0, SeekOrigin.End);
-                        }
                         else
                         {
-                            Program.Log($"[{readFileShortName}] opened. Seeking to ({MESSAGE_WRITE_POS:N0})");
-                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            Program.Log($"[{readFileShortName}] already existed. Determining position of the next command.");
+                            using var reader = new BinaryReader(fileStream, Encoding.Default, true);
+                            fileStream.Seek(NEXT_COMMAND_POS, SeekOrigin.Begin);
+                            var nextCommandPos = reader.ReadInt64();
+                            fileStream.Seek(nextCommandPos, SeekOrigin.Begin);
+
+                            Program.Log($"[{readFileShortName}] Seeked to position {nextCommandPos:N0}.");
                         }
 
                         var hashingStream = new HashingStream(fileStream);
@@ -452,7 +458,7 @@ namespace ft.Streams
                         }
                         else if (command is Purge)
                         {
-                            Program.Log($"[{readFileShortName}] Counterpart is about to purge this file.");
+                            Program.Log($"[{readFileShortName}] Counterpart is about to restart this file.");
 
                             //signal that we're ready for purge
                             setReadyForPurge?.Set(1);
@@ -470,7 +476,7 @@ namespace ft.Streams
                             //wait for counterpart to clear the complete flag
                             isPurgeComplete.Wait(0);
 
-                            Program.Log($"[{readFileShortName}] File was purged by counterpart.");
+                            Program.Log($"[{readFileShortName}] File was restarted by counterpart.");
                         }
                         else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out var connectionReceiveQueue))
                         {
@@ -647,7 +653,7 @@ namespace ft.Streams
         }
 
         public string WriteToFilename { get; } = writeToFilename;
-        public int PurgeSizeInBytes { get; } = purgeSizeInBytes;
+        public long WriteFileSize { get; } = writeFileSize;
         public string ReadFromFilename { get; } = readFromFilename;
     }
 

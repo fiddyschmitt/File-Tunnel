@@ -13,7 +13,7 @@ namespace ft.Tunnels
 {
     public class RemoteToLocalTunnel
     {
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, int purgeSizeInBytes, int readDurationMillis, string udpSendFrom)
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, long writeFileSize, int readDurationMillis, string udpSendFrom)
         {
             RemoteTcpForwards = remoteTcpForwards;
             SharedFileManager = sharedFileManager;
@@ -54,8 +54,8 @@ namespace ft.Tunnels
                         {
                             Program.Log($"Connected to {destinationEndpointStr}");
 
-                            var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream, purgeSizeInBytes, readDurationMillis);
-                            var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream(), purgeSizeInBytes, readDurationMillis);
+                            var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream, writeFileSize, readDurationMillis);
+                            var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream(), writeFileSize, readDurationMillis);
 
                             void TearDown()
                             {
@@ -86,8 +86,8 @@ namespace ft.Tunnels
 
                     var udpStream = new UdpStream(udpClient, destinationEndpoint);
 
-                    var relay1 = new Relay(udpStream, connectionDetails.Stream, purgeSizeInBytes, readDurationMillis);
-                    var relay2 = new Relay(connectionDetails.Stream, udpStream, purgeSizeInBytes, readDurationMillis);
+                    var relay1 = new Relay(udpStream, connectionDetails.Stream, writeFileSize, readDurationMillis);
+                    var relay2 = new Relay(connectionDetails.Stream, udpStream, writeFileSize, readDurationMillis);
 
                     void TearDown()
                     {

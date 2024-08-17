@@ -19,5 +19,12 @@ namespace ft.IO
             Writer.Write(value);
             Writer.Flush();
         }
+
+        public void Set(long value)
+        {
+            Writer.BaseStream.Seek(Position, SeekOrigin.Begin);
+            Writer.Write(value);
+            Writer.Flush();
+        }
     }
 }
