@@ -39,8 +39,8 @@ namespace ft.CLI
 
 
 
-        [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
-        public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;
+        [Option("write-file-size", Required = false, HelpText = @"The size (in bytes) the write file will be initialized to if it doesn't already exist.")]
+        public long WriteFileSize { get; set; } = 10 * 1024 * 1024;
 
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point.")]
         public int TunnelTimeoutMilliseconds { get; set; } = 5000;
