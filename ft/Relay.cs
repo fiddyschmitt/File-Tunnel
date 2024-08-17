@@ -12,9 +12,9 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream, int purgeSizeInBytes, int readDurationMillis)
+        public Relay(Stream fromStream, Stream toStream, long writeFileSize, int readDurationMillis)
         {
-            var bufferSize = (int)(purgeSizeInBytes / 2d * 0.9d);
+            var bufferSize = (int)(writeFileSize / 2d * 0.9d);
             bufferSize = Math.Max(bufferSize, 1024 * 1024);
 
             Threads.StartNew(() =>

@@ -13,7 +13,7 @@ namespace ft.Tunnels
         public MultiServer LocalListeners { get; }
         public SharedFileManager SharedFileManager { get; }
 
-        public LocalToRemoteTunnel(MultiServer localListeners, SharedFileManager sharedFileManager, int purgeSizeInBytes, int readDurationMillis)
+        public LocalToRemoteTunnel(MultiServer localListeners, SharedFileManager sharedFileManager, long writeFileSize, int readDurationMillis)
         {
             LocalListeners = localListeners;
             SharedFileManager = sharedFileManager;
@@ -43,8 +43,8 @@ namespace ft.Tunnels
                 var secondaryStream = new SharedFileStream(sharedFileManager, connectionId);
                 secondaryStream.EstablishConnection(connectionDetails.DestinationEndpointString);
 
-                var relay1 = new Relay(connectionDetails.Stream, secondaryStream, purgeSizeInBytes, readDurationMillis);
-                var relay2 = new Relay(secondaryStream, connectionDetails.Stream, purgeSizeInBytes, readDurationMillis);
+                var relay1 = new Relay(connectionDetails.Stream, secondaryStream, writeFileSize, readDurationMillis);
+                var relay2 = new Relay(secondaryStream, connectionDetails.Stream, writeFileSize, readDurationMillis);
 
                 void TearDown()
                 {
