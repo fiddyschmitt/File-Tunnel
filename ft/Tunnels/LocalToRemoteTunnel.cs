@@ -10,12 +10,13 @@ namespace ft.Tunnels
 {
     public class LocalToRemoteTunnel
     {
-        int connectionCount = 0;
         public MultiServer LocalListeners { get; }
+        public SharedFileManager SharedFileManager { get; }
 
         public LocalToRemoteTunnel(MultiServer localListeners, SharedFileManager sharedFileManager, int purgeSizeInBytes, int readDurationMillis)
         {
             LocalListeners = localListeners;
+            SharedFileManager = sharedFileManager;
 
             sharedFileManager.OnlineStatusChanged += (sender, args) =>
             {
@@ -38,7 +39,7 @@ namespace ft.Tunnels
 
             localListeners.ConnectionAccepted += (sender, connectionDetails) =>
             {
-                var connectionId = Interlocked.Increment(ref connectionCount);
+                var connectionId = SharedFileManager.GenerateUniqueConnectionId();
                 var secondaryStream = new SharedFileStream(sharedFileManager, connectionId);
                 secondaryStream.EstablishConnection(connectionDetails.DestinationEndpointString);
 

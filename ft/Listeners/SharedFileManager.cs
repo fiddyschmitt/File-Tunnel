@@ -107,6 +107,22 @@ namespace ft.Streams
             return result;
         }
 
+        public int GenerateUniqueConnectionId()
+        {
+            int result;
+            while (true)
+            {
+                result = Program.Random.Next(int.MaxValue);
+
+                if (!ReceiveQueue.ContainsKey(result))
+                {
+                    break;
+                }
+            }
+
+            return result;
+        }
+
         public void Connect(int connectionId, string destinationEndpointStr)
         {
             var connectCommand = new Connect(connectionId, destinationEndpointStr);
