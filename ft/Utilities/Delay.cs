@@ -12,16 +12,13 @@ namespace ft.Utilities
     {
         public static void Wait(int ms)
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                Thread.Sleep(ms);
-                return;
-            }
-
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 WindowsDelay.Wait(ms);
-                return;
+            }
+            else
+            {
+                Thread.Sleep(ms);
             }
         }
     }
