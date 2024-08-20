@@ -60,7 +60,7 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 
 * `-L` can be used multiple times, to forward numerous ports through the one tunnel.
 
-* To enable other computers to use the tunnel, specify a binding address of `0.0.0.0`. For example: `-L 0.0.0.0:5000:10.0.0.50:3389` allows any computer on the network to connect to the tunnel and onto 192.168.1.50:3389
+* To enable other computers to use the tunnel, specify a binding address of `0.0.0.0`. For example: `-L 0.0.0.0:5000:192.168.1.50:3389` allows any computer on the network to connect to the tunnel and onto 192.168.1.50:3389
 	
 * Use `-R` for remote forwarding. For example: `-R 5000:10.0.0.50:6000` instructs the _remote_ side to listen on port 5000, and when a connection is received forward it through the tunnel and onto 10.0.0.50:6000 via the local machine. This allows you to share a server running on your local machine, with other computers.
 	
