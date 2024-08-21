@@ -45,7 +45,7 @@ namespace ft.Listeners
                 throw new Exception($"Could not instantiate listener for: {forwardStr}");
             }
 
-            Program.Log($"Initialised {protocol} forwarder for: {listenEndpoint} -> {destinationEndpoint}");
+            Program.Log($"Initialised {protocol} forwarder for: (local) {listenEndpoint} -> (remote) {destinationEndpoint}");
 
             listener.ConnectionAccepted += (sender, args) =>
             {
