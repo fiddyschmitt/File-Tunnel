@@ -35,7 +35,11 @@ namespace ft.Listeners
         {
             var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
 
-            listener = new UdpClient();
+            listener = new UdpClient()
+            {
+                EnableBroadcast = true
+            };
+
             listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             listener.Client.Bind(listenEndpoint);
 

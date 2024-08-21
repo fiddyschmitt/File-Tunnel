@@ -81,7 +81,11 @@ namespace ft.Tunnels
                 {
                     var sendFromEndpoint = udpSendFrom.AsEndpoint();
 
-                    var udpClient = new UdpClient();
+                    var udpClient = new UdpClient()
+                    {
+                        EnableBroadcast = true
+                    };
+
                     udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                     udpClient.Client.Bind(sendFromEndpoint);
 
