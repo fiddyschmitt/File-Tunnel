@@ -10,7 +10,7 @@ namespace ft.Listeners
 {
     public class MultiServer : StreamEstablisher
     {
-        readonly List<(StreamEstablisher Listener, bool OriginatedFromRemote, string FullLocalEndpoint)> servers = [];
+        readonly List<(StreamEstablisher Listener, bool OriginatedFromRemote, string FullLocalEndpoint, string FullRemoteEndpoint)> servers = [];
         bool started = false;
 
         public MultiServer()
@@ -23,21 +23,21 @@ namespace ft.Listeners
             (var listenEndpoint, var destinationEndpoint) = NetworkUtilities.ParseForwardString(forwardStr);
 
             var fullLocalEndpoint = $"{protocol}://{listenEndpoint}";
-            var fullDestinationEndpoint = $"{protocol}://{destinationEndpoint}";
+            var fullRemoteEndpoint = $"{protocol}://{destinationEndpoint}";
 
             var alreadyExists = servers
-                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint);
+                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
             if (alreadyExists) return;
 
             StreamEstablisher? listener = null;
             if (protocol == "tcp")
             {
-                listener = new TcpServer(listenEndpoint, fullDestinationEndpoint);
+                listener = new TcpServer(listenEndpoint, fullRemoteEndpoint);
             }
 
             if (protocol == "udp")
             {
-                listener = new UdpServer(listenEndpoint, fullDestinationEndpoint);
+                listener = new UdpServer(listenEndpoint, fullRemoteEndpoint);
             }
 
             if (listener == null)
@@ -52,7 +52,7 @@ namespace ft.Listeners
                 ConnectionAccepted?.Invoke(this, args);
             };
 
-            servers.Add((listener, originatedFromRemote, fullLocalEndpoint));
+            servers.Add((listener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
 
             if (started)
             {
