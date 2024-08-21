@@ -11,12 +11,14 @@ Portable executables for Windows, Linux and Mac can be found over in the [releas
 
 ## Example 1 - Bypassing a firewall
 
-![ft_fw](img/ft_fw.png?raw=true "Bypass")
-
 You'd like to connect from Host A to Host B, but a firewall is in the way. But both hosts have access to a shared folder.
+
+![ft_fw](img/ft_fw.png?raw=true "Bypass")
 
 ### Host A
 ``ft.exe -L 5000:127.0.0.1:3389 --write "\\server\share\1.dat" --read "\\server\share\2.dat"``
+
+This command listens for connections on port 5000. When one is received, it is forwarded through the file tunnel and then onto 127.0.0.1:3389.
 
 ### Host B
 ``ft.exe --read "\\server\share\1.dat" --write "\\server\share\2.dat"``
@@ -38,7 +40,7 @@ This is what the File Tunnel looks like when operating:
 
 ## Example 2 - Tunnel TCP through RDP (similar to SSH tunnel)
 
-You'd like to connect to a remote service (eg. ``192.168.1.50:8888``), but only have access to Host B using RDP.
+You'd like to connect to a remote service (eg. `192.168.1.50:8888`), but only have access to Host B using RDP.
 
 ### Host A
 ``ft.exe -L 5000:192.168.1.50:8888 --write "C:\Temp\1.dat" --read "C:\Temp\2.dat"``
@@ -60,7 +62,7 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 
 * `-L` can be used multiple times, to forward numerous ports through the one tunnel.
 
-* To enable other computers to use the tunnel, specify a binding address of `0.0.0.0`. For example: `-L 0.0.0.0:5000:10.0.0.50:3389` allows any computer on the network to connect to the tunnel and onto 192.168.1.50:3389
+* To enable other computers to use the tunnel, specify a binding address of `0.0.0.0`. For example: `-L 0.0.0.0:5000:192.168.1.50:3389` allows any computer on the network to connect to the tunnel and onto 192.168.1.50:3389
 	
 * Use `-R` for remote forwarding. For example: `-R 5000:10.0.0.50:6000` instructs the _remote_ side to listen on port 5000, and when a connection is received forward it through the tunnel and onto 10.0.0.50:6000 via the local machine. This allows you to share a server running on your local machine, with other computers.
 	
