@@ -35,7 +35,9 @@ namespace ft.Listeners
         {
             var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
 
-            listener = new UdpClient(listenEndpoint);
+            listener = new UdpClient();
+            listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Client.Bind(listenEndpoint);
 
             var connections = new Dictionary<IPEndPoint, UdpStream>();
 
