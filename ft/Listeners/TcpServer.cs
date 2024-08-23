@@ -41,7 +41,7 @@ namespace ft.Listeners
                 {
                     listener = new TcpListener(listenEndpoint);
                     listener.Start();
-                    Program.Log($"Listening on {ListenOnEndpointStr}");
+                    Program.Log($"Started istening on TCP {ListenOnEndpointStr}");
 
                     while (true)
                     {
@@ -58,13 +58,26 @@ namespace ft.Listeners
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"TcpServer error: {ex.Message}");
+                    if (!stopRequested)
+                    {
+                        Program.Log($"TcpServer error: {ex.Message}");
+                    }
                 }
+
+                if (stopRequested)
+                {
+                    Program.Log($"Stopped listening on TCP {ListenOnEndpointStr}");
+                }
+
             }, $"TCP listener {ListenOnEndpointStr}");
         }
 
+        bool stopRequested = false;
+
         public override void Stop()
         {
+            stopRequested = true;
+
             try
             {
                 listener?.Stop();
@@ -82,6 +95,8 @@ namespace ft.Listeners
             {
                 Program.Log($"Stop(): {ex}");
             }
+
+            stopRequested = false;
         }
     }
 }

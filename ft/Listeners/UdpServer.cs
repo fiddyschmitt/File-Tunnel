@@ -49,6 +49,8 @@ namespace ft.Listeners
             {
                 try
                 {
+                    Program.Log($"Started listening on UDP {ListenOnEndpointStr}");
+
                     while (true)
                     {
                         var remoteIpEndPoint = new IPEndPoint(IPAddress.Any, 0);
@@ -68,13 +70,26 @@ namespace ft.Listeners
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"UdpServer error: {ex}");
+                    if (!stopRequested)
+                    {
+                        Program.Log($"UdpServer error: {ex.Message}");
+                    }
                 }
+
+                if (stopRequested)
+                {
+                    Program.Log($"Stopped listening on UDP {ListenOnEndpointStr}");
+                }
+
             }, $"UDP listener {listenEndpoint}");
         }
 
+        bool stopRequested = false;
+
         public override void Stop()
         {
+            stopRequested = true;
+
             try
             {
                 listener?.Close();
@@ -84,7 +99,6 @@ namespace ft.Listeners
                 Program.Log($"Stop(): {ex}");
             }
 
-
             try
             {
                 listenerTask?.Join();
@@ -93,6 +107,8 @@ namespace ft.Listeners
             {
                 Program.Log($"Stop(): {ex}");
             }
+
+            stopRequested = false;
         }
     }
 }
