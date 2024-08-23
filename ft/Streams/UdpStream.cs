@@ -32,9 +32,9 @@ namespace ft.Streams
                         AddToReadQueue(data);
                     }
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Program.Log($"UDP Read Pump: {ex}");
+                    //Program.Log($"UDP Read Pump: {ex}");
                 }
             }, $"{nameof(UdpStream)} Receive loop");
         }
