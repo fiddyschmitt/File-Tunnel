@@ -43,13 +43,17 @@ namespace ft
                    localListeners.Add("tcp", o.LocalTcpForwards, false);
                    localListeners.Add("udp", o.LocalUdpForwards, false);
 
-                   var remoteListeners = new List<string>();
-                   remoteListeners.AddRange(o.RemoteTcpForwards);
-
                    var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds);
 
                    var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, o.PurgeSizeInBytes, o.ReadDurationMillis);
-                   var remoteToLocalTunnel = new RemoteToLocalTunnel(remoteListeners, sharedFileManager, localToRemoteTunnel, o.PurgeSizeInBytes, o.ReadDurationMillis, o.UdpSendFrom);
+                   var remoteToLocalTunnel = new RemoteToLocalTunnel(
+                                                    o.RemoteTcpForwards.ToList(),
+                                                    o.RemoteUdpForwards.ToList(),
+                                                    sharedFileManager,
+                                                    localToRemoteTunnel,
+                                                    o.PurgeSizeInBytes,
+                                                    o.ReadDurationMillis,
+                                                    o.UdpSendFrom);
 
                    sharedFileManager.Start();
                })

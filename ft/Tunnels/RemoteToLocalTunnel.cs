@@ -13,9 +13,10 @@ namespace ft.Tunnels
 {
     public class RemoteToLocalTunnel
     {
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, int purgeSizeInBytes, int readDurationMillis, string udpSendFrom)
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, int purgeSizeInBytes, int readDurationMillis, string udpSendFrom)
         {
             RemoteTcpForwards = remoteTcpForwards;
+            RemoteUdpForwards = remoteUdpForwards;
             SharedFileManager = sharedFileManager;
 
             sharedFileManager.OnlineStatusChanged += (sender, args) =>
@@ -112,13 +113,20 @@ namespace ft.Tunnels
         }
 
         public List<string> RemoteTcpForwards { get; }
+        public List<string> RemoteUdpForwards { get; }
         public SharedFileManager SharedFileManager { get; }
 
         void ProvideRemoteForwardsToCounterpart()
         {
             //Tell the remote side to start the Remote Forwards
+
             RemoteTcpForwards
                  .Select(remoteForwardStr => new CreateListener("tcp", remoteForwardStr))
+                 .ToList()
+                 .ForEach(remoteForwardCommand => SharedFileManager.EnqueueToSend(remoteForwardCommand));
+
+            RemoteUdpForwards
+                 .Select(remoteForwardStr => new CreateListener("udp", remoteForwardStr))
                  .ToList()
                  .ForEach(remoteForwardCommand => SharedFileManager.EnqueueToSend(remoteForwardCommand));
         }
