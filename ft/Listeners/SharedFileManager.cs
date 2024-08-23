@@ -128,10 +128,9 @@ namespace ft.Streams
             var connectCommand = new Connect(connectionId, destinationEndpointStr);
             if (EnqueueToSend(connectCommand))
             {
-                if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
+                if (!ReceiveQueue.TryGetValue(connectionId, out _))
                 {
-                    connectionReceiveQueue = [];
-                    ReceiveQueue.TryAdd(connectionId, connectionReceiveQueue);
+                    ReceiveQueue.TryAdd(connectionId, []);
                 }
             }
         }
@@ -451,8 +450,7 @@ namespace ft.Streams
                         {
                             if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
                             {
-                                var connectionReceiveQueue = new BlockingCollection<byte[]>();
-                                ReceiveQueue.TryAdd(connect.ConnectionId, connectionReceiveQueue);
+                                ReceiveQueue.TryAdd(connect.ConnectionId, []);
 
                                 Threads.StartNew(() =>
                                 {
