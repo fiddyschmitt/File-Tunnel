@@ -53,13 +53,15 @@ namespace ft
                    }
                    var writeFileSize = new FileInfo(o.WriteTo).Length;
 
-                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), writeFileSize, o.TunnelTimeoutMilliseconds);
+
+                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, writeFileSize, o.ReadDurationMillis);
                    var remoteToLocalTunnel = new RemoteToLocalTunnel(
                                                     o.RemoteTcpForwards.ToList(),
                                                     o.RemoteUdpForwards.ToList(),
                                                     sharedFileManager,
                                                     localToRemoteTunnel,
-                                                    o.PurgeSizeInBytes,
+                                                    writeFileSize,
                                                     o.ReadDurationMillis,
                                                     o.UdpSendFrom);
 

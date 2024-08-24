@@ -13,7 +13,7 @@ namespace ft.Tunnels
 {
     public class RemoteToLocalTunnel
     {
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, int purgeSizeInBytes, int readDurationMillis, string udpSendFrom)
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, long writeFileSize, int readDurationMillis, string udpSendFrom)
         {
             RemoteTcpForwards = remoteTcpForwards;
             RemoteUdpForwards = remoteUdpForwards;
