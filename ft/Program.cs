@@ -46,22 +46,15 @@ namespace ft
                    var remoteListeners = new List<string>();
                    remoteListeners.AddRange(o.RemoteTcpForwards);
 
-                   if (!File.Exists(o.WriteTo) || new FileInfo(o.WriteTo).Length == 0)
-                   {
-                       using var fs = File.Create(o.WriteTo);
-                       fs.SetLength(o.WriteFileSize);
-                   }
-                   var writeFileSize = new FileInfo(o.WriteTo).Length;
+                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.WriteFileSize, o.TunnelTimeoutMilliseconds);
 
-                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), writeFileSize, o.TunnelTimeoutMilliseconds);
-
-                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, writeFileSize, o.ReadDurationMillis);
+                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, o.WriteFileSize, o.ReadDurationMillis);
                    var remoteToLocalTunnel = new RemoteToLocalTunnel(
                                                     o.RemoteTcpForwards.ToList(),
                                                     o.RemoteUdpForwards.ToList(),
                                                     sharedFileManager,
                                                     localToRemoteTunnel,
-                                                    writeFileSize,
+                                                    o.WriteFileSize,
                                                     o.ReadDurationMillis,
                                                     o.UdpSendFrom);
 

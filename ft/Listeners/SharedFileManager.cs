@@ -203,6 +203,10 @@ namespace ft.Streams
                     var bufferSize = (int)WriteFileSize * 2;
                     bufferSize = Math.Max(bufferSize, 1024 * 1024 * 1024);
 
+                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite);
+                    fileStream.SetLength(WriteFileSize);
+                    fileStream.Close();
+
                     fileStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize); //large buffer to prevent FileStream from autoflushing
                 }
                 catch (Exception ex)
