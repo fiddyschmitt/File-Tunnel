@@ -175,7 +175,10 @@ namespace ft.Streams
             return result;
         }
 
+        readonly byte[] MAGIC = Encoding.ASCII.GetBytes("ft");
         const long SESSION_ID = 0;
+
+        const int SESSION_ID_POS = 2;
         const int NEXT_COMMAND_POS = sizeof(long);                              //specifies where the next command will be written in the file
         const int READY_FOR_PURGE_FLAG = NEXT_COMMAND_POS + sizeof(long);       //specifies that this side is ready to restart the file
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;               //specifies that the file has been restarted
@@ -213,6 +216,8 @@ namespace ft.Streams
                 {
                     var hashingStream = new HashingStream(fileStream);
                     var binaryWriter = new BinaryWriter(hashingStream);
+
+                    binaryWriter.Write(MAGIC);
 
                     var sessionId = Program.Random.NextInt64();
                     binaryWriter.Write(sessionId);
@@ -353,11 +358,24 @@ namespace ft.Streams
                         }
                         else
                         {
-                            Program.Log($"[{readFileShortName}] already existed. Determining position of the next command.");
+                            Program.Log($"[{readFileShortName}] already existed. Checking it's initialised.");
                             using var reader = new BinaryReader(fileStream, Encoding.Default, true);
+                            var existingMagic = new byte[MAGIC.Length];
+                            reader.Read(existingMagic, 0, existingMagic.Length);
+                            if (!existingMagic.SequenceEqual(MAGIC))
+                            {
+                                throw new Exception($"[{readFileShortName}] is not yet initialised.");
+                            }
+
+                            Program.Log($"[{readFileShortName}] already existed. Determining position of the next command.");
                             fileStream.Seek(NEXT_COMMAND_POS, SeekOrigin.Begin);
                             var nextCommandPos = reader.ReadInt64();
                             fileStream.Seek(nextCommandPos, SeekOrigin.Begin);
+
+                            if (nextCommandPos < MESSAGE_WRITE_POS || nextCommandPos > WriteFileSize)
+                            {
+                                throw new Exception($"[{readFileShortName}] has an invalid Next Command Position ({nextCommandPos}).");
+                            }
 
                             Program.Log($"[{readFileShortName}] Seeked to position {nextCommandPos:N0}.");
                         }
