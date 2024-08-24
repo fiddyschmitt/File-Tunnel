@@ -46,7 +46,7 @@ namespace ft
                    var remoteListeners = new List<string>();
                    remoteListeners.AddRange(o.RemoteTcpForwards);
 
-                   if (!File.Exists(o.WriteTo))
+                   if (!File.Exists(o.WriteTo) || new FileInfo(o.WriteTo).Length == 0)
                    {
                        using var fs = File.Create(o.WriteTo);
                        fs.SetLength(o.WriteFileSize);
