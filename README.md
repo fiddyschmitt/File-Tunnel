@@ -74,4 +74,4 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 
 ## How does it work?
 The program starts a TCP listener, and when a connection is received it writes the TCP data into a file. This same file is read by the counterpart program, which establishes a TCP connection and onforwards the TCP data.
-To avoid the shared file growing indefinitely, it is purged whenever it gets larger than 10 MB.
+To avoid the shared file growing indefinitely it is purged whenever it gets larger than 10 MB.
