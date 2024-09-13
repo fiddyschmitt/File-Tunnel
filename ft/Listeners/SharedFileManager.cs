@@ -249,7 +249,7 @@ namespace ft.Streams
                         ms.SetLength(0);
                         command.Serialise(msWriter);
 
-                        if (fileStream.Position + ms.Length + 1 >= WriteFileSize - MESSAGE_WRITE_POS)
+                        if (fileStream.Position + ms.Length + 1 >= WriteFileSize)
                         {
                             Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for file restart.");
 
@@ -435,7 +435,6 @@ namespace ft.Streams
 
                                 checkForSessionChange.Restart();
                             }
-
                             Delay.Wait(1);
                         }
 

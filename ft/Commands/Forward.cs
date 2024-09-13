@@ -42,6 +42,13 @@ namespace ft.Commands
             ConnectionId = reader.ReadInt32();
 
             var expectedPayloadLength = reader.ReadInt32();
+
+            var remainingInFile = reader.BaseStream.Length - reader.BaseStream.Position;
+            if (expectedPayloadLength > remainingInFile)
+            {
+                throw new Exception($"[Packet {PacketNumber:N0}]: Payload length is {expectedPayloadLength:N0} bytes, which exceeds what remains in the file ({remainingInFile:N0} bytes). This is likely caused by reading stale content from the file.");
+            }
+
             Payload = new byte[expectedPayloadLength];
 
             var totalRead = 0;
@@ -49,6 +56,12 @@ namespace ft.Commands
             {
                 var remaining = expectedPayloadLength - totalRead;
                 var read = reader.Read(Payload, totalRead, remaining);
+
+                if (read == 0 && reader.BaseStream.Position == reader.BaseStream.Length)
+                {
+                    throw new Exception($"[Packet {PacketNumber:N0}]: Attempted to read beyond the end of file.");
+                }
+
                 totalRead += read;
             }
             while (totalRead < expectedPayloadLength);
