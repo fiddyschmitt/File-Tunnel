@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -392,7 +393,17 @@ namespace ft.Streams
                                 break;
                             }
 
-                            fileStream.Flush(); //force read
+                            //force read
+                            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                            {
+                                using var tempFs = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                tempFs.Read(new byte[4096]);
+                            }
+                            else
+                            {
+                                fileStream.Flush();
+                            }
+
 
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
