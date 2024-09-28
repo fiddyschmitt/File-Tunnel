@@ -164,7 +164,7 @@ namespace ft.Streams
             bool result;
             try
             {
-                SendQueue.Add(cmd, sendTimeout.Token);
+                SendQueue.TryAdd(cmd, tunnelTimeoutMilliseconds);
                 result = true;
             }
             catch
