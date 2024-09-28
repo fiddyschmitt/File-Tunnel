@@ -160,8 +160,6 @@ namespace ft.Streams
 
         public bool EnqueueToSend(Command cmd)
         {
-            var sendTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
-
             bool result;
             try
             {
