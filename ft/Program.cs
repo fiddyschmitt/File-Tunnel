@@ -21,7 +21,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "2.2.2";
+        const string VERSION = "2.2.3";
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
         public static void Main(string[] args)
