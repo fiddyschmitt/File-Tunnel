@@ -26,7 +26,7 @@ namespace ft.CLI
 
 
 
-        [Option("read-duration", Required = false, HelpText = @"The duration (in milliseconds) to read data from a TCP connection. Larger values increase throughput (by reducing the number of small writes to file), whereas smaller values improve responsiveness.")]
+        [Option("read-duration", Required = false, HelpText = @"The duration (in milliseconds) to read data from a TCP connection. Larger values increase throughput (by reducing the number of small writes to file), whereas smaller values improve responsiveness. (Default 50 ms)")]
         public int ReadDurationMillis { get; set; } = 50;
 
         [Option("udp-send-from", Required = false, HelpText = "A local address which UDP data will be sent from. Example --udp-send-from 192.168.1.1:11000")]
@@ -42,10 +42,10 @@ namespace ft.CLI
 
 
 
-        [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely.")]
+        [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely. (Default 10485760)")]
         public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;
 
-        [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point.")]
+        [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point. (Default 5000)")]
         public int TunnelTimeoutMilliseconds { get; set; } = 5000;
         [Option("verbose", Required = false, HelpText = @"Display more detailed output")]
         public bool Verbose { get; set; } = false;
