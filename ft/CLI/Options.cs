@@ -47,6 +47,12 @@ namespace ft.CLI
 
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point. (Default 5000)")]
         public int TunnelTimeoutMilliseconds { get; set; } = 5000;
+
+        [Option("isolated-reads", Required = false, HelpText = @"For read operations, the file is opened, read and closed in quick succession. This significantly reduces the tunnel responsiveness.")]
+        public bool IsolatedReads { get; set; } = false;
+
+
+
         [Option("verbose", Required = false, HelpText = @"Display more detailed output")]
         public bool Verbose { get; set; } = false;
     }

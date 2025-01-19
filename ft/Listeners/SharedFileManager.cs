@@ -16,7 +16,13 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes, int tunnelTimeoutMilliseconds, bool verbose) : StreamEstablisher
+    public class SharedFileManager(
+        string readFromFilename,
+        string writeToFilename,
+        int purgeSizeInBytes,
+        int tunnelTimeoutMilliseconds,
+        bool isolatedReads,
+        bool verbose) : StreamEstablisher
     {
         readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
@@ -328,7 +334,7 @@ namespace ft.Streams
                 {
                     receiveFileEstablished = false;
 
-                    FileStream? fileStream = null;
+                    Stream? fileStream = null;
                     BinaryReader? binaryReader = null;
 
                     try
@@ -343,7 +349,9 @@ namespace ft.Streams
                             Thread.Sleep(200);
                         }
 
-                        fileStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                        fileStream = IsolatedReads ?
+                                        new IsolatedReadsFileStream(ReadFromFilename) :
+                                        new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
                         if (retryPos != null)
                         {
@@ -373,12 +381,16 @@ namespace ft.Streams
                         SessionChanged?.Invoke(this, new());
 
 
-                        var isReadyForPurgeStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                        Stream isReadyForPurgeStream = IsolatedReads ?
+                                                            new IsolatedReadsFileStream(ReadFromFilename) :
+                                                            new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
                             READY_FOR_PURGE_FLAG);
 
-                        var isPurgeCompleteStream = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                        Stream isPurgeCompleteStream = IsolatedReads ?
+                                                            new IsolatedReadsFileStream(ReadFromFilename) :
+                                                            new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
                             PURGE_COMPLETE_FLAG);
@@ -702,6 +714,7 @@ namespace ft.Streams
 
         public string WriteToFilename { get; } = writeToFilename;
         public int PurgeSizeInBytes { get; } = purgeSizeInBytes;
+        public bool IsolatedReads { get; } = isolatedReads;
         public bool Verbose { get; } = verbose;
         public string ReadFromFilename { get; } = readFromFilename;
     }

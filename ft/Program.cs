@@ -21,7 +21,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "2.2.3";
+        const string VERSION = "2.2.4";
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
         public static void Main(string[] args)
@@ -43,7 +43,21 @@ namespace ft
                    localListeners.Add("tcp", o.LocalTcpForwards, false);
                    localListeners.Add("udp", o.LocalUdpForwards, false);
 
-                   var sharedFileManager = new SharedFileManager(o.ReadFrom.Trim(), o.WriteTo.Trim(), o.PurgeSizeInBytes, o.TunnelTimeoutMilliseconds, o.Verbose);
+                   if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !o.IsolatedReads)
+                   {
+                       Log($"Warning: It appears the Read file is stored in xrdp's Drive Redirection folder.", ConsoleColor.Yellow);
+                       Log($"This can result in the File Tunnel not achieving synchronisation.", ConsoleColor.Yellow);
+                       Log($"Recommendation: Run File Tunnel using an extra arg --isolated-reads", ConsoleColor.Yellow);
+                       Log($"Continuing.", ConsoleColor.Yellow);
+                   }
+
+                   var sharedFileManager = new SharedFileManager(
+                                                    o.ReadFrom.Trim(),
+                                                    o.WriteTo.Trim(),
+                                                    o.PurgeSizeInBytes,
+                                                    o.TunnelTimeoutMilliseconds,
+                                                    o.IsolatedReads,
+                                                    o.Verbose);
 
                    var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, o.PurgeSizeInBytes, o.ReadDurationMillis);
                    var remoteToLocalTunnel = new RemoteToLocalTunnel(
