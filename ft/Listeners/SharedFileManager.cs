@@ -16,7 +16,7 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes, int tunnelTimeoutMilliseconds) : StreamEstablisher
+    public class SharedFileManager(string readFromFilename, string writeToFilename, int purgeSizeInBytes, int tunnelTimeoutMilliseconds, bool verbose) : StreamEstablisher
     {
         readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
         readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
@@ -218,7 +218,11 @@ namespace ft.Streams
                     var sessionId = Program.Random.NextInt64();
                     binaryWriter.Write(sessionId);
                     binaryWriter.Flush();
-                    //Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
+
+                    if (Verbose)
+                    {
+                        Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
+                    }
 
                     var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                     setReadyForPurge = new ToggleWriter(
@@ -273,7 +277,10 @@ namespace ft.Streams
                         command.Serialise(binaryWriter);
                         var commandEndPos = fileStream.Position;
 
-                        //Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        if (Verbose)
+                        {
+                            Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        }
 
                         if (command is Forward forward && forward.Payload != null)
                         {
@@ -359,7 +366,10 @@ namespace ft.Streams
                         binaryReader = new BinaryReader(hashingStream, Encoding.ASCII);
 
                         currentSessionId = ReadSessionId(binaryReader);
-                        //Program.Log($"[{readFileShortName}] Read Session ID: {currentSessionId}");
+                        if (Verbose)
+                        {
+                            Program.Log($"[{readFileShortName}] Read Session ID: {currentSessionId}");
+                        }
                         SessionChanged?.Invoke(this, new());
 
 
@@ -375,7 +385,12 @@ namespace ft.Streams
                     }
                     catch (Exception ex)
                     {
-                        throw new Exception($"[{readFileShortName}] Establish file: {ex}");
+                        var exMsg = $"[{readFileShortName}] Establish file: {ex}";
+                        if (Verbose)
+                        {
+                            Program.Log(exMsg);
+                        }
+                        throw new Exception(exMsg);
                     }
 
                     receiveFileEstablished = true;
@@ -405,13 +420,21 @@ namespace ft.Streams
 
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
-                                //Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.");
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{readFileShortName}] waiting for data at position {fileStream.Position:N0}.");
+                                }
 
                                 var latestSessionId = ReadSessionId(binaryReader);
 
                                 if (latestSessionId != currentSessionId)
                                 {
-                                    throw new Exception($"New session detected.");
+                                    var exMsg = $"New session detected: {latestSessionId}";
+                                    if (Verbose)
+                                    {
+                                        Program.Log(exMsg);
+                                    }
+                                    throw new Exception(exMsg);
                                 }
 
                                 checkForSessionChange.Restart();
@@ -438,12 +461,20 @@ namespace ft.Streams
 
                         if (command == null)
                         {
-                            throw new Exception($"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]");
+                            var exMsg = $"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}. [{ReadFromFilename}]";
+                            if (Verbose)
+                            {
+                                Program.Log(exMsg);
+                            }
+                            throw new Exception(exMsg);
                         }
 
                         lastContactWithCounterpart = DateTime.Now;
 
-                        //Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        if (Verbose)
+                        {
+                            Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                        }
 
                         if (command is Forward forward && forward.Payload != null)
                         {
@@ -671,6 +702,7 @@ namespace ft.Streams
 
         public string WriteToFilename { get; } = writeToFilename;
         public int PurgeSizeInBytes { get; } = purgeSizeInBytes;
+        public bool Verbose { get; } = verbose;
         public string ReadFromFilename { get; } = readFromFilename;
     }
 
