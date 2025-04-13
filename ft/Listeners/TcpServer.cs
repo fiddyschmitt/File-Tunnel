@@ -41,7 +41,7 @@ namespace ft.Listeners
                 {
                     listener = new TcpListener(listenEndpoint);
                     listener.Start();
-                    Program.Log($"Started istening on TCP {ListenOnEndpointStr}");
+                    Program.Log($"Started listening on TCP {ListenOnEndpointStr}");
 
                     while (true)
                     {
