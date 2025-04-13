@@ -75,6 +75,12 @@ namespace ft.Tunnels
                     catch (Exception ex)
                     {
                         Program.Log($"Error during connection to {destinationEndpointStr}. {ex.Message}");
+
+                        if (connectionDetails.Stream is SharedFileStream sharedFileStream)
+                        {
+                            Program.Log($"Instructing counterpart to tear down connection {sharedFileStream.ConnectionId}");
+                            sharedFileStream.Close();
+                        }
                     }
                 }
 

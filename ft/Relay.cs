@@ -49,6 +49,8 @@ namespace ft
 
         public void Stop()
         {
+            if (Stopped) return;
+
             Stopped = true;
 
             try
