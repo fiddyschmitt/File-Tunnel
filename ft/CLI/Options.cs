@@ -11,18 +11,18 @@ namespace ft.CLI
     public class Options
     {
         [Option('L', Required = false, HelpText = @"TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
-        public IEnumerable<string> LocalTcpForwards { get; set; } = new List<string>();
+        public IEnumerable<string> LocalTcpForwards { get; set; } = [];
 
         [Option('U', Required = false, HelpText = @"UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
-        public IEnumerable<string> LocalUdpForwards { get; set; } = new List<string>();
+        public IEnumerable<string> LocalUdpForwards { get; set; } = [];
 
 
 
         [Option('R', Required = false, HelpText = @"Remote TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. Use forward slashes as separators when using IPV6.")]
-        public IEnumerable<string> RemoteTcpForwards { get; set; } = new List<string>();
+        public IEnumerable<string> RemoteTcpForwards { get; set; } = [];
 
         [Option("remote-udp-fwd", Required = false, HelpText = @"Remote UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. Use forward slashes as separators when using IPV6.")]
-        public IEnumerable<string> RemoteUdpForwards { get; set; } = new List<string>();
+        public IEnumerable<string> RemoteUdpForwards { get; set; } = [];
 
 
 
