@@ -39,7 +39,8 @@ namespace ft.Commands
             var crc = hashingStream.GetCrc32();
             writer.Write(crc);
 
-            writer.Flush();
+            //Don't flush here. This way, we can write multiple commands to the file in one go.
+            //writer.Flush();
         }
 
         public static Command? Deserialise(BinaryReader reader)

@@ -51,22 +51,35 @@ namespace ft
                        Log($"Continuing.", ConsoleColor.Yellow);
                    }
 
-                   var sharedFileManager = new SharedFileManager(
+                   ASharedFileManager sharedFileManager;
+                   if (o.WriteThenWaitForDelete)
+                   {
+                       sharedFileManager = new WriteThenWaitForDelete(
                                                     o.ReadFrom.Trim(),
                                                     o.WriteTo.Trim(),
                                                     o.PurgeSizeInBytes,
+                                                    o.ReadDurationMillis,                                                    
+                                                    o.TunnelTimeoutMilliseconds,
+                                                    o.Verbose);
+                   }
+                   else
+                   {
+                       sharedFileManager = new SharedFileManager(
+                                                    o.ReadFrom.Trim(),
+                                                    o.WriteTo.Trim(),
+                                                    o.PurgeSizeInBytes,
+                                                    o.ReadDurationMillis,
                                                     o.TunnelTimeoutMilliseconds,
                                                     o.IsolatedReads,
                                                     o.Verbose);
+                   }
 
-                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, o.PurgeSizeInBytes, o.ReadDurationMillis);
+                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager);
                    var remoteToLocalTunnel = new RemoteToLocalTunnel(
                                                     o.RemoteTcpForwards.ToList(),
                                                     o.RemoteUdpForwards.ToList(),
                                                     sharedFileManager,
                                                     localToRemoteTunnel,
-                                                    o.PurgeSizeInBytes,
-                                                    o.ReadDurationMillis,
                                                     o.UdpSendFrom);
 
                    sharedFileManager.Start();

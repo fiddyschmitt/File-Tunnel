@@ -345,5 +345,51 @@ namespace ft
             var result = endpoint.ToIpEndpoint();
             return result;
         }
+
+        public static (int Attempts, TimeSpan Duration) Time(
+            this Action<int> action,
+            Func<bool> finishCondition,
+            Func<int, int> getSleepDurationMillis,
+            string description,
+            bool printOutput)
+        {
+            if (printOutput)
+            {
+                Program.Log($"{description}");
+            }
+
+            var sw = new Stopwatch();
+            sw.Start();
+            var attempt = 0;
+            while (true)
+            {
+                var finished = finishCondition();
+
+                if (finished)
+                {
+                    break;
+                }
+
+                if (attempt > 1)
+                {
+                    var sleepMillis = getSleepDurationMillis(attempt);
+                    Thread.Sleep(sleepMillis);
+                }
+
+                attempt++;
+                action(attempt);
+            }
+
+            sw.Stop();
+
+            if (attempt == 0) attempt = 1;
+
+            if (printOutput)
+            {
+                Program.Log($"{description} took {attempt:N0} attempts ({sw.Elapsed.TotalSeconds:N3} seconds)");
+            }
+
+            return (attempt, sw.Elapsed);
+        }
     }
 }

@@ -75,15 +75,17 @@ namespace ft.Listeners
                 .ForEach(server => server.Listener.Start());
         }
 
-        public override void Stop()
+        public override void Stop(string reason)
         {
+            if (!started) return;
+
             started = false;
 
             servers
-                .ForEach(server => server.Listener.Stop());
+                .ForEach(server => server.Listener.Stop(reason));
         }
 
-        public void RemoveListenersOriginatingFromRemote()
+        public void RemoveListenersOriginatingFromRemote(string reason)
         {
             servers
                 .RemoveAll(server =>
@@ -92,7 +94,7 @@ namespace ft.Listeners
                     {
                         if (server.OriginatedFromRemote)
                         {
-                            server.Listener.Stop();
+                            server.Listener.Stop(reason);
                         }
                     }
                     catch { }

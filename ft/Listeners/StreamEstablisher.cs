@@ -11,7 +11,7 @@ namespace ft.Listeners
     {
         public EventHandler<ConnectionAcceptedEventArgs>? ConnectionAccepted;
         public abstract void Start();
-        public abstract void Stop();
+        public abstract void Stop(string reason);
     }
 
     public class ConnectionAcceptedEventArgs(Stream stream, string destinationStr)

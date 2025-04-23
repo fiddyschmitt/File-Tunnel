@@ -1,4 +1,6 @@
-﻿using System;
+﻿using ft.Commands;
+using ft.Listeners;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
@@ -9,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileStream(SharedFileManager sharedFileManager, int connectionId) : Stream
+    public class SharedFileStream(ASharedFileManager sharedFileManager, int connectionId) : Stream
     {
         public void EstablishConnection(string destinationEndpointStr)
         {
@@ -25,7 +27,7 @@ namespace ft.Streams
         public override long Length => throw new NotImplementedException();
 
         public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public SharedFileManager SharedFileManager { get; } = sharedFileManager;
+        public ASharedFileManager SharedFileManager { get; } = sharedFileManager;
         public int ConnectionId { get; } = connectionId;
 
         public override void Flush()
@@ -77,7 +79,9 @@ namespace ft.Streams
             {
                 toSend = buffer.Skip(offset).Take(count).ToArray();
             }
-            SharedFileManager.Write(ConnectionId, toSend);
+
+            var forwardCommand = new Forward(ConnectionId, toSend);
+            SharedFileManager.EnqueueToSend(forwardCommand);
         }
 
         public override void Close()

@@ -1,7 +1,7 @@
 ﻿using ft.Bandwidth;
 using ft.Commands;
 using ft.IO;
-using ft.Listeners;
+using ft.Streams;
 using ft.Utilities;
 using System;
 using System.Collections.Concurrent;
@@ -14,189 +14,42 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace ft.Streams
+namespace ft.Listeners
 {
-    public class SharedFileManager(
-        string readFromFilename,
-        string writeToFilename,
-        int purgeSizeInBytes,
-        int tunnelTimeoutMilliseconds,
-        bool isolatedReads,
-        bool verbose) : StreamEstablisher
+    public class SharedFileManager : ASharedFileManager
     {
-        readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
-        readonly BlockingCollection<Command> SendQueue = new(1);    //using a queue size of one makes the TCP receiver synchronous
-
-        public event EventHandler<CreateLocalListenerEventArgs>? CreateLocalListenerRequested;
-        public event EventHandler? SessionChanged;
-
-        const int reportIntervalMs = 1000;
-        readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
-        readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
-        readonly BlockingCollection<Ping> pingResponsesReceived = [];
-        public void ReportNetworkPerformance()
-        {
-            while (true)
-            {
-                try
-                {
-                    var sentBandwidthStr = sentBandwidth.GetBandwidth();
-                    var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
-
-                    lock (Program.ConsoleOutputLock)
-                    {
-                        Console.Write($"{DateTime.Now}: Counterpart: ");
-
-                        if (IsOnline)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Console.Write($"{"Online",-10}");
-
-                            var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
-
-
-                            if (latestRTT != null)
-                            {
-                                logStr += $" {latestRTT.Value.Milliseconds:N0} ms";
-                                latestRTT = null;
-                            }
-
-                            Console.ForegroundColor = Program.OriginalConsoleColour;
-                            Console.WriteLine(logStr);
-                        }
-                        else
-                        {
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            Console.Write($"{"Offline",-10}");
-
-                            var offlineReason = "Counterpart is not responding.";
-
-                            if (!receiveFileEstablished)
-                            {
-                                offlineReason = $"Receive file ({Path.GetFileName(ReadFromFilename)}) is not established.";
-                            }
-                            else if (!sendFileEstablished)
-                            {
-                                offlineReason = $"Send file ({Path.GetFileName(WriteToFilename)}) is not established.";
-                            }
-
-                            Console.ForegroundColor = Program.OriginalConsoleColour;
-                            Console.WriteLine(offlineReason);
-                        }
-                    }
-
-                    Thread.Sleep(reportIntervalMs);
-                }
-                catch (Exception ex)
-                {
-                    Program.Log($"{ex}");
-                }
-            }
-        }
-
-        public byte[]? Read(int connectionId)
-        {
-            if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
-            {
-                return null;
-            }
-
-            byte[]? result = null;
-            try
-            {
-                result = connectionReceiveQueue.Take();
-            }
-            catch (InvalidOperationException)
-            {
-                //This is normal - the queue might have been marked as AddingComplete while we were listening
-            }
-
-            return result;
-        }
-
-        public int GenerateUniqueConnectionId()
-        {
-            int result;
-            while (true)
-            {
-                result = Program.Random.Next(int.MaxValue);
-
-                if (!ReceiveQueue.ContainsKey(result))
-                {
-                    break;
-                }
-            }
-
-            return result;
-        }
-
-        public void Connect(int connectionId, string destinationEndpointStr)
-        {
-            var connectCommand = new Connect(connectionId, destinationEndpointStr);
-            if (EnqueueToSend(connectCommand))
-            {
-                if (!ReceiveQueue.TryGetValue(connectionId, out _))
-                {
-                    ReceiveQueue.TryAdd(connectionId, []);
-                }
-            }
-        }
-
-        public void Write(int connectionId, byte[] data)
-        {
-            var forwardCommand = new Forward(connectionId, data);
-            EnqueueToSend(forwardCommand);
-        }
-
-        public void TearDown(int connectionId)
-        {
-            var teardownCommand = new TearDown(connectionId);
-
-            if (IsOnline)
-            {
-                EnqueueToSend(teardownCommand);
-            }
-
-            if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
-            {
-                receiveQueue.CompleteAdding();
-                ReceiveQueue.TryRemove(connectionId, out _);
-            }
-        }
-
-        public bool EnqueueToSend(Command cmd)
-        {
-            bool result;
-            try
-            {
-                SendQueue.TryAdd(cmd, tunnelTimeoutMilliseconds);
-                result = true;
-            }
-            catch
-            {
-                result = false;
-            }
-
-            return result;
-        }
-
         const long SESSION_ID = 0;
         const int READY_FOR_PURGE_FLAG = sizeof(long);
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
         const int MESSAGE_WRITE_POS = PURGE_COMPLETE_FLAG + 1;
-
+        private readonly int readDurationMilliseconds;
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
 
-        bool sendFileEstablished = false;
+        public int PurgeSizeInBytes { get; }
+        public bool IsolatedReads { get; }
 
-        public void SendPump()
+        public SharedFileManager(
+                    string readFromFilename,
+                    string writeToFilename,
+                    int purgeSizeInBytes,
+                    int readDurationMilliseconds,
+                    int tunnelTimeoutMilliseconds,
+                    bool isolatedReads,
+                    bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
+        {
+            PurgeSizeInBytes = purgeSizeInBytes;
+            this.readDurationMilliseconds = readDurationMilliseconds;
+            IsolatedReads = isolatedReads;
+        }
+
+        public override void SendPump()
         {
             var writeFileShortName = Path.GetFileName(WriteToFilename);
+            var writingStopwatch = new Stopwatch();
 
             while (true)
             {
-                sendFileEstablished = false;
                 FileStream fileStream;
 
                 try
@@ -245,12 +98,20 @@ namespace ft.Streams
 
                     fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
-                    sendFileEstablished = true;
-
-                    foreach (var command in SendQueue.GetConsumingEnumerable())
+                    var commandsWritten = 0;
+                    //write as many commands as possible to the file
+                    while (true)
                     {
+                        var command = SendQueue.Take();
+
+                        if (commandsWritten == 0)
+                        {
+                            writingStopwatch.Restart();
+                        }
+
                         ms.SetLength(0);
                         command.Serialise(msWriter);
+                        msWriter.Flush();
 
                         if (PurgeSizeInBytes > 0 && fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
                         {
@@ -258,6 +119,7 @@ namespace ft.Streams
 
                             var purge = new Purge();
                             purge.Serialise(binaryWriter);
+                            fileStream.Flush();
 
                             //wait for counterpart to be ready for purge
                             isReadyForPurge?.Wait(1);
@@ -282,16 +144,19 @@ namespace ft.Streams
                         var commandStartPos = fileStream.Position;
                         command.Serialise(binaryWriter);
                         var commandEndPos = fileStream.Position;
+                        commandsWritten++;
 
                         if (Verbose)
                         {
                             Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
                         }
 
-                        if (command is Forward forward && forward.Payload != null)
+                        CommandSent(command);
+
+                        if (SendQueue.Count == 0 || writingStopwatch.ElapsedMilliseconds > readDurationMilliseconds)
                         {
-                            var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
-                            sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
+                            binaryWriter.Flush();
+                            commandsWritten = 0;
                         }
                     }
                 }
@@ -318,9 +183,7 @@ namespace ft.Streams
             return result;
         }
 
-        bool receiveFileEstablished = false;
-
-        public void ReceivePump()
+        public override void ReceivePump()
         {
             var readFileShortName = Path.GetFileName(ReadFromFilename);
             var checkForSessionChange = new Stopwatch();
@@ -332,8 +195,6 @@ namespace ft.Streams
             {
                 try
                 {
-                    receiveFileEstablished = false;
-
                     Stream? fileStream = null;
                     BinaryReader? binaryReader = null;
 
@@ -404,8 +265,6 @@ namespace ft.Streams
                         }
                         throw new Exception(exMsg);
                     }
-
-                    receiveFileEstablished = true;
 
                     checkForSessionChange.Restart();
                     while (true)
@@ -481,42 +340,14 @@ namespace ft.Streams
                             throw new Exception(exMsg);
                         }
 
-                        lastContactWithCounterpart = DateTime.Now;
-
                         if (Verbose)
                         {
                             Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
                         }
 
-                        if (command is Forward forward && forward.Payload != null)
-                        {
-                            if (ReceiveQueue.TryGetValue(forward.ConnectionId, out var connectionReceiveQueue))
-                            {
-                                connectionReceiveQueue.Add(forward.Payload);
+                        CommandReceived(command);
 
-                                var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
-                                receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
-                            }
-                        }
-                        else if (command is Connect connect)
-                        {
-                            if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
-                            {
-                                ReceiveQueue.TryAdd(connect.ConnectionId, []);
-
-                                Threads.StartNew(() =>
-                                {
-                                    var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                                    ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(sharedFileStream, connect.DestinationEndpointString));
-                                }, "ConnectionAccepted");
-                            }
-                        }
-                        else if (command is CreateListener createListener)
-                        {
-                            var createLocalListenerEventArgs = new CreateLocalListenerEventArgs(createListener.Protocol, createListener.ForwardString);
-                            CreateLocalListenerRequested?.Invoke(this, createLocalListenerEventArgs);
-                        }
-                        else if (command is Purge)
+                        if (command is Purge)
                         {
                             Program.Log($"[{readFileShortName}] Counterpart is about to purge this file.");
 
@@ -538,35 +369,6 @@ namespace ft.Streams
 
                             Program.Log($"[{readFileShortName}] File was purged by counterpart.");
                         }
-                        else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out var connectionReceiveQueue))
-                        {
-                            Program.Log($"[{readFileShortName}] Counterpart asked to tear down connection {teardown.ConnectionId}");
-
-                            ReceiveQueue.Remove(teardown.ConnectionId, out _);
-
-                            connectionReceiveQueue.CompleteAdding();
-                        }
-                        else if (command is Ping ping)
-                        {
-                            if (ping.PingType == EnumPingType.Request)
-                            {
-                                var response = new Ping(EnumPingType.Response)
-                                {
-                                    ResponseToPacketNumber = ping.PacketNumber
-                                };
-
-                                Task.Factory.StartNew(() =>
-                                {
-                                    //start in a new task, because we want to continue receiving messages while queuing this message may block
-                                    EnqueueToSend(response);
-                                });
-                            }
-
-                            if (ping.PingType == EnumPingType.Response)
-                            {
-                                pingResponsesReceived.Add(ping);
-                            }
-                        }
                     }
                 }
                 catch (Exception ex)
@@ -578,155 +380,10 @@ namespace ft.Streams
             }
         }
 
-        public TimeSpan? latestRTT = null;
-        public void MeasureRTT()
+
+        public override void Stop(string reason)
         {
-            var pingRequest = new Ping(EnumPingType.Request);
-            var pingStopwatch = new Stopwatch();
-
-            while (true)
-            {
-                try
-                {
-                    pingStopwatch.Restart();
-
-                    if (!EnqueueToSend(pingRequest))
-                    {
-                        latestRTT = null;
-                        continue;
-                    }
-
-                    try
-                    {
-                        while (true)
-                        {
-                            var responseTimeout = new CancellationTokenSource(tunnelTimeoutMilliseconds);
-                            var pingResponse = pingResponsesReceived.GetConsumingEnumerable(responseTimeout.Token).First();
-                            if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
-                            {
-                                pingStopwatch.Stop();
-
-                                latestRTT = pingStopwatch.Elapsed;
-                                break;
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        latestRTT = null;
-                        continue;
-                    }
-
-                    var durationToSleep = (int)(1000 - latestRTT?.TotalMilliseconds ?? 0);
-                    if (durationToSleep < 0) durationToSleep = 0;
-                    Thread.Sleep(durationToSleep);
-                }
-                catch (Exception ex)
-                {
-                    Program.Log($"{ex}");
-                }
-            }
+            Program.Log($"{nameof(SharedFileManager)}: Stopping. Reason: {reason}");
         }
-
-        public override void Start()
-        {
-            Threads.StartNew(ReceivePump, nameof(ReceivePump));
-            Threads.StartNew(SendPump, nameof(SendPump));
-            Threads.StartNew(MeasureRTT, nameof(MeasureRTT));
-            Threads.StartNew(ReportNetworkPerformance, nameof(ReportNetworkPerformance));
-            Threads.StartNew(MonitorOnlineStatus, nameof(MonitorOnlineStatus));
-
-            if (Debugger.IsAttached)
-            {
-                //Threads.StartNew(WriteThreadReport, nameof(WriteThreadReport));
-            }
-        }
-
-        public static void WriteThreadReport()
-        {
-            while (true)
-            {
-                var threads = Threads
-                                    .CreatedThreads
-                                    .Where(thread => thread.ThreadState != System.Threading.ThreadState.Stopped)
-                                    .OrderBy(thread => thread.ThreadState)
-                                    .ThenBy(thread => thread.Name)
-                                    .Where(thread => !string.IsNullOrEmpty(thread.Name))
-                                    .ToList();
-
-                var threadStr = threads
-                                    .Select((thread, index) => $"{index + 1:N0}/{threads.Count:N0} [{thread.ThreadState}] (Id {thread.ManagedThreadId}) {thread.Name}")
-                                    .ToString(Environment.NewLine);
-
-                Console.WriteLine(threadStr);
-
-                Thread.Sleep(10000);
-            }
-        }
-
-        DateTime? lastContactWithCounterpart = null;
-        public bool IsOnline { get; protected set; } = false;
-        public event EventHandler<OnlineStatusEventArgs>? OnlineStatusChanged;
-
-        private void MonitorOnlineStatus()
-        {
-            try
-            {
-                while (true)
-                {
-                    if (lastContactWithCounterpart != null)
-                    {
-                        var orig = IsOnline;
-
-                        var timeSinceLastContact = DateTime.Now - lastContactWithCounterpart.Value;
-                        IsOnline = timeSinceLastContact.TotalMilliseconds < tunnelTimeoutMilliseconds;
-
-                        if (orig != IsOnline)
-                        {
-                            OnlineStatusChanged?.Invoke(this, new OnlineStatusEventArgs(IsOnline));
-                        }
-                    }
-
-                    Thread.Sleep(100);
-                }
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"{nameof(MonitorOnlineStatus)}: {ex.Message}");
-            }
-        }
-
-        public override void Stop()
-        {
-
-        }
-
-        public void TearDownAllConnections()
-        {
-            ReceiveQueue
-                .Keys
-                .ToList()
-                .ForEach(connectionId =>
-                {
-                    TearDown(connectionId);
-                });
-        }
-
-        public string WriteToFilename { get; } = writeToFilename;
-        public int PurgeSizeInBytes { get; } = purgeSizeInBytes;
-        public bool IsolatedReads { get; } = isolatedReads;
-        public bool Verbose { get; } = verbose;
-        public string ReadFromFilename { get; } = readFromFilename;
-    }
-
-    public class OnlineStatusEventArgs(bool isOnline)
-    {
-        public bool IsOnline { get; } = isOnline;
-    }
-
-    public class CreateLocalListenerEventArgs(string protocol, string forwardString)
-    {
-        public string Protocol { get; } = protocol;
-        public string ForwardString { get; } = forwardString;
     }
 }

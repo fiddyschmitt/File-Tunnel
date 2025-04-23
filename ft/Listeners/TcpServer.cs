@@ -74,9 +74,9 @@ namespace ft.Listeners
 
         bool stopRequested = false;
 
-        public override void Stop()
+        public override void Stop(string reason)
         {
-            stopRequested = true;
+            Program.Log($"{nameof(TcpServer)}: Stopping. Reason: {reason}");
 
             try
             {

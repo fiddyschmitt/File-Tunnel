@@ -86,8 +86,10 @@ namespace ft.Listeners
 
         bool stopRequested = false;
 
-        public override void Stop()
+        public override void Stop(string reason)
         {
+            Program.Log($"{nameof(UdpServer)}: Stopping. Reason: {reason}");
+
             stopRequested = true;
 
             try

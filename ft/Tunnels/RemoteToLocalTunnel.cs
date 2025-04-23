@@ -13,7 +13,7 @@ namespace ft.Tunnels
 {
     public class RemoteToLocalTunnel
     {
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, int purgeSizeInBytes, int readDurationMillis, string udpSendFrom)
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, ASharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom)
         {
             RemoteTcpForwards = remoteTcpForwards;
             RemoteUdpForwards = remoteUdpForwards;
@@ -55,8 +55,8 @@ namespace ft.Tunnels
                         {
                             Program.Log($"Connected to {destinationEndpointStr}");
 
-                            var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream, purgeSizeInBytes, readDurationMillis);
-                            var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream(), purgeSizeInBytes, readDurationMillis);
+                            var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream);
+                            var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream());
 
                             void TearDown()
                             {
@@ -98,8 +98,8 @@ namespace ft.Tunnels
 
                     var udpStream = new UdpStream(udpClient, destinationEndpoint);
 
-                    var relay1 = new Relay(udpStream, connectionDetails.Stream, purgeSizeInBytes, readDurationMillis);
-                    var relay2 = new Relay(connectionDetails.Stream, udpStream, purgeSizeInBytes, readDurationMillis);
+                    var relay1 = new Relay(udpStream, connectionDetails.Stream);
+                    var relay2 = new Relay(connectionDetails.Stream, udpStream);
 
                     void TearDown()
                     {
@@ -120,7 +120,7 @@ namespace ft.Tunnels
 
         public List<string> RemoteTcpForwards { get; }
         public List<string> RemoteUdpForwards { get; }
-        public SharedFileManager SharedFileManager { get; }
+        public ASharedFileManager SharedFileManager { get; }
 
         void ProvideRemoteForwardsToCounterpart()
         {

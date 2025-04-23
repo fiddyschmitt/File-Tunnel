@@ -12,28 +12,33 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream, int purgeSizeInBytes, int readDurationMillis)
+        public Relay(Stream fromStream, Stream toStream)
         {
-            var bufferSize = (int)(purgeSizeInBytes / 2d * 0.9d);
-            bufferSize = Math.Max(bufferSize, 1024 * 1024);
+            var bufferSize = 65535;
 
             Threads.StartNew(() =>
             {
                 try
                 {
-                    Extensions.CopyTo(fromStream, toStream, bufferSize, bytesRead =>
+                    var buffer = new byte[65535 * 2];
+
+                    while (true)
                     {
-                        if (bytesRead > 0)
+                        var read = fromStream.Read(buffer, 0, bufferSize);
+
+                        if (read == 0)
                         {
-                            //Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
+                            break;
                         }
-                    }, null, readDurationMillis);
+
+                        toStream.Write(buffer, 0, read);
+                    }
                 }
                 catch (Exception ex)
                 {
                     if (!Stopped)
                     {
-                        Program.Log($"{fromStream} -> {toStream}: {ex}");
+                        Program.Log($"{fromStream} -> {toStream}: {ex.Message}");
                     }
                 }
 

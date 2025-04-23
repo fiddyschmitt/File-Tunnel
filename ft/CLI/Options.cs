@@ -40,6 +40,9 @@ namespace ft.CLI
         [Option('r', "read", Required = true, HelpText = @"Where to read data from. Example: --read ""\\nas\share\2.dat""")]
         public string ReadFrom { get; set; } = "";
 
+        [Option("write-delete", Required = false, HelpText = @"The program will write to the file, then wait for the counterpart to delete the file to signal it has been processed.")]
+        public bool WriteThenWaitForDelete { get; set; } = false;
+
 
 
         [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely. (Default 10485760)")]
