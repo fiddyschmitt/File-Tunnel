@@ -153,7 +153,10 @@ namespace ft.Listeners
                             }
                             catch (Exception ex)
                             {
-                                Program.Log($"[{writeFileShortName}] [{nameof(File.Move)}]: {ex.Message}");
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] [{nameof(File.Move)}]: {ex.Message}");
+                                }
                             }
                         },
                         () => moved == 1,
@@ -211,7 +214,10 @@ namespace ft.Listeners
                             }
                             catch (Exception ex)
                             {
-                                Program.Log($"{nameof(File.ReadAllBytes)} [Attempt {attempt:N0}]: {ex.Message}");
+                                if (Verbose)
+                                {
+                                    Program.Log($"{nameof(File.ReadAllBytes)} [Attempt {attempt:N0}]: {ex.Message}");
+                                }
                             }
                         },
                         () => fileContent.Length > 0,
