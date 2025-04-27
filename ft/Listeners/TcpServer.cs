@@ -64,11 +64,6 @@ namespace ft.Listeners
                     }
                 }
 
-                if (stopRequested)
-                {
-                    Program.Log($"Stopped listening on TCP {ListenOnEndpointStr}");
-                }
-
             }, $"TCP listener {ListenOnEndpointStr}");
         }
 
@@ -77,6 +72,8 @@ namespace ft.Listeners
         public override void Stop(string reason)
         {
             Program.Log($"{nameof(TcpServer)}: Stopping. Reason: {reason}");
+
+            stopRequested = true;
 
             try
             {

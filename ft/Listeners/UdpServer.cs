@@ -76,11 +76,6 @@ namespace ft.Listeners
                     }
                 }
 
-                if (stopRequested)
-                {
-                    Program.Log($"Stopped listening on UDP {ListenOnEndpointStr}");
-                }
-
             }, $"UDP listener {listenEndpoint}");
         }
 
