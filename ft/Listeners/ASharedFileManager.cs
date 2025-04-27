@@ -99,7 +99,7 @@ namespace ft.Listeners
             }
             catch
             {
-                Program.Log($"WARNING! Could not enqueu {cmd.GetType().Name}");
+                Program.Log($"WARNING! Could not enqueue {cmd.GetType().Name}");
                 result = false;
             }
 
