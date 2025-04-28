@@ -1,4 +1,5 @@
 ﻿using ft.Commands;
+using ft.IO.Files;
 using ft.Streams;
 using System;
 using System.Diagnostics;
@@ -8,20 +9,20 @@ using System.Threading;
 
 namespace ft.Listeners
 {
-    public class WriteThenWaitForDelete : ASharedFileManager
+    public class WriteThenWaitForDelete : SharedFileManager
     {
         private readonly int readDurationMilliseconds;
-        private readonly int purgeSizeInBytes;
+        private readonly IFileAccess fileAccess;
 
         public WriteThenWaitForDelete(
+                    IFileAccess fileAccess,
                     string readFromFilename,
                     string writeToFilename,
-                    int purgeSizeInBytes,
                     int readDurationMilliseconds,
                     int tunnelTimeoutMilliseconds,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
-            this.purgeSizeInBytes = purgeSizeInBytes;
+            this.fileAccess = fileAccess;
             this.readDurationMilliseconds = readDurationMilliseconds;
         }
 
@@ -31,23 +32,24 @@ namespace ft.Listeners
             var writeFileTempName = WriteToFilename + ".tmp";
             var writingStopwatch = new Stopwatch();
 
-            if (File.Exists(writeFileTempName))
+            try
             {
-                try
+                if (fileAccess.Exists(writeFileTempName))
                 {
-                    File.Delete(writeFileTempName);
+                    fileAccess.Delete(writeFileTempName);
                 }
-                catch { }
             }
+            catch { }
 
-            if (File.Exists(WriteToFilename))
+            try
             {
-                try
+                if (fileAccess.Exists(WriteToFilename))
                 {
-                    File.Delete(WriteToFilename);
+                    fileAccess.Delete(WriteToFilename);
+
                 }
-                catch { }
             }
+            catch { }
 
             while (true)
             {
@@ -90,19 +92,9 @@ namespace ft.Listeners
                         {
                             break;
                         }
-
-                        if (memoryStream.Length > purgeSizeInBytes)
-                        {
-                            break;
-                        }
                     }
 
                     binaryWriter.Flush();
-
-                    if (Verbose)
-                    {
-                        Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {memoryStream.Length.BytesToString()} bytes.");
-                    }
 
                     var memoryStreamContent = memoryStream.ToArray();
 
@@ -110,20 +102,64 @@ namespace ft.Listeners
                     Extensions.Time(
                         attempt =>
                         {
-                            File.WriteAllBytes(writeFileTempName, memoryStreamContent);
+                            try
+                            {
+                                fileAccess.WriteAllBytes(writeFileTempName, memoryStreamContent);
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] [Write to file - attempt {attempt:N0}]: {ex.Message}");
+                                }
+                            }
                         },
-                        () => File.Exists(writeFileTempName),
+                        () =>
+                        {
+                            try
+                            {
+                                var result = fileAccess.Exists(writeFileTempName);
+                                return result;
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] [Confirm file was written]: {ex.Message}");
+                                }
+                                return false;
+                            }
+                        },
                         _ => 1,
                         $"[{writeFileShortName}] Writing file content",
                         Verbose);
 
-                    memoryStream.Close();
+
+                    if (Verbose)
+                    {
+                        Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {memoryStream.Length.BytesToString()} bytes.");
+                    }
 
 
                     //wait for it to be deleted by counterpart, signaling it was processed
                     Extensions.Time(
                         _ => { },
-                        () => !File.Exists(WriteToFilename),
+                        () =>
+                        {
+                            try
+                            {
+                                var result = !fileAccess.Exists(WriteToFilename);
+                                return result;
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] [Check file has been processed]: {ex.Message}");
+                                }
+                                return false;
+                            }
+                        },
                         _ => 1,
                         $"[{writeFileShortName}] Waiting for file to be deleted",
                         Verbose);
@@ -138,7 +174,7 @@ namespace ft.Listeners
                         {
                             try
                             {
-                                File.Move(writeFileTempName, WriteToFilename, true);
+                                fileAccess.Move(writeFileTempName, WriteToFilename, true);
                                 Interlocked.Increment(ref moved);
                                 return;
                             }
@@ -147,15 +183,21 @@ namespace ft.Listeners
                                 //try writing it again
                                 try
                                 {
-                                    File.WriteAllBytes(writeFileTempName, memoryStreamContent);
+                                    fileAccess.WriteAllBytes(writeFileTempName, memoryStreamContent);
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] [Rewrite attempt {attempt:N0}]: {ex.Message}");
+                                    }
+                                }
                             }
                             catch (Exception ex)
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{writeFileShortName}] [{nameof(File.Move)}]: {ex.Message}");
+                                    Program.Log($"[{writeFileShortName}] [Move file into place - attempt {attempt:N0}]: {ex.Message}");
                                 }
                             }
                         },
@@ -181,14 +223,14 @@ namespace ft.Listeners
         {
             var readFileShortName = Path.GetFileName(ReadFromFilename);
 
-            if (File.Exists(ReadFromFilename))
+            try
             {
-                try
+                if (fileAccess.Exists(ReadFromFilename))
                 {
-                    File.Delete(ReadFromFilename);
+                    fileAccess.Delete(ReadFromFilename);
                 }
-                catch { }
             }
+            catch { }
 
             while (true)
             {
@@ -196,7 +238,22 @@ namespace ft.Listeners
                 {
                     Extensions.Time(
                         _ => { },
-                        () => File.Exists(ReadFromFilename),
+                        () =>
+                        {
+                            try
+                            {
+                                var result = fileAccess.Exists(ReadFromFilename);
+                                return result;
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{ReadFromFilename}] [Checking if file exists]: {ex.Message}");
+                                }
+                                return false;
+                            }
+                        },
                         _ => 1,
                         $"[{readFileShortName}] Waiting for file to exist",
                         Verbose);
@@ -210,23 +267,25 @@ namespace ft.Listeners
                         {
                             try
                             {
-                                fileContent = File.ReadAllBytes(ReadFromFilename);
+                                fileContent = fileAccess.ReadAllBytes(ReadFromFilename);
                             }
                             catch (Exception ex)
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"{nameof(File.ReadAllBytes)} [Attempt {attempt:N0}]: {ex.Message}");
+                                    Program.Log($"[{readFileShortName}] [Reading file contents - attempt {attempt:N0}]: {ex.Message}");
                                 }
                             }
                         },
-                        () => fileContent.Length > 0,
+                        () => fileContent?.Length > 0,
                         _ => 1,
                         $"[{readFileShortName}] Reading file contents",
                         Verbose);
 
 
-                    File.Delete(ReadFromFilename);
+
+                    fileAccess.Delete(ReadFromFilename);
+
 
 
                     using var memoryStream = new MemoryStream(fileContent);

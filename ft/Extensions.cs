@@ -347,8 +347,31 @@ namespace ft
         }
 
         public static (int Attempts, TimeSpan Duration) Time(
+            Action<int> action,
+            Func<bool> finishCondition,
+            Func<int, int> getSleepDurationMillis,
+            string description,
+            bool printOutput)
+        {
+            var result = Time(action, finishCondition, true, getSleepDurationMillis, description, printOutput);
+            return result;
+        }
+
+        public static (int Attempts, TimeSpan Duration) Time(
+            Func<bool> finishCondition,
+            Action<int> action,            
+            Func<int, int> getSleepDurationMillis,
+            string description,
+            bool printOutput)
+        {
+            var result = Time(action, finishCondition, false, getSleepDurationMillis, description, printOutput);
+            return result;
+        }
+
+        public static (int Attempts, TimeSpan Duration) Time(
             this Action<int> action,
             Func<bool> finishCondition,
+            bool actionFirst,
             Func<int, int> getSleepDurationMillis,
             string description,
             bool printOutput)
@@ -360,9 +383,25 @@ namespace ft
 
             var sw = new Stopwatch();
             sw.Start();
-            var attempt = 0;
+
+            var attempt = 1;
             while (true)
             {
+                if ((attempt == 1 && actionFirst) || attempt > 1)
+                {
+                    if (printOutput)
+                    {
+                        Program.Log($"{description} - Starting attempt {attempt:N0}");
+                    }
+
+                    action(attempt);
+
+                    if (printOutput)
+                    {
+                        Program.Log($"{description} - Finished attempt {attempt:N0}");
+                    }
+                }
+
                 var finished = finishCondition();
 
                 if (finished)
@@ -370,19 +409,13 @@ namespace ft
                     break;
                 }
 
-                if (attempt > 1)
-                {
-                    var sleepMillis = getSleepDurationMillis(attempt);
-                    Thread.Sleep(sleepMillis);
-                }
+                var sleepMillis = getSleepDurationMillis(attempt);
+                Thread.Sleep(sleepMillis);
 
                 attempt++;
-                action(attempt);
             }
 
             sw.Stop();
-
-            if (attempt == 0) attempt = 1;
 
             if (printOutput)
             {

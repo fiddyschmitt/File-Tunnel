@@ -11,9 +11,9 @@ namespace ft.Tunnels
     public class LocalToRemoteTunnel
     {
         public MultiServer LocalListeners { get; }
-        public ASharedFileManager SharedFileManager { get; }
+        public SharedFileManager SharedFileManager { get; }
 
-        public LocalToRemoteTunnel(MultiServer localListeners, ASharedFileManager sharedFileManager)
+        public LocalToRemoteTunnel(MultiServer localListeners, SharedFileManager sharedFileManager)
         {
             LocalListeners = localListeners;
             SharedFileManager = sharedFileManager;

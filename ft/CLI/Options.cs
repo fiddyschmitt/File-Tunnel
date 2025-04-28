@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace ft.CLI
 {
-    public class Options
+    public abstract class Options
     {
         [Option('L', Required = false, HelpText = @"TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> LocalTcpForwards { get; set; } = [];
@@ -40,19 +40,10 @@ namespace ft.CLI
         [Option('r', "read", Required = true, HelpText = @"Where to read data from. Example: --read ""\\nas\share\2.dat""")]
         public string ReadFrom { get; set; } = "";
 
-        [Option("write-delete", Required = false, HelpText = @"The program will write to the file, then wait for the counterpart to delete the file to signal it has been processed.")]
-        public bool WriteThenWaitForDelete { get; set; } = false;
 
-
-
-        [Option('p', "purge-size", Required = false, HelpText = @"The size (in bytes) at which the file should be emptied and started anew. Setting this to 0 disables purging, and the file will grow indefinitely. (Default 10485760)")]
-        public int PurgeSizeInBytes { get; set; } = 10 * 1024 * 1024;
 
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point. (Default 5000 ms)")]
         public int TunnelTimeoutMilliseconds { get; set; } = 10000;
-
-        [Option("isolated-reads", Required = false, HelpText = @"For read operations, the file is opened, read and closed in quick succession. This significantly reduces the tunnel responsiveness.")]
-        public bool IsolatedReads { get; set; } = false;
 
 
 

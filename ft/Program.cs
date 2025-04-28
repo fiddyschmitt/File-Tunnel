@@ -15,6 +15,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics.CodeAnalysis;
 using ft.Tunnels;
+using ft.IO.Files;
 
 namespace ft
 {
@@ -26,68 +27,34 @@ namespace ft
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
         public static void Main(string[] args)
         {
+            if (args.Contains("--version"))
+            {
+                Console.WriteLine($"{PROGRAM_NAME} {VERSION}");
+                return;
+            }
+
             Log($"{PROGRAM_NAME} {VERSION}");
 
             var parser = new Parser(settings =>
             {
                 settings.AllowMultiInstance = true;
-                settings.AutoHelp = true;
                 settings.HelpWriter = Console.Out;
-                settings.AutoVersion = true;
             });
 
-            parser.ParseArguments<Options>(args)
-               .WithParsed(o =>
-               {
-                   var localListeners = new MultiServer();
-                   localListeners.Add("tcp", o.LocalTcpForwards, false);
-                   localListeners.Add("udp", o.LocalUdpForwards, false);
-
-                   if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !o.IsolatedReads)
-                   {
-                       Log($"Warning: It appears the Read file is stored in xrdp's Drive Redirection folder.", ConsoleColor.Yellow);
-                       Log($"This can result in the File Tunnel not achieving synchronisation.", ConsoleColor.Yellow);
-                       Log($"Recommendation: Run File Tunnel using an extra arg --isolated-reads", ConsoleColor.Yellow);
-                       Log($"Continuing.", ConsoleColor.Yellow);
-                   }
-
-                   ASharedFileManager sharedFileManager;
-                   if (o.WriteThenWaitForDelete)
-                   {
-                       sharedFileManager = new WriteThenWaitForDelete(
-                                                    o.ReadFrom.Trim(),
-                                                    o.WriteTo.Trim(),
-                                                    o.PurgeSizeInBytes,
-                                                    o.ReadDurationMillis,                                                    
-                                                    o.TunnelTimeoutMilliseconds,
-                                                    o.Verbose);
-                   }
-                   else
-                   {
-                       sharedFileManager = new SharedFileManager(
-                                                    o.ReadFrom.Trim(),
-                                                    o.WriteTo.Trim(),
-                                                    o.PurgeSizeInBytes,
-                                                    o.ReadDurationMillis,
-                                                    o.TunnelTimeoutMilliseconds,
-                                                    o.IsolatedReads,
-                                                    o.Verbose);
-                   }
-
-                   var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager);
-                   var remoteToLocalTunnel = new RemoteToLocalTunnel(
-                                                    o.RemoteTcpForwards.ToList(),
-                                                    o.RemoteUdpForwards.ToList(),
-                                                    sharedFileManager,
-                                                    localToRemoteTunnel,
-                                                    o.UdpSendFrom);
-
-                   sharedFileManager.Start();
-               })
-               .WithNotParsed(o =>
-               {
-                   Environment.Exit(1);
-               });
+            if (args.Contains("--ftp"))
+            {
+                parser
+                    .ParseArguments<FtpOptions>(args)
+                    .WithParsed(RunFtpSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else
+            {
+                parser
+                    .ParseArguments<ReusableFileOptions>(args)
+                    .WithParsed(RunReusableFileSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
 
             while (true)
             {
@@ -100,6 +67,64 @@ namespace ft
                     break;
                 }
             }
+        }
+
+        private static void RunFtpSession(FtpOptions o)
+        {
+            var access = new Ftp(o.FtpHost, o.FtpPort, o.FtpUsername, o.FtpPassword);
+
+            var sharedFileManager = new WriteThenWaitForDelete(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             o.ReadDurationMillis,
+                                             o.TunnelTimeoutMilliseconds,
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o);
+        }
+
+        private static void RunReusableFileSession(Options o)
+        {
+            if (o is ReusableFileOptions reuseOptions)
+            {
+                if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !reuseOptions.IsolatedReads)
+                {
+                    Log($"Warning: It appears the Read file is stored in xrdp's Drive Redirection folder.", ConsoleColor.Yellow);
+                    Log($"This can result in the File Tunnel not achieving synchronisation.", ConsoleColor.Yellow);
+                    Log($"Recommendation: Run File Tunnel using an extra arg --isolated-reads", ConsoleColor.Yellow);
+                    Log($"Continuing.", ConsoleColor.Yellow);
+                }
+            }
+
+            var access = new LocalAccess();
+
+            var sharedFileManager = new WriteThenWaitForDelete(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             o.ReadDurationMillis,
+                                             o.TunnelTimeoutMilliseconds,
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o);
+        }
+
+        private static void RunSession(SharedFileManager sharedFileManager, Options o)
+        {
+            var localListeners = new MultiServer();
+            localListeners.Add("tcp", o.LocalTcpForwards, false);
+            localListeners.Add("udp", o.LocalUdpForwards, false);
+
+            var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager);
+            _ = new RemoteToLocalTunnel(
+                                             o.RemoteTcpForwards.ToList(),
+                                             o.RemoteUdpForwards.ToList(),
+                                             sharedFileManager,
+                                             localToRemoteTunnel,
+                                             o.UdpSendFrom);
+
+            sharedFileManager.Start();
         }
 
         public static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;

@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileStream(ASharedFileManager sharedFileManager, int connectionId) : Stream
+    public class SharedFileStream(SharedFileManager sharedFileManager, int connectionId) : Stream
     {
         public void EstablishConnection(string destinationEndpointStr)
         {
@@ -27,7 +27,7 @@ namespace ft.Streams
         public override long Length => throw new NotImplementedException();
 
         public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public ASharedFileManager SharedFileManager { get; } = sharedFileManager;
+        public SharedFileManager SharedFileManager { get; } = sharedFileManager;
         public int ConnectionId { get; } = connectionId;
 
         public override void Flush()
