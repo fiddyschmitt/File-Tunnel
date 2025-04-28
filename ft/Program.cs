@@ -84,28 +84,41 @@ namespace ft
             RunSession(sharedFileManager, o);
         }
 
-        private static void RunReusableFileSession(Options o)
+        private static void RunReusableFileSession(ReusableFileOptions o)
         {
-            if (o is ReusableFileOptions reuseOptions)
+            if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !o.IsolatedReads)
             {
-                if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !reuseOptions.IsolatedReads)
-                {
-                    Log($"Warning: It appears the Read file is stored in xrdp's Drive Redirection folder.", ConsoleColor.Yellow);
-                    Log($"This can result in the File Tunnel not achieving synchronisation.", ConsoleColor.Yellow);
-                    Log($"Recommendation: Run File Tunnel using an extra arg --isolated-reads", ConsoleColor.Yellow);
-                    Log($"Continuing.", ConsoleColor.Yellow);
-                }
+                Log($"Warning: It appears the Read file is stored in xrdp's Drive Redirection folder.", ConsoleColor.Yellow);
+                Log($"This can result in the File Tunnel not achieving synchronisation.", ConsoleColor.Yellow);
+                Log($"Recommendation: Run File Tunnel using an extra arg --isolated-reads", ConsoleColor.Yellow);
+                Log($"Continuing.", ConsoleColor.Yellow);
             }
 
             var access = new LocalAccess();
 
-            var sharedFileManager = new WriteThenWaitForDelete(
+            SharedFileManager sharedFileManager;
+
+            if (o.UploadDownload)
+            {
+                sharedFileManager = new WriteThenWaitForDelete(
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
                                              o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
                                              o.Verbose);
+            }
+            else
+            {
+                sharedFileManager = new ReusableFile(
+                                            o.ReadFrom.Trim(),
+                                            o.WriteTo.Trim(),
+                                            o.PurgeSizeInBytes,
+                                            o.ReadDurationMillis,
+                                            o.TunnelTimeoutMilliseconds,
+                                            o.IsolatedReads,
+                                            o.Verbose);
+            }
 
             RunSession(sharedFileManager, o);
         }
