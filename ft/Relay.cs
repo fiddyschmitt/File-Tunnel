@@ -16,21 +16,21 @@ namespace ft
         {
             var bufferSize = 65535;
 
-            var filename = $"";
-            var i = 1;
+            //var filename = $"";
+            //var i = 1;
 
-            while (true)
-            {
-                filename = $"{Environment.ProcessId} - {i}.dat";
-                if (!File.Exists(filename))
-                {
-                    break;
-                }
+            //while (true)
+            //{
+            //    filename = $"{Environment.ProcessId} - {i}.dat";
+            //    if (!File.Exists(filename))
+            //    {
+            //        break;
+            //    }
 
-                i++;
-            }
+            //    i++;
+            //}
 
-            var fs = File.Create(filename);
+            //var fs = File.Create(filename);
 
             Threads.StartNew(() =>
             {
@@ -47,8 +47,8 @@ namespace ft
                             break;
                         }
 
-                        fs.Write(buffer, 0, read);
-                        fs.Flush();
+                        //fs.Write(buffer, 0, read);
+                        //fs.Flush();
 
                         toStream.Write(buffer, 0, read);
                     }
@@ -61,7 +61,7 @@ namespace ft
                     }
                 }
 
-                fs.Close();
+                //fs.Close();
 
                 RelayFinished?.Invoke(this, new EventArgs());
             }, $"{fromStream.Name(true)} -> {toStream.Name(false)}");
