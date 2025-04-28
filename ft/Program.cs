@@ -24,7 +24,8 @@ namespace ft
         const string PROGRAM_NAME = "File Tunnel";
         const string VERSION = "2.2.4";
 
-        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Options))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(ReusableFileOptions))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(FtpOptions))]
         public static void Main(string[] args)
         {
             if (args.Contains("--version"))
