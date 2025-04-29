@@ -99,6 +99,7 @@ namespace ft.Listeners
                     fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
                     var commandsWritten = 0;
+                    var bytesWritten = 0L;
                     //write as many commands as possible to the file
                     while (true)
                     {
@@ -146,6 +147,8 @@ namespace ft.Listeners
                         var commandEndPos = fileStream.Position;
                         commandsWritten++;
 
+                        bytesWritten += ms.Length;
+
                         if (Verbose)
                         {
                             Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
@@ -156,7 +159,14 @@ namespace ft.Listeners
                         if (SendQueue.Count == 0 || writingStopwatch.ElapsedMilliseconds > readDurationMilliseconds)
                         {
                             binaryWriter.Flush();
+
+                            if (Verbose)
+                            {
+                                Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {bytesWritten.BytesToString()} bytes.");
+                            }
+
                             commandsWritten = 0;
+                            bytesWritten = 0;
                         }
                     }
                 }
