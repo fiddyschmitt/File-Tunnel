@@ -30,7 +30,7 @@ namespace ft.Listeners
         const int reportIntervalMs = 1000;
         public int TunnelTimeoutMilliseconds { get; protected set; }
         public bool Verbose { get; protected set; }
-        DateTime? lastPingResponseFromCounterpart;
+        DateTime? lastContactFromCounterpart;
         public bool IsOnline { get; protected set; } = false;
 
 
@@ -137,6 +137,8 @@ namespace ft.Listeners
 
         protected void CommandReceived(Command command)
         {
+            lastContactFromCounterpart = DateTime.Now;
+
             if (command is Forward forward && forward.Payload != null)
             {
                 if (ReceiveQueue.TryGetValue(forward.ConnectionId, out var connectionReceiveQueue))
@@ -334,11 +336,11 @@ namespace ft.Listeners
             {
                 while (true)
                 {
-                    if (lastPingResponseFromCounterpart != null)
+                    if (lastContactFromCounterpart != null)
                     {
                         var orig = IsOnline;
 
-                        var timeSinceLastContact = DateTime.Now - lastPingResponseFromCounterpart.Value;
+                        var timeSinceLastContact = DateTime.Now - lastContactFromCounterpart.Value;
                         IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds;
 
                         if (orig != IsOnline)
