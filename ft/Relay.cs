@@ -12,9 +12,16 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream)
+        public Relay(Stream fromStream, Stream toStream, long maxFileSizeBytes)
         {
             var bufferSize = 65535;
+
+            var bytesToRead = bufferSize;
+            if (maxFileSizeBytes > 0)
+            {
+                bytesToRead = (int)(maxFileSizeBytes * 0.9);        //leave some room for commands like Purge
+                bytesToRead = Math.Min(bufferSize, bytesToRead);
+            }
 
             //var filename = $"";
             //var i = 1;
@@ -40,7 +47,7 @@ namespace ft
 
                     while (true)
                     {
-                        var read = fromStream.Read(buffer, 0, bufferSize);
+                        var read = fromStream.Read(buffer, 0, bytesToRead);
 
                         if (read == 0)
                         {

@@ -13,7 +13,7 @@ namespace ft.Tunnels
 {
     public class RemoteToLocalTunnel
     {
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom)
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom, long maxFileSizeBytes)
         {
             RemoteTcpForwards = remoteTcpForwards;
             RemoteUdpForwards = remoteUdpForwards;
@@ -55,8 +55,8 @@ namespace ft.Tunnels
                         {
                             Program.Log($"Connected to {destinationEndpointStr}");
 
-                            var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream);
-                            var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream());
+                            var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream, maxFileSizeBytes);
+                            var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream(), maxFileSizeBytes);
 
                             void TearDown()
                             {
@@ -98,8 +98,8 @@ namespace ft.Tunnels
 
                     var udpStream = new UdpStream(udpClient, destinationEndpoint);
 
-                    var relay1 = new Relay(udpStream, connectionDetails.Stream);
-                    var relay2 = new Relay(connectionDetails.Stream, udpStream);
+                    var relay1 = new Relay(udpStream, connectionDetails.Stream, maxFileSizeBytes);
+                    var relay2 = new Relay(connectionDetails.Stream, udpStream, maxFileSizeBytes);
 
                     void TearDown()
                     {

@@ -97,5 +97,19 @@ namespace ft.IO.Files
                 client.UploadBytes(bytes, path, FtpRemoteExists.Overwrite);
             }
         }
+
+        public long GetFileSize(string path)
+        {
+            Reconnect();
+
+            var result = 0L;
+
+            lock (client)
+            {
+                result = client.GetFileSize(path, 0);
+            }
+
+            return result;
+        }
     }
 }

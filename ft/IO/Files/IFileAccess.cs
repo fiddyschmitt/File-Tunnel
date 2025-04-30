@@ -17,5 +17,7 @@ namespace ft.IO.Files
         void Move(string sourceFileName, string destFileName, bool overwrite);
 
         byte[] ReadAllBytes(string path);
+
+        long GetFileSize(string path);
     }
 }

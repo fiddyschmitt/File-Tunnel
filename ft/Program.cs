@@ -78,11 +78,13 @@ namespace ft
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
+                                             o.MaxFileSizeBytes,
                                              o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
+                                             false,
                                              o.Verbose);
 
-            RunSession(sharedFileManager, o);
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
         }
 
         private static void RunReusableFileSession(ReusableFileOptions o)
@@ -105,8 +107,10 @@ namespace ft
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
+                                             o.MaxFileSizeBytes,
                                              o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
+                                             true,  //NFS occassionally writes a 0 byte file, so we retry until it's written properly.
                                              o.Verbose);
             }
             else
@@ -114,29 +118,30 @@ namespace ft
                 sharedFileManager = new ReusableFile(
                                             o.ReadFrom.Trim(),
                                             o.WriteTo.Trim(),
-                                            o.PurgeSizeInBytes,
+                                            o.MaxFileSizeBytes,
                                             o.ReadDurationMillis,
                                             o.TunnelTimeoutMilliseconds,
                                             o.IsolatedReads,
                                             o.Verbose);
             }
 
-            RunSession(sharedFileManager, o);
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
         }
 
-        private static void RunSession(SharedFileManager sharedFileManager, Options o)
+        private static void RunSession(SharedFileManager sharedFileManager, Options o, long maxFileSizeBytes)
         {
             var localListeners = new MultiServer();
             localListeners.Add("tcp", o.LocalTcpForwards, false);
             localListeners.Add("udp", o.LocalUdpForwards, false);
 
-            var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager);
+            var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, maxFileSizeBytes);
             _ = new RemoteToLocalTunnel(
                                              o.RemoteTcpForwards.ToList(),
                                              o.RemoteUdpForwards.ToList(),
                                              sharedFileManager,
                                              localToRemoteTunnel,
-                                             o.UdpSendFrom);
+                                             o.UdpSendFrom,
+                                             maxFileSizeBytes);
 
             sharedFileManager.Start();
         }

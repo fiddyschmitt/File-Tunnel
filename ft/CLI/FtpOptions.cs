@@ -24,5 +24,8 @@ namespace ft.CLI
 
         [Option('p', "password", Required = false, HelpText = @"The password to log into the FTP server.")]
         public string FtpPassword { get; set; } = "";
+
+        [Option('m', "max-size", Required = false, HelpText = @"The maximum size (in bytes) the file can be before uploading. Default 102400 (100 KB)")]
+        public int MaxFileSizeBytes { get; set; } = 100 * 1024;
     }
 }

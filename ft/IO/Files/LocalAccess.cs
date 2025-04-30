@@ -20,6 +20,12 @@ namespace ft.IO.Files
             return result;
         }
 
+        public long GetFileSize(string path)
+        {
+            var result = new FileInfo(path).Length;
+            return result;
+        }
+
         public void Move(string sourceFileName, string destFileName, bool overwrite)
         {
             File.Move(sourceFileName, destFileName, overwrite);

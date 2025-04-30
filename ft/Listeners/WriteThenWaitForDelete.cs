@@ -11,19 +11,25 @@ namespace ft.Listeners
 {
     public class WriteThenWaitForDelete : SharedFileManager
     {
+        private readonly int maxFileSizeBytes;
         private readonly int readDurationMilliseconds;
+        private readonly bool checkFileSizeAfterUpload;
         private readonly IFileAccess fileAccess;
 
         public WriteThenWaitForDelete(
                     IFileAccess fileAccess,
                     string readFromFilename,
                     string writeToFilename,
+                    int maxFileSizeBytes,
                     int readDurationMilliseconds,
                     int tunnelTimeoutMilliseconds,
+                    bool checkFileSizeAfterUpload,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
             this.fileAccess = fileAccess;
+            this.maxFileSizeBytes = maxFileSizeBytes;
             this.readDurationMilliseconds = readDurationMilliseconds;
+            this.checkFileSizeAfterUpload = checkFileSizeAfterUpload;
         }
 
         public override void SendPump()
@@ -88,6 +94,11 @@ namespace ft.Listeners
                             break;
                         }
 
+                        if (memoryStream.Length >= maxFileSizeBytes)
+                        {
+                            break;
+                        }
+
                         if (writingStopwatch.ElapsedMilliseconds > readDurationMilliseconds)
                         {
                             break;
@@ -119,6 +130,12 @@ namespace ft.Listeners
                             try
                             {
                                 var result = fileAccess.Exists(writeFileTempName);
+
+                                if (checkFileSizeAfterUpload)
+                                {
+                                    result &= fileAccess.GetFileSize(writeFileTempName) == memoryStreamContent.Length;
+                                }
+
                                 return result;
                             }
                             catch (Exception ex)
