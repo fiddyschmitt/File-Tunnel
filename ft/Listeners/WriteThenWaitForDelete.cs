@@ -154,7 +154,7 @@ namespace ft.Listeners
 
                     if (Verbose)
                     {
-                        Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {memoryStream.Length.BytesToString()} bytes.");
+                        Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {memoryStream.Length.BytesToString()}.");
                     }
 
 
@@ -342,7 +342,7 @@ namespace ft.Listeners
 
                     if (Verbose)
                     {
-                        Program.Log($"[{readFileShortName}] Read {commandsRead:N0} commands in one transaction. {memoryStream.Length.BytesToString()} bytes.");
+                        Program.Log($"[{readFileShortName}] Read {commandsRead:N0} commands in one transaction. {memoryStream.Length.BytesToString()}.");
                     }
 
                     if (Verbose)
