@@ -9,14 +9,14 @@ using System.Threading;
 
 namespace ft.Listeners
 {
-    public class WriteThenWaitForDelete : SharedFileManager
+    public class UploadDownload : SharedFileManager
     {
         private readonly int maxFileSizeBytes;
         private readonly int readDurationMilliseconds;
         private readonly bool checkFileSizeAfterUpload;
         private readonly IFileAccess fileAccess;
 
-        public WriteThenWaitForDelete(
+        public UploadDownload(
                     IFileAccess fileAccess,
                     string readFromFilename,
                     string writeToFilename,
@@ -361,7 +361,7 @@ namespace ft.Listeners
 
         public override void Stop(string reason)
         {
-            Program.Log($"{nameof(WriteThenWaitForDelete)}: Stopping. Reason: {reason}");
+            Program.Log($"{nameof(UploadDownload)}: Stopping. Reason: {reason}");
         }
     }
 }

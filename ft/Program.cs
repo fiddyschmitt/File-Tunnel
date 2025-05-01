@@ -74,7 +74,7 @@ namespace ft
         {
             var access = new Ftp(o.FtpHost, o.FtpPort, o.FtpUsername, o.FtpPassword);
 
-            var sharedFileManager = new WriteThenWaitForDelete(
+            var sharedFileManager = new UploadDownload(
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
@@ -103,7 +103,7 @@ namespace ft
 
             if (o.UploadDownload)
             {
-                sharedFileManager = new WriteThenWaitForDelete(
+                sharedFileManager = new UploadDownload(
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
