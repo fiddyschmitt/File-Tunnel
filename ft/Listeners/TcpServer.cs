@@ -60,7 +60,7 @@ namespace ft.Listeners
                 {
                     if (!stopRequested)
                     {
-                        Program.Log($"TcpServer error: {ex.Message}");
+                        Program.Log($"TcpServer error ({ListenOnEndpointStr}): {ex.Message}");
                     }
                 }
 
@@ -71,7 +71,7 @@ namespace ft.Listeners
 
         public override void Stop(string reason)
         {
-            Program.Log($"{nameof(TcpServer)}: Stopping. Reason: {reason}");
+            Program.Log($"{nameof(TcpServer)} ({ListenOnEndpointStr}): Stopping. Reason: {reason}");
 
             stopRequested = true;
 
