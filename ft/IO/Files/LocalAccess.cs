@@ -16,7 +16,12 @@ namespace ft.IO.Files
 
         public bool Exists(string path)
         {
-            var result = File.Exists(path);
+            var folder = Path.GetDirectoryName(path) ?? AppDomain.CurrentDomain.BaseDirectory;
+            var filename = Path.GetFileName(path);
+
+            //File.Exists() interferes with SMB's operations, and slows things down.
+            //The following is less intrusive.
+            var result = Directory.EnumerateFiles(folder, filename).Any();
             return result;
         }
 

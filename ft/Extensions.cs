@@ -410,6 +410,10 @@ namespace ft
                 }
 
                 var sleepMillis = getSleepDurationMillis(attempt);
+
+                if (attempt > 10) sleepMillis = 10;
+                if (attempt > 100) sleepMillis = 100;
+
                 Thread.Sleep(sleepMillis);
 
                 attempt++;
@@ -417,7 +421,7 @@ namespace ft
 
             sw.Stop();
 
-            if (printOutput)
+            if (printOutput && sw.ElapsedMilliseconds > 1000)
             {
                 Program.Log($"{description} took {attempt:N0} attempts ({sw.Elapsed.TotalSeconds:N3} seconds)");
             }
