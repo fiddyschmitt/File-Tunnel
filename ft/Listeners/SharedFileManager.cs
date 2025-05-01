@@ -253,7 +253,6 @@ namespace ft.Listeners
                             if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
                             {
                                 pingStopwatch.Stop();
-                                lastContactFromCounterpart = DateTime.Now;
 
                                 latestRTT = pingStopwatch.Elapsed;
                                 break;
