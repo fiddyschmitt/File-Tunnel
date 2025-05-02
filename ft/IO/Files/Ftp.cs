@@ -18,10 +18,10 @@ namespace ft.IO.Files
         {
             var config = new FtpConfig()
             {
-                ConnectTimeout = 4000,
-                DataConnectionConnectTimeout = 4000,
-                DataConnectionReadTimeout = 4000,
-                ReadTimeout = 4000,
+                ConnectTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+                DataConnectionConnectTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+                DataConnectionReadTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+                ReadTimeout = Program.UNIVERSAL_TIMEOUT_MS,
             };
 
             client = new FtpClient(host, username, password, port, config);

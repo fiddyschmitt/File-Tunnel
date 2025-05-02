@@ -248,7 +248,7 @@ namespace ft.Listeners
                     {
                         while (true)
                         {
-                            var responseTimeout = new CancellationTokenSource(4000);
+                            var responseTimeout = new CancellationTokenSource(Program.UNIVERSAL_TIMEOUT_MS);
                             var pingResponse = pingResponsesReceived.Take(responseTimeout.Token);
                             if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
                             {
