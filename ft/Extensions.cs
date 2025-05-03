@@ -347,38 +347,38 @@ namespace ft
         }
 
         public static (int Attempts, TimeSpan Duration) Time(
-            Action<int> action,
-            Func<bool> finishCondition,
-            Func<int, int> getSleepDurationMillis,
-            string description,
+            string operation,
+            Action<(int Attempt, TimeSpan Elapsed)> action,
+            Func<(int Attempt, TimeSpan Elapsed), bool> finishCondition,
+            Func<(int Attempt, TimeSpan Elapsed, string Operation), int> getSleepDurationMillis,
             bool printOutput)
         {
-            var result = Time(action, finishCondition, true, getSleepDurationMillis, description, printOutput);
+            var result = Time(operation, action, finishCondition, true, getSleepDurationMillis, printOutput);
             return result;
         }
 
         public static (int Attempts, TimeSpan Duration) Time(
-            Func<bool> finishCondition,
-            Action<int> action,            
-            Func<int, int> getSleepDurationMillis,
-            string description,
+            string operation,
+            Func<(int Attempt, TimeSpan Elapsed), bool> finishCondition,
+            Action<(int Attempt, TimeSpan Elapsed)> action,
+            Func<(int Attempt, TimeSpan Elapsed, string Operation), int> getSleepDurationMillis,
             bool printOutput)
         {
-            var result = Time(action, finishCondition, false, getSleepDurationMillis, description, printOutput);
+            var result = Time(operation, action, finishCondition, false, getSleepDurationMillis, printOutput);
             return result;
         }
 
         public static (int Attempts, TimeSpan Duration) Time(
-            this Action<int> action,
-            Func<bool> finishCondition,
+            string operation,
+            Action<(int Attempt, TimeSpan Elapsed)> action,
+            Func<(int Attempt, TimeSpan Elapsed), bool> finishCondition,
             bool actionFirst,
-            Func<int, int> getSleepDurationMillis,
-            string description,
+            Func<(int Attempt, TimeSpan Elapsed, string Operation), int> getSleepDurationMillis,
             bool printOutput)
         {
             if (printOutput)
             {
-                Program.Log($"{description}");
+                Program.Log($"{operation}");
             }
 
             var sw = new Stopwatch();
@@ -391,28 +391,25 @@ namespace ft
                 {
                     if (printOutput)
                     {
-                        Program.Log($"{description} - Starting attempt {attempt:N0}");
+                        Program.Log($"{operation} - Starting attempt {attempt:N0}");
                     }
 
-                    action(attempt);
+                    action((attempt, sw.Elapsed));
 
                     if (printOutput)
                     {
-                        Program.Log($"{description} - Finished attempt {attempt:N0}");
+                        Program.Log($"{operation} - Finished attempt {attempt:N0}");
                     }
                 }
 
-                var finished = finishCondition();
+                var finished = finishCondition((attempt, sw.Elapsed));
 
                 if (finished)
                 {
                     break;
                 }
 
-                var sleepMillis = getSleepDurationMillis(attempt);
-
-                if (attempt > 10) sleepMillis = 10;
-                if (attempt > 100) sleepMillis = 100;
+                var sleepMillis = getSleepDurationMillis((attempt, sw.Elapsed, operation));
 
                 Thread.Sleep(sleepMillis);
 
@@ -423,7 +420,7 @@ namespace ft
 
             if (printOutput && sw.ElapsedMilliseconds > 1000)
             {
-                Program.Log($"{description} took {attempt:N0} attempts ({sw.Elapsed.TotalSeconds:N3} seconds)");
+                Program.Log($"{operation} took {attempt:N0} attempts ({sw.Elapsed.TotalSeconds:N3} seconds)");
             }
 
             return (attempt, sw.Elapsed);

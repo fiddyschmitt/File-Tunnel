@@ -35,7 +35,7 @@ namespace ft.Listeners
         public override void SendPump()
         {
             var writeFileShortName = Path.GetFileName(WriteToFilename);
-            var writeFileTempName = WriteToFilename + ".tmp";
+            var writeFileTempName = WriteToFilename + ".preparing";
             var writingStopwatch = new Stopwatch();
 
             try
@@ -52,7 +52,6 @@ namespace ft.Listeners
                 if (fileAccess.Exists(WriteToFilename))
                 {
                     fileAccess.Delete(WriteToFilename);
-
                 }
             }
             catch { }
@@ -69,25 +68,36 @@ namespace ft.Listeners
                     //write as many commands as possible to the file
                     while (true)
                     {
-                        var command = SendQueue.Take();
-
+                        int toWaitMillis;
                         if (commandsWritten == 0)
                         {
-                            writingStopwatch.Restart();
+                            toWaitMillis = -1;  //wait indefinitely for the first command
                         }
-
-                        //write the message to file
-                        var commandStartPos = memoryStream.Position;
-                        command.Serialise(binaryWriter);
-                        var commandEndPos = memoryStream.Position;
-                        commandsWritten++;
-
-                        if (Verbose)
+                        else
                         {
-                            Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                            toWaitMillis = (int)Math.Max(0L, readDurationMilliseconds - writingStopwatch.ElapsedMilliseconds);
                         }
 
-                        CommandSent(command);
+                        if (SendQueue.TryTake(out Command? command, toWaitMillis))
+                        {
+                            if (commandsWritten == 0)
+                            {
+                                writingStopwatch.Restart();
+                            }
+
+                            //write the message to file
+                            var commandStartPos = memoryStream.Position;
+                            command.Serialise(binaryWriter);
+                            var commandEndPos = memoryStream.Position;
+                            commandsWritten++;
+
+                            if (Verbose)
+                            {
+                                Program.Log($"[{writeFileShortName}] [{commandsWritten:N0}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                            }
+
+                            CommandSent(command);
+                        }
 
                         if (SendQueue.Count == 0)
                         {
@@ -99,7 +109,7 @@ namespace ft.Listeners
                             break;
                         }
 
-                        if (writingStopwatch.ElapsedMilliseconds > readDurationMilliseconds)
+                        if (writingStopwatch.ElapsedMilliseconds >= readDurationMilliseconds)
                         {
                             break;
                         }
@@ -111,6 +121,7 @@ namespace ft.Listeners
 
                     //write the file (sometimes it takes more than one go)
                     Extensions.Time(
+                        $"[{writeFileShortName}] Write file content",
                         attempt =>
                         {
                             try
@@ -121,11 +132,11 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{writeFileShortName}] [Write to file - attempt {attempt:N0}]: {ex.Message}");
+                                    Program.Log($"[{writeFileShortName}] Write file content - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
                             }
                         },
-                        () =>
+                        attempt =>
                         {
                             try
                             {
@@ -142,13 +153,12 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{writeFileShortName}] [Confirm file was written]: {ex.Message}");
+                                    Program.Log($"[{writeFileShortName}] [Confirm file was written - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
                                 return false;
                             }
                         },
-                        _ => 1,
-                        $"[{writeFileShortName}] Writing file content",
+                        DefaultSleepStrategy,
                         Verbose);
 
 
@@ -158,27 +168,39 @@ namespace ft.Listeners
                     }
 
 
-                    //wait for it to be deleted by counterpart, signaling it was processed
+                    //wait for the previous file to be deleted by counterpart, signaling it was processed
                     Extensions.Time(
+                        $"[{writeFileShortName}] Wait for file to be deleted by counterpart",
                         _ => { },
-                        () =>
+                        attempt =>
                         {
+                            bool result;
                             try
                             {
-                                var result = !fileAccess.Exists(WriteToFilename);
-                                return result;
+                                if (fileAccess is LocalAccess localAccess)
+                                {
+                                    //SMB slows down if both sides are using File.Exists on the same file.
+                                    using var fs = File.Open(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                    result = true;
+                                    fs.Close();
+                                }
+                                else
+                                {
+                                    result = fileAccess.Exists(WriteToFilename);
+                                }
                             }
                             catch (Exception ex)
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{writeFileShortName}] [Check file has been processed]: {ex.Message}");
+                                    Program.Log($"[{writeFileShortName}] [Wait for file to be deleted by counterpart - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
-                                return false;
+                                result = false;
                             }
+
+                            return !result;
                         },
-                        _ => 1,
-                        $"[{writeFileShortName}] Waiting for file to be deleted",
+                        DefaultSleepStrategy,
                         Verbose);
 
 
@@ -187,6 +209,7 @@ namespace ft.Listeners
                     //move the file into place
                     var moved = 0;
                     Extensions.Time(
+                        $"[{writeFileShortName}] Move file into place",
                         attempt =>
                         {
                             try
@@ -206,7 +229,7 @@ namespace ft.Listeners
                                 {
                                     if (Verbose)
                                     {
-                                        Program.Log($"[{writeFileShortName}] [Rewrite attempt {attempt:N0}]: {ex.Message}");
+                                        Program.Log($"[{writeFileShortName}] [Rewriting during move attempt {attempt.Attempt:N0}]: {ex.Message}");
                                     }
                                 }
                             }
@@ -214,17 +237,20 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{writeFileShortName}] [Move file into place - attempt {attempt:N0}]: {ex.Message}");
+                                    Program.Log($"[{writeFileShortName}] [Move file into place - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
                             }
                         },
-                        () => moved == 1,
+                        _ => moved == 1,
                         attempt =>
                         {
+                            var sleep = DefaultSleepStrategy(attempt);
+
                             //rclone ftp mount throws "The request could not be performed because of an I/O device error" if file move requests are done in quick succession
-                            return 20;
+                            sleep = Math.Max(sleep, 20);
+
+                            return sleep;
                         },
-                        $"[{writeFileShortName}] Waiting for file to be moved into place",
                         Verbose);
                 }
                 catch (Exception ex)
@@ -254,8 +280,9 @@ namespace ft.Listeners
                 try
                 {
                     Extensions.Time(
+                        $"[{readFileShortName}] Wait for file to exist",
                         _ => { },
-                        () =>
+                        attempt =>
                         {
                             try
                             {
@@ -266,13 +293,12 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{ReadFromFilename}] [Checking if file exists]: {ex.Message}");
+                                    Program.Log($"[{ReadFromFilename}] [Wait for file to exist - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
                                 return false;
                             }
                         },
-                        _ => 1,
-                        $"[{readFileShortName}] Waiting for file to exist",
+                        DefaultSleepStrategy,
                         Verbose);
 
 
@@ -280,6 +306,7 @@ namespace ft.Listeners
 
                     byte[] fileContent = [];
                     Extensions.Time(
+                        $"[{readFileShortName}] Read file contents",
                         attempt =>
                         {
                             try
@@ -290,20 +317,36 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{readFileShortName}] [Reading file contents - attempt {attempt:N0}]: {ex.Message}");
+                                    Program.Log($"[{readFileShortName}] [Read file contents - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
                             }
                         },
-                        () => fileContent?.Length > 0,
-                        _ => 1,
-                        $"[{readFileShortName}] Reading file contents",
+                        _ => fileContent?.Length > 0,
+                        DefaultSleepStrategy,
                         Verbose);
 
 
-
-                    fileAccess.Delete(ReadFromFilename);
-
-
+                    var deleted = 0;
+                    Extensions.Time(
+                        $"[{readFileShortName}] Delete processed file",
+                        attempt =>
+                        {
+                            try
+                            {
+                                fileAccess.Delete(ReadFromFilename);
+                                Interlocked.Increment(ref deleted);
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{readFileShortName}] [Delete processed file - attempt {attempt.Attempt:N0}]: {ex.Message}");
+                                }
+                            }
+                        },
+                        _ => { return deleted == 1; },
+                        DefaultSleepStrategy,
+                        Verbose);
 
                     using var memoryStream = new MemoryStream(fileContent);
                     var hashingStream = new HashingStream(memoryStream);
@@ -357,6 +400,18 @@ namespace ft.Listeners
                     Thread.Sleep(1000);
                 }
             }
+        }
+
+        int DefaultSleepStrategy((int Attempt, TimeSpan Elapsed, string Operation) attempt)
+        {
+            if (attempt.Elapsed.TotalMilliseconds > TunnelTimeoutMilliseconds)
+            {
+                throw new Exception($"{attempt.Operation} has exceeded the tunnel timeout of {TunnelTimeoutMilliseconds:N0} ms. Cancelling.");
+            }
+
+            if (attempt.Elapsed.TotalMilliseconds < 100) return 1;
+            if (attempt.Elapsed.TotalMilliseconds < 1000) return 20;
+            return 100;
         }
 
         public override void Stop(string reason)
