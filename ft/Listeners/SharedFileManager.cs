@@ -248,13 +248,20 @@ namespace ft.Listeners
                     {
                         while (true)
                         {
-                            var responseTimeout = new CancellationTokenSource(Program.UNIVERSAL_TIMEOUT_MS);
-                            var pingResponse = pingResponsesReceived.Take(responseTimeout.Token);
-                            if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
+                            if (pingResponsesReceived.TryTake(out Ping? pingResponse, 100))
                             {
-                                pingStopwatch.Stop();
+                                if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
+                                {
+                                    pingStopwatch.Stop();
 
-                                latestRTT = pingStopwatch.Elapsed;
+                                    latestRTT = pingStopwatch.Elapsed;
+                                    break;
+                                }
+                            }
+
+                            if (pingStopwatch.ElapsedMilliseconds > Program.UNIVERSAL_TIMEOUT_MS)
+                            {
+                                latestRTT = null;
                                 break;
                             }
                         }
