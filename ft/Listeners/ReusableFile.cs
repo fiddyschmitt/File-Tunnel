@@ -103,60 +103,71 @@ namespace ft.Listeners
                     //write as many commands as possible to the file
                     while (true)
                     {
-                        var command = SendQueue.Take();
-
+                        int toWaitMillis;
                         if (commandsWritten == 0)
                         {
-                            writingStopwatch.Restart();
+                            toWaitMillis = -1;  //wait indefinitely for the first command
                         }
-
-                        ms.SetLength(0);
-                        command.Serialise(msWriter);
-                        msWriter.Flush();
-
-                        if (PurgeSizeInBytes > 0 && fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                        else
                         {
-                            Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
-
-                            var purge = new Purge();
-                            purge.Serialise(binaryWriter);
-                            fileStream.Flush();
-
-                            //wait for counterpart to be ready for purge
-                            isReadyForPurge?.Wait(1);
-
-                            //perform the purge
-                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                            fileStream.SetLength(MESSAGE_WRITE_POS);
-
-                            //signal that the purge is complete
-                            setPurgeComplete.Set(1);
-
-                            //wait for counterpart clear their ready flag
-                            isReadyForPurge?.Wait(0);
-
-                            //clear our complete flag
-                            setPurgeComplete.Set(0);
-
-                            Program.Log($"[{writeFileShortName}] Purge complete.");
+                            toWaitMillis = (int)Math.Max(0L, readDurationMilliseconds - writingStopwatch.ElapsedMilliseconds);
                         }
 
-                        //write the message to file
-                        var commandStartPos = fileStream.Position;
-                        command.Serialise(binaryWriter);
-                        var commandEndPos = fileStream.Position;
-                        commandsWritten++;
-
-                        bytesWritten += ms.Length;
-
-                        if (Verbose)
+                        if (SendQueue.TryTake(out Command? command, toWaitMillis))
                         {
-                            Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                            if (commandsWritten == 0)
+                            {
+                                writingStopwatch.Restart();
+                            }
+
+                            ms.SetLength(0);
+                            command.Serialise(msWriter);
+                            msWriter.Flush();
+
+                            if (PurgeSizeInBytes > 0 && fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                            {
+                                Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
+
+                                var purge = new Purge();
+                                purge.Serialise(binaryWriter);
+                                fileStream.Flush();
+
+                                //wait for counterpart to be ready for purge
+                                isReadyForPurge?.Wait(1);
+
+                                //perform the purge
+                                fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                                fileStream.SetLength(MESSAGE_WRITE_POS);
+
+                                //signal that the purge is complete
+                                setPurgeComplete.Set(1);
+
+                                //wait for counterpart clear their ready flag
+                                isReadyForPurge?.Wait(0);
+
+                                //clear our complete flag
+                                setPurgeComplete.Set(0);
+
+                                Program.Log($"[{writeFileShortName}] Purge complete.");
+                            }
+
+                            //write the message to file
+                            var commandStartPos = fileStream.Position;
+                            command.Serialise(binaryWriter);
+                            var commandEndPos = fileStream.Position;
+                            commandsWritten++;
+
+                            bytesWritten += ms.Length;
+
+                            if (Verbose)
+                            {
+                                Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                            }
+
+                            CommandSent(command);
                         }
 
-                        CommandSent(command);
-
-                        if (SendQueue.Count == 0 || writingStopwatch.ElapsedMilliseconds > readDurationMilliseconds)
+                        if (SendQueue.Count == 0 || writingStopwatch.ElapsedMilliseconds >= readDurationMilliseconds)
                         {
                             binaryWriter.Flush();
 
