@@ -242,7 +242,7 @@ namespace ft.Listeners
                             }
                         },
                         _ => moved == 1,
-                        attempt => DefaultSleepStrategy(attempt),
+                        DefaultSleepStrategy,
                         Verbose);
                 }
                 catch (Exception ex)
