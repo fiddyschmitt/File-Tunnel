@@ -45,6 +45,9 @@ namespace ft.CLI
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point. (Default 5000 ms)")]
         public int TunnelTimeoutMilliseconds { get; set; } = 10000;
 
+        [Option("delay", Required = false, HelpText = @"The delay (in milliseconds) between operations. This can be used to reduce the impact on the file server. Default: 0 (no delay)")]
+        public int OperationDelayMillis { get; set; } = 0;
+
 
 
         [Option("verbose", Required = false, HelpText = @"Display more detailed output")]

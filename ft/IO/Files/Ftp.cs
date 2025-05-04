@@ -13,8 +13,9 @@ namespace ft.IO.Files
     public class Ftp : IFileAccess
     {
         readonly FtpClient client;
+        private readonly int ftpOperationDelayMillis;
 
-        public Ftp(string host, int port, string username, string password)
+        public Ftp(string host, int port, string username, string password, int ftpOperationDelayMillis)
         {
             var config = new FtpConfig()
             {
@@ -25,6 +26,7 @@ namespace ft.IO.Files
             };
 
             client = new FtpClient(host, username, password, port, config);
+            this.ftpOperationDelayMillis = ftpOperationDelayMillis;
         }
 
         void Reconnect()
@@ -33,6 +35,8 @@ namespace ft.IO.Files
             {
                 if (!client.IsStillConnected(1000)) client.Connect();
             }
+
+            Thread.Sleep(ftpOperationDelayMillis);
         }
 
         public void Delete(string path)
@@ -43,6 +47,8 @@ namespace ft.IO.Files
             {
                 client.DeleteFile(path);
             }
+
+            Thread.Sleep(ftpOperationDelayMillis);
         }
 
         public bool Exists(string path)
@@ -55,6 +61,8 @@ namespace ft.IO.Files
             {
                 result = client.FileExists(path);
             }
+
+            Thread.Sleep(ftpOperationDelayMillis);
 
             return result;
         }
@@ -74,6 +82,8 @@ namespace ft.IO.Files
                     client.MoveFile(sourceFileName, destFileName);
                 }
             }
+
+            Thread.Sleep(ftpOperationDelayMillis);
         }
 
         public byte[] ReadAllBytes(string path)
@@ -83,6 +93,8 @@ namespace ft.IO.Files
             lock (client)
             {
                 client.DownloadBytes(out var result, path);
+
+                Thread.Sleep(ftpOperationDelayMillis);
 
                 return result;
             }
@@ -96,6 +108,8 @@ namespace ft.IO.Files
             {
                 client.UploadBytes(bytes, path, FtpRemoteExists.Overwrite);
             }
+
+            Thread.Sleep(ftpOperationDelayMillis);
         }
 
         public long GetFileSize(string path)
@@ -108,6 +122,8 @@ namespace ft.IO.Files
             {
                 result = client.GetFileSize(path, 0);
             }
+
+            Thread.Sleep(ftpOperationDelayMillis);
 
             return result;
         }

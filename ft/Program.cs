@@ -74,7 +74,7 @@ namespace ft
 
         private static void RunFtpSession(FtpOptions o)
         {
-            var access = new Ftp(o.FtpHost, o.FtpPort, o.FtpUsername, o.FtpPassword);
+            var access = new Ftp(o.FtpHost, o.FtpPort, o.FtpUsername, o.FtpPassword, o.OperationDelayMillis);
 
             var sharedFileManager = new UploadDownload(
                                              access,
@@ -99,7 +99,7 @@ namespace ft
                 Log($"Continuing.", ConsoleColor.Yellow);
             }
 
-            var access = new LocalAccess();
+            var access = new LocalAccess(o.OperationDelayMillis);
 
             SharedFileManager sharedFileManager;
 

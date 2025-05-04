@@ -27,5 +27,8 @@ namespace ft.CLI
 
         [Option('m', "max-size", Required = false, HelpText = @"The maximum size (in bytes) the file can be before uploading. Default 102400 (100 KB)")]
         public int MaxFileSizeBytes { get; set; } = 100 * 1024;
+
+        [Option("delay", Required = false, HelpText = @"The delay (in milliseconds) between FTP operations. This can be used to reduce the impact on the FTP server. Default: 0 (no delay)")]
+        public new int OperationDelayMillis { get; set; } = 0;
     }
 }
