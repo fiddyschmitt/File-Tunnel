@@ -16,7 +16,9 @@ namespace ft.IO.Files
 
         public bool Exists(string path)
         {
-            var folder = Path.GetDirectoryName(path) ?? AppDomain.CurrentDomain.BaseDirectory;
+            var folder = Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(folder)) folder = AppDomain.CurrentDomain.BaseDirectory;
+
             var filename = Path.GetFileName(path);
 
             //File.Exists() interferes with SMB's operations, and slows things down.
