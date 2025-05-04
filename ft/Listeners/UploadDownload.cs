@@ -242,20 +242,12 @@ namespace ft.Listeners
                             }
                         },
                         _ => moved == 1,
-                        attempt =>
-                        {
-                            var sleep = DefaultSleepStrategy(attempt);
-
-                            //rclone ftp mount throws "The request could not be performed because of an I/O device error" if file move requests are done in quick succession
-                            sleep = Math.Max(sleep, 20);
-
-                            return sleep;
-                        },
+                        attempt => DefaultSleepStrategy(attempt),
                         Verbose);
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex}");
+                    Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
                     Program.Log($"[{writeFileShortName}] Restarting {nameof(SendPump)}");
                     Thread.Sleep(1000);
                 }
