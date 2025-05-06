@@ -10,6 +10,6 @@ namespace ft_tests.Runner
     {
         public abstract void Run(string args);
 
-        public abstract void Kill(string process);
+        public abstract void Stop();
     }
 }

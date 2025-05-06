@@ -22,9 +22,7 @@ namespace ft_tests.Runner
             sshClient.RunCommand(@$"mkdir ""{remoteFolder}""");
 
 
-
-            var processName = Path.GetFileName(remoteExecutablePath);
-            Kill(processName);
+            Stop();
 
             var scpClient = new ScpClient(host, username, password);
             scpClient.Connect();
@@ -37,8 +35,7 @@ namespace ft_tests.Runner
 
         public override void Run(string args)
         {
-            var processName = Path.GetFileName(remoteExecutablePath);
-            Kill(processName);
+            Stop();
 
             var rr = @"C:\Users\Smith\Desktop\dev\cs\RunRemote\runremote\bin\Debug\net8.0\runremote.exe";
 
@@ -47,9 +44,10 @@ namespace ft_tests.Runner
             Process.Start(rr, rrArgs);
         }
 
-        public override void Kill(string process)
+        public override void Stop()
         {
-            sshClient.RunCommand(@$"taskkill /IM {process} /F");
+            var processName = Path.GetFileName(remoteExecutablePath);
+            sshClient.RunCommand(@$"taskkill /IM {processName} /F");
         }
     }
 }

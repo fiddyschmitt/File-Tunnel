@@ -14,20 +14,17 @@ namespace ft_tests.Runner
         public LocalWindowsProcessRunner(string localExecutablePath)
         {
             this.localExecutablePath = localExecutablePath;
-
-            var processName = Path.GetFileName(localExecutablePath);
-            Kill(processName);
         }
 
-        public override void Kill(string process)
+        public override void Stop()
         {
-            Process.Start("taskkill.exe", @$"/IM {process} /F");
+            var processName = Path.GetFileName(localExecutablePath);
+            Process.Start("taskkill.exe", @$"/IM {processName} /F");
         }
 
         public override void Run(string args)
         {
-            var processName = Path.GetFileName(localExecutablePath);
-            Kill(processName);
+            Stop();
 
             var psi = new ProcessStartInfo
             {
