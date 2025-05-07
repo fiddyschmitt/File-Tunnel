@@ -34,7 +34,7 @@ namespace ft_tests.Runner
             Stop();
 
             // Run the process in background (&) to detach
-            var command = $"nohup \"{remoteExecutablePath}\" {args} > /dev/null 2>&1 &";
+            var command = $"nohup sudo \"{remoteExecutablePath}\" {args} > /dev/null 2>&1 &";
             sshClient.RunCommand(command);
         }
 
