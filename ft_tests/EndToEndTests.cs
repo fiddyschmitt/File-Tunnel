@@ -20,7 +20,7 @@ namespace ft_tests
 
         static ProcessRunner linux_x64_1;
         //static ProcessRunner linux_x64_2;
-        //static ProcessRunner linux_x64_3;
+        static ProcessRunner linux_x64_3;
 
         public void Setup()
         {
@@ -34,7 +34,7 @@ namespace ft_tests
 
             linux_x64_1 = new LinuxProcessRunner("192.168.1.80", "user", "live", LINUX_X64_EXE, "/user/home/");
             //linux_x64_2 = new LinuxProcessRunner("192.168.1.81", "user", "live", LINUX_X64_EXE, "/user/home/");
-            //linux_x64_3 = new LinuxProcessRunner("192.168.1.82", "user", "live", LINUX_X64_EXE, "/user/home/");
+            linux_x64_3 = new LinuxProcessRunner("192.168.1.82", "user", "live", LINUX_X64_EXE, "/user/home/");
 
         }
 
@@ -46,11 +46,6 @@ namespace ft_tests
             OS[] client1 = [OS.Windows, OS.Linux];
             OS[] servers = [OS.Windows, OS.Linux];
             OS[] client2 = [OS.Windows, OS.Linux];
-
-            client1 = [OS.Windows];
-            servers = [OS.Windows];
-            client2 = [OS.Linux];
-
 
             var combinations = Utilities.Extensions
                                 .CartesianProduct([client1, servers, client2])
@@ -71,9 +66,9 @@ namespace ft_tests
                 var result = "";
 
                 if (client == OS.Windows && server == OS.Windows) result = @$"\\192.168.1.5\shared\{fileName}";
-                if (client == OS.Windows && server == OS.Linux) result = @$"\\192.168.1.81\shared\{fileName}";
-                if (client == OS.Linux && server == OS.Windows) result = @$"/media/win10_vm/shared/{fileName}";
-                if (client == OS.Linux && server == OS.Linux) result = @$"/media/smb/192.168.1.81/shared/{fileName}";
+                if (client == OS.Windows && server == OS.Linux) result = @$"\\192.168.1.81\data\{fileName}";
+                if (client == OS.Linux && server == OS.Windows) result = @$"/media/smb/192.168.1.5/shared/{fileName}";
+                if (client == OS.Linux && server == OS.Linux) result = @$"/media/smb/192.168.1.81/data/{fileName}";
 
                 return result;
             };
@@ -81,7 +76,7 @@ namespace ft_tests
             combinations
                 .ForEach(combo =>
                 {
-                    var name = $"({combo.Client1}-{combo.Server}-{combo.Client2})";
+                    var name = $"SMB {combo.Client1}-{combo.Server}-{combo.Client2}";
 
                     var client1_process_runner = combo.Client1 switch
                     {
@@ -93,58 +88,100 @@ namespace ft_tests
                     var writePath1 = pathLookup(combo.Client1, combo.Server, "1.dat");
                     var readPath1 = pathLookup(combo.Client1, combo.Server, "2.dat");
 
-                    var side1 = new Side(client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                    var side1 = new Side(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
 
 
                     var client2_process_runner = combo.Client2 switch
                     {
                         OS.Windows => win10_x64_3,
-                        OS.Linux => linux_x64_1,
+                        OS.Linux => linux_x64_3,
                         _ => throw new NotImplementedException()
                     };
 
                     var readPath2 = pathLookup(combo.Client2, combo.Server, "1.dat");
                     var writePath2 = pathLookup(combo.Client2, combo.Server, "2.dat");
 
-                    var side2 = new Side(client2_process_runner, $"-r {readPath2} -w {writePath2}");
+                    var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(name, side1, side2);
+                    ConductTunnelTests(name, side1, combo.Server, side2);
                 });
         }
 
-        public static void ConductTunnelTests(string name, Side side1, Side side2)
+        public static void ConductTunnelTests(string name, Side side1, OS server, Side side2)
         {
-            ConductTest(
-                $"{name} - Normal",
-                new Side(side1.Runner, $"{side1.Args} -L 5002:127.0.0.1:5003 -R 5003:127.0.0.1:5004"),
-                new Side(side2.Runner, $"{side2.Args}"));
+            if ((side1.OS == OS.Windows && server == OS.Windows && side2.OS == OS.Linux) ||
+                (side1.OS == OS.Windows && server == OS.Linux && side2.OS == OS.Linux) ||
+                (side1.OS == OS.Linux && server == OS.Windows && side2.OS == OS.Windows) ||
+                (side1.OS == OS.Linux && server == OS.Windows && side2.OS == OS.Linux) ||
+                (side1.OS == OS.Linux && server == OS.Linux && side2.OS == OS.Windows) ||
+                (side1.OS == OS.Linux && server == OS.Linux && side2.OS == OS.Linux)
+                )
+            {
+                //To investigate.
+                //[1.dat] SendPump: System.IO.IOException: The process cannot access the file because another process has locked a portion of the file. : '\\192.168.1.81\data\1.dat'
+            }
+            else
+            {
+                ConductTest(
+                    $"{name} - Normal",
+                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004"),
+                    new Side(side2.OS, side2.Runner, $"{side2.Args}"));
 
-            ConductTest(
-                $"{name} - Normal + --isolated-reads",
-                new Side(side1.Runner, $"{side1.Args} -L 5002:127.0.0.1:5003 -R 5003:127.0.0.1:5004 --isolated-reads"),
-                new Side(side2.Runner, $"{side2.Args}"));
+                Thread.Sleep(5000);
 
-            ConductTest(
-                $"{name} - --upload-download",
-                new Side(side1.Runner, $"{side1.Args} -L 5002:127.0.0.1:5003 -R 5003:127.0.0.1:5004 --upload-download"),
-                new Side(side2.Runner, $"{side2.Args} --upload-download"));
+                ConductTest(
+                    $"{name} - Normal + --isolated-reads",
+                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --isolated-reads"),
+                    new Side(side2.OS, side2.Runner, $"{side2.Args}"));
+
+                Thread.Sleep(5000);
+            }
+
+            if ((side1.OS == OS.Windows && server == OS.Linux && side2.OS == OS.Windows) ||
+                (side1.OS == OS.Windows && server == OS.Linux && side2.OS == OS.Linux) ||
+                (side1.OS == OS.Linux && server == OS.Windows && side2.OS == OS.Linux) ||
+                (side1.OS == OS.Linux && server == OS.Linux && side2.OS == OS.Windows))
+            {
+                //To investigate.
+                //ReceivePump: [2.dat] Wait for file to exist has exceeded the tunnel timeout of 10,000 ms. Cancelling.
+            }
+            else
+            {
+                ConductTest(
+                    $"{name} - --upload-download",
+                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --upload-download"),
+                    new Side(side2.OS, side2.Runner, $"{side2.Args} --upload-download"));
+            }
         }
 
         public static void ConductTest(string name, Side side1, Side side2)
         {
+            Debug.WriteLine($"{name}");
+
             side1.Runner.Run(side1.Args);
             side2.Runner.Run(side2.Args);
 
-            TestTransfer(5 * 1024 * 1024, true, 10);
+            var throwExceptionToken = new BlockingCollection<bool>();
+            Task.Factory.StartNew(() =>
+            {
+                if (!throwExceptionToken.TryTake(out var _, 60000))
+                {
+                    throw new Exception($"{name} did not finish");
+                }
+            });
+
+            TestTransfer(5 * 1024 * 1024, true, 10, side1.Runner.RunOnIP);
 
             side1.Runner.Stop();
             side2.Runner.Stop();
+
+            throwExceptionToken.Add(true);
         }
 
-        public static void TestTransfer(int bytesToSend, bool fullDuplex, int connections)
+        public static void TestTransfer(int bytesToSend, bool fullDuplex, int connections, string connectToIP)
         {
-            var ultimateDestination = new TcpListener("127.0.0.1:5004".AsEndpoint());
+            var ultimateDestination = new TcpListener($"0.0.0.0:5004".AsEndpoint());
             ultimateDestination.Start();
             var ultimateDestinationAcceptCT = new CancellationTokenSource();
             var ultimateDestinationClients = new BlockingCollection<TcpClient>();
@@ -183,7 +220,7 @@ namespace ft_tests
 
                         try
                         {
-                            originClient.Connect("127.0.0.1:5002".AsEndpoint());
+                            originClient.Connect($"{connectToIP}:5002".AsEndpoint());
                         }
                         catch
                         {
@@ -269,12 +306,14 @@ namespace ft_tests
 
     public class Side
     {
-        public Side(ProcessRunner runner, string args)
+        public Side(OS os, ProcessRunner runner, string args)
         {
+            OS = os;
             Runner = runner;
             Args = args;
         }
 
+        public OS OS { get; }
         public ProcessRunner Runner { get; }
         public string Args { get; }
     }

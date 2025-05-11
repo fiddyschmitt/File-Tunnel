@@ -8,8 +8,15 @@ namespace ft_tests.Runner
 {
     public abstract class ProcessRunner
     {
+        public string RunOnIP { get; }
+
         public abstract void Run(string args);
 
         public abstract void Stop();
+
+        public ProcessRunner(string runOnIP)
+        {
+            RunOnIP = runOnIP;
+        }
     }
 }

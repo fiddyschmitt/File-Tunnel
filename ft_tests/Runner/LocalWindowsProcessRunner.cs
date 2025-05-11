@@ -11,9 +11,11 @@ namespace ft_tests.Runner
     {
         private readonly string localExecutablePath;
 
-        public LocalWindowsProcessRunner(string localExecutablePath)
+        public LocalWindowsProcessRunner(string localExecutablePath) : base("127.0.0.1")
         {
             this.localExecutablePath = localExecutablePath;
+
+            Stop();
         }
 
         public override void Stop()
@@ -24,8 +26,6 @@ namespace ft_tests.Runner
 
         public override void Run(string args)
         {
-            Stop();
-
             var psi = new ProcessStartInfo
             {
                 FileName = localExecutablePath,

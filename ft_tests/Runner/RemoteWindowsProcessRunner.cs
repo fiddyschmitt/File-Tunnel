@@ -12,7 +12,7 @@ namespace ft_tests.Runner
         private readonly string remoteExecutablePath;
 
 
-        public RemoteWindowsProcessRunner(string host, string username, string password, string localExecutablePath)
+        public RemoteWindowsProcessRunner(string host, string username, string password, string localExecutablePath) : base(host)
         {
             var remoteFolder = "/C:/Temp/ft/";
             remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);

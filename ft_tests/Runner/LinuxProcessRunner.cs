@@ -8,7 +8,7 @@ namespace ft_tests.Runner
         private readonly string host;
         private readonly string remoteExecutablePath;
 
-        public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string remoteExecutablePath = null)
+        public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string remoteExecutablePath = null) : base(host)
         {
             var remoteFolder = "/tmp/ft/";
             this.remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);
