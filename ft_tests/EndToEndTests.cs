@@ -55,7 +55,7 @@ namespace ft_tests
                                     return new
                                     {
                                         Client1 = lst[0],
-                                        Server = lst[1],
+                                        Server = new Server(lst[1], FileShareType.SMB),
                                         Client2 = lst[2]
                                     };
                                 })
@@ -76,7 +76,7 @@ namespace ft_tests
             combinations
                 .ForEach(combo =>
                 {
-                    var name = $"SMB {combo.Client1}-{combo.Server}-{combo.Client2}";
+                    var name = $"{combo.Server.FileShareType} {combo.Client1}-{combo.Server.OS}-{combo.Client2}";
 
                     var client1_process_runner = combo.Client1 switch
                     {
@@ -85,8 +85,8 @@ namespace ft_tests
                         _ => throw new NotImplementedException()
                     };
 
-                    var writePath1 = pathLookup(combo.Client1, combo.Server, "1.dat");
-                    var readPath1 = pathLookup(combo.Client1, combo.Server, "2.dat");
+                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, "1.dat");
+                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, "2.dat");
 
                     var side1 = new Side(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
@@ -99,8 +99,8 @@ namespace ft_tests
                         _ => throw new NotImplementedException()
                     };
 
-                    var readPath2 = pathLookup(combo.Client2, combo.Server, "1.dat");
-                    var writePath2 = pathLookup(combo.Client2, combo.Server, "2.dat");
+                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, "1.dat");
+                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, "2.dat");
 
                     var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
@@ -108,14 +108,84 @@ namespace ft_tests
                 });
         }
 
-        public static void ConductTunnelTests(string name, Side side1, OS server, Side side2)
+        [TestMethod]
+        public void Nfs()
         {
-            if ((side1.OS == OS.Windows && server == OS.Windows && side2.OS == OS.Linux) ||
-                (side1.OS == OS.Windows && server == OS.Linux && side2.OS == OS.Linux) ||
-                (side1.OS == OS.Linux && server == OS.Windows && side2.OS == OS.Windows) ||
-                (side1.OS == OS.Linux && server == OS.Windows && side2.OS == OS.Linux) ||
-                (side1.OS == OS.Linux && server == OS.Linux && side2.OS == OS.Windows) ||
-                (side1.OS == OS.Linux && server == OS.Linux && side2.OS == OS.Linux)
+            Setup();
+
+            OS[] client1 = [OS.Windows, OS.Linux];
+            OS[] servers = [OS.Linux];
+            OS[] client2 = [OS.Windows, OS.Linux];
+
+            var combinations = Utilities.Extensions
+                                .CartesianProduct([client1, servers, client2])
+                                .Select(combo =>
+                                {
+                                    var lst = combo.ToList();
+                                    return new
+                                    {
+                                        Client1 = lst[0],
+                                        Server = new Server(lst[1], FileShareType.NFS),
+                                        Client2 = lst[2]
+                                    };
+                                })
+                                .ToList();
+
+            var pathLookup = (OS client, OS server, string fileName) =>
+            {
+                var result = "";
+
+                if (client == OS.Windows && server == OS.Linux) result = @$"X:\{fileName}";     //Using X:\ works, but the alternative doesn't: \\192.168.1.81\mnt\tmpfs
+                if (client == OS.Linux && server == OS.Linux) result = @$"/media/nfs/192.168.1.81/tmpfs/{fileName}";
+
+                return result;
+            };
+
+            combinations
+                .ForEach(combo =>
+                {
+                    var name = $"{combo.Server.FileShareType} {combo.Client1}-{combo.Server.OS}-{combo.Client2}";
+
+                    var client1_process_runner = combo.Client1 switch
+                    {
+                        OS.Windows => win10_x64_1,
+                        OS.Linux => linux_x64_1,
+                        _ => throw new NotImplementedException()
+                    };
+
+                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, "1.dat");
+                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, "2.dat");
+
+                    var side1 = new Side(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+
+
+
+                    var client2_process_runner = combo.Client2 switch
+                    {
+                        OS.Windows => win10_x64_3,
+                        OS.Linux => linux_x64_3,
+                        _ => throw new NotImplementedException()
+                    };
+
+                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, "1.dat");
+                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, "2.dat");
+
+                    var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+
+                    ConductTunnelTests(name, side1, combo.Server, side2);
+                });
+        }
+
+        public static void ConductTunnelTests(string name, Side side1, Server server, Side side2)
+        {
+            if (
+                server.FileShareType == FileShareType.SMB &&
+                    ((side1.OS == OS.Windows && server.OS == OS.Windows && side2.OS == OS.Linux) ||
+                    (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux) ||
+                    (side1.OS == OS.Linux && server.OS == OS.Windows && side2.OS == OS.Windows) ||
+                    (side1.OS == OS.Linux && server.OS == OS.Windows && side2.OS == OS.Linux) ||
+                    (side1.OS == OS.Linux && server.OS == OS.Linux && side2.OS == OS.Windows) ||
+                    (side1.OS == OS.Linux && server.OS == OS.Linux && side2.OS == OS.Linux))
                 )
             {
                 //To investigate.
@@ -138,10 +208,12 @@ namespace ft_tests
                 Thread.Sleep(5000);
             }
 
-            if ((side1.OS == OS.Windows && server == OS.Linux && side2.OS == OS.Windows) ||
-                (side1.OS == OS.Windows && server == OS.Linux && side2.OS == OS.Linux) ||
-                (side1.OS == OS.Linux && server == OS.Windows && side2.OS == OS.Linux) ||
-                (side1.OS == OS.Linux && server == OS.Linux && side2.OS == OS.Windows))
+            if (
+                server.FileShareType == FileShareType.SMB &&
+                    ((side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Windows) ||
+                    (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux) ||
+                    (side1.OS == OS.Linux && server.OS == OS.Windows && side2.OS == OS.Linux) ||
+                    (side1.OS == OS.Linux && server.OS == OS.Linux && side2.OS == OS.Windows)))
             {
                 //To investigate.
                 //ReceivePump: [2.dat] Wait for file to exist has exceeded the tunnel timeout of 10,000 ms. Cancelling.
@@ -304,6 +376,12 @@ namespace ft_tests
         Mac
     }
 
+    public enum FileShareType
+    {
+        SMB,
+        NFS
+    }
+
     public class Side
     {
         public Side(OS os, ProcessRunner runner, string args)
@@ -316,5 +394,17 @@ namespace ft_tests
         public OS OS { get; }
         public ProcessRunner Runner { get; }
         public string Args { get; }
+    }
+
+    public class Server
+    {
+        public Server(OS OS, FileShareType fileShareType)
+        {
+            this.OS = OS;
+            FileShareType = fileShareType;
+        }
+
+        public OS OS { get; }
+        public FileShareType FileShareType { get; }
     }
 }
