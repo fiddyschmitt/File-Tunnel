@@ -170,6 +170,7 @@ namespace ft.Listeners
                         if (SendQueue.Count == 0 || writingStopwatch.ElapsedMilliseconds >= readDurationMilliseconds)
                         {
                             binaryWriter.Flush();
+                            fileStream.Flush(true);
 
                             if (Verbose)
                             {
