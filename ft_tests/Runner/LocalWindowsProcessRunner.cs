@@ -33,6 +33,8 @@ namespace ft_tests.Runner
                 UseShellExecute = true
             };
 
+            Debug.WriteLine($"\"{localExecutablePath}\" {args}");
+
             Process.Start(psi);
         }
     }

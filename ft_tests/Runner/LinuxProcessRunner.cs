@@ -1,11 +1,11 @@
 ﻿using Renci.SshNet;
+using System.Diagnostics;
 
 namespace ft_tests.Runner
 {
     public class LinuxProcessRunner : ProcessRunner
     {
         private readonly SshClient sshClient;
-        private readonly string host;
         private readonly string remoteExecutablePath;
 
         public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string remoteExecutablePath = null) : base(host)
@@ -25,8 +25,6 @@ namespace ft_tests.Runner
             scpClient.Upload(new FileInfo(localExecutablePath), this.remoteExecutablePath);
 
             sshClient.RunCommand($"chmod +x \"{this.remoteExecutablePath}\"");
-
-            this.host = host;
         }
 
         public override void Run(string args)
@@ -35,6 +33,7 @@ namespace ft_tests.Runner
 
             // Run the process in background (&) to detach
             var command = $"nohup sudo \"{remoteExecutablePath}\" {args} > /dev/null 2>&1 &";
+            Debug.WriteLine($"{command}");
             sshClient.RunCommand(command);
         }
 

@@ -41,6 +41,8 @@ namespace ft_tests.Runner
 
             var rrArgs = $"{host}:8888 \"{remoteExecutablePath}\" {args}";
 
+            Debug.WriteLine($"\"{remoteExecutablePath}\" {args}");
+
             Process.Start(rr, rrArgs);
         }
 
