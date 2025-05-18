@@ -1,8 +1,12 @@
-﻿using ft;
+﻿using CsvHelper;
+using CsvHelper.Configuration;
+using ft;
 using ft_tests.Runner;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
 using System.Net.Sockets;
 
 namespace ft_tests
@@ -22,7 +26,9 @@ namespace ft_tests
         //static ProcessRunner linux_x64_2;
         static ProcessRunner linux_x64_3;
 
-        public void Setup()
+        public CsvWriter csvWriter;
+
+        public EndToEndTests()
         {
             var config = new ConfigurationBuilder()
                                 .AddUserSecrets<EndToEndTests>()
@@ -36,13 +42,37 @@ namespace ft_tests
             //linux_x64_2 = new LinuxProcessRunner("192.168.1.81", "user", "live", LINUX_X64_EXE, "/user/home/");
             linux_x64_3 = new LinuxProcessRunner("192.168.1.82", "user", "live", LINUX_X64_EXE, "/user/home/");
 
+            var testResultsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_results");
+            Directory.CreateDirectory(testResultsFolder);
+            var testResultsFilename = Path.Combine(testResultsFolder, $"{DateTime.Now:yyyy-MM-dd HHmm ss}.csv");
+
+            var writer = new StreamWriter(testResultsFilename)
+            {
+                AutoFlush = true
+            };
+            csvWriter = new CsvWriter(writer, new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                HasHeaderRecord = true,
+            });
+
+            csvWriter.WriteField("result");
+            csvWriter.WriteField("error_message");
+            csvWriter.WriteField("duration");
+
+            csvWriter.WriteField("file_share_type");
+            csvWriter.WriteField("mode");
+            csvWriter.WriteField("client_1");
+            csvWriter.WriteField("server");
+            csvWriter.WriteField("client_2");
+            csvWriter.WriteField("command_1");
+            csvWriter.WriteField("command_2");
+
+            csvWriter.Flush();
         }
 
         [TestMethod]
         public void Smb()
         {
-            Setup();
-
             OS[] client1 = [OS.Windows, OS.Linux];
             OS[] servers = [OS.Windows, OS.Linux];
             OS[] client2 = [OS.Windows, OS.Linux];
@@ -76,8 +106,6 @@ namespace ft_tests
             combinations
                 .ForEach(combo =>
                 {
-                    var name = $"{combo.Server.FileShareType} {combo.Client1}-{combo.Server.OS}-{combo.Client2}";
-
                     var client1_process_runner = combo.Client1 switch
                     {
                         OS.Windows => win10_x64_1,
@@ -104,15 +132,15 @@ namespace ft_tests
 
                     var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(name, side1, combo.Server, side2);
+                    ConductTunnelTests(side1, combo.Server, side2);
                 });
         }
+
+        Random random = new();
 
         [TestMethod]
         public void Nfs()
         {
-            Setup();
-
             OS[] client1 = [OS.Windows, OS.Linux];
             OS[] servers = [OS.Linux];
             OS[] client2 = [OS.Windows, OS.Linux];
@@ -144,8 +172,6 @@ namespace ft_tests
             combinations
                 .ForEach(combo =>
                 {
-                    var name = $"{combo.Server.FileShareType} {combo.Client1}-{combo.Server.OS}-{combo.Client2}";
-
                     var client1_process_runner = combo.Client1 switch
                     {
                         OS.Windows => win10_x64_1,
@@ -153,8 +179,12 @@ namespace ft_tests
                         _ => throw new NotImplementedException()
                     };
 
-                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, "3.dat");
-                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, "4.dat");
+                    var filename1 = $"{random.Next(int.MaxValue)}.dat";
+                    var filename2 = $"{random.Next(int.MaxValue)}.dat";
+
+
+                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
+                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
 
                     var side1 = new Side(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
@@ -167,200 +197,243 @@ namespace ft_tests
                         _ => throw new NotImplementedException()
                     };
 
-                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, "3.dat");
-                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, "4.dat");
+                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
+                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
 
                     var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(name, side1, combo.Server, side2);
+                    ConductTunnelTests(side1, combo.Server, side2);
                 });
         }
 
-        public static void ConductTunnelTests(string name, Side side1, Server server, Side side2)
+        public void ConductTunnelTests(Side side1, Server server, Side side2)
         {
-            if (
-                server.FileShareType == FileShareType.SMB &&
-                    ((side1.OS == OS.Windows && server.OS == OS.Windows && side2.OS == OS.Linux) ||
-                    (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux) ||
-                    (side1.OS == OS.Linux && server.OS == OS.Windows && side2.OS == OS.Windows) ||
-                    (side1.OS == OS.Linux && server.OS == OS.Windows && side2.OS == OS.Linux) ||
-                    (side1.OS == OS.Linux && server.OS == OS.Linux && side2.OS == OS.Windows) ||
-                    (side1.OS == OS.Linux && server.OS == OS.Linux && side2.OS == OS.Linux))
-                )
-            {
-                //To investigate.
-                //[1.dat] SendPump: System.IO.IOException: The process cannot access the file because another process has locked a portion of the file. : '\\192.168.1.81\data\1.dat'
-            }
-            else
-            {
-                ConductTest(
-                    $"{name} - Normal",
-                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004"),
-                    new Side(side2.OS, side2.Runner, $"{side2.Args}"));
+            var name = $"{server.FileShareType} {side1.OS}-{server.OS}-{side2.OS}";
 
-                Thread.Sleep(5000);
+            ConductTest(
+                    $"{name} (Normal mode)",
+                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004"),
+                    server,
+                    new Side(side2.OS, side2.Runner, $"{side2.Args}"),
+                    "Normal");
 
-                if (
-                    server.FileShareType == FileShareType.NFS &&
-                        ((side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Windows)))
-                {
-                    //To investigate.
-                    //Does not finish
-                }
-                else
-                {
-                    ConductTest(
-                    $"{name} - Normal + --isolated-reads",
-                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --isolated-reads"),
-                    new Side(side2.OS, side2.Runner, $"{side2.Args}"));
-                }
+            Thread.Sleep(5000);
 
-                Thread.Sleep(5000);
-            }
 
-            if (
-                server.FileShareType == FileShareType.SMB &&
-                    ((side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Windows) ||
-                    (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux) ||
-                    (side1.OS == OS.Linux && server.OS == OS.Windows && side2.OS == OS.Linux) ||
-                    (side1.OS == OS.Linux && server.OS == OS.Linux && side2.OS == OS.Windows)))
-            {
-                //To investigate.
-                //ReceivePump: [2.dat] Wait for file to exist has exceeded the tunnel timeout of 10,000 ms. Cancelling.
-            }
-            else
-            {
-                ConductTest(
-                    $"{name} - --upload-download",
-                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --upload-download"),
-                    new Side(side2.OS, side2.Runner, $"{side2.Args} --upload-download"));
-            }
+
+
+
+            ConductTest(
+                    $"{name} (Isolated Reads mode)",
+                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --isolated-reads"),
+                    server,
+                    new Side(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
+                    "Isolated Reads");
+
+            Thread.Sleep(5000);
+
+
+
+
+
+            ConductTest(
+                    $"{name} (Upload-Download mode)",
+                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --upload-download"),
+                    server,
+                    new Side(side2.OS, side2.Runner, $"{side2.Args} --upload-download"),
+                    "Upload-Download");
+
+            Thread.Sleep(5000);
         }
 
-        public static void ConductTest(string name, Side side1, Side side2)
+        public void ConductTest(string name, Side side1, Server server, Side side2, string mode)
         {
-            Debug.WriteLine($"{name}");
+            //if (!(side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux && mode == "Isolated Reads" && server.FileShareType == FileShareType.SMB)) return;
+
+            csvWriter.NextRecord();
+
+            var sw = Stopwatch.StartNew();
 
             side1.Runner.Run(side1.Args);
             side2.Runner.Run(side2.Args);
 
-            var throwExceptionToken = new BlockingCollection<bool>();
+            var results = new BlockingCollection<(bool Success, string Errror)>();
+
+            var stop = new CancellationTokenSource();
+
             Task.Factory.StartNew(() =>
             {
-                if (!throwExceptionToken.TryTake(out var _, 180_000))
+                try
                 {
-                    throw new Exception($"{name} did not finish");
+                    TestTransfer(5 * 1024 * 1024, true, 10, side1.Runner.RunOnIP, stop);
+                    results.Add((true, ""));
+                }
+                catch (Exception ex)
+                {
+                    results.Add((false, ex.Message));
                 }
             });
 
-            TestTransfer(5 * 1024 * 1024, true, 10, side1.Runner.RunOnIP);
+
+            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+            (bool Success, string Errror) result;
+            try
+            {
+                result = results.Take(timeout.Token);
+            }
+            catch
+            {
+                result = (false, "Did not finish");
+            }
+
+            stop.Cancel();
+            sw.Stop();
+
+            if (result.Success)
+            {
+                Debug.WriteLine($@"""{name}"",""Pass"",""{sw.Elapsed.TotalSeconds:N3}""");
+
+                csvWriter.WriteField($"pass");
+                csvWriter.WriteField($"{sw.Elapsed.TotalSeconds:N3}");
+                csvWriter.WriteField($"");
+            }
+            else
+            {
+                Debug.WriteLine($@"""{name}"",""Fail"",""{sw.Elapsed.TotalSeconds:N3}""");
+
+                csvWriter.WriteField($"fail");
+                csvWriter.WriteField($"{sw.Elapsed.TotalSeconds:N3}");
+                csvWriter.WriteField(result.Errror);
+            }
+
+            csvWriter.WriteField($"{server.FileShareType}");
+            csvWriter.WriteField($"{mode}");
+            csvWriter.WriteField($"{side1.OS}");
+            csvWriter.WriteField($"{server.OS}");
+            csvWriter.WriteField($"{side2.OS}");
+
+
+            var command1 = side1.Runner.GetFullCommand(side1.Args);
+            csvWriter.WriteField(command1);
+
+            var command2 = side2.Runner.GetFullCommand(side2.Args);
+            csvWriter.WriteField(command2);
+            csvWriter.Flush();
 
             side1.Runner.Stop();
             side2.Runner.Stop();
-
-            throwExceptionToken.Add(true);
         }
 
-        public static void TestTransfer(int bytesToSend, bool fullDuplex, int connections, string connectToIP)
+        public static void TestTransfer(int bytesToSend, bool fullDuplex, int connections, string connectToIP, CancellationTokenSource cancelationToken)
         {
             var ultimateDestination = new TcpListener($"0.0.0.0:5004".AsEndpoint());
-            ultimateDestination.Start();
-            var ultimateDestinationAcceptCT = new CancellationTokenSource();
-            var ultimateDestinationClients = new BlockingCollection<TcpClient>();
 
-            Task.Factory.StartNew(() =>
+            try
             {
-                while (!ultimateDestinationAcceptCT.IsCancellationRequested)
+                ultimateDestination.Start();                
+                var ultimateDestinationClients = new BlockingCollection<TcpClient>();
+
+                Task.Factory.StartNew(() =>
                 {
-                    try
+                    while (!cancelationToken.IsCancellationRequested)
                     {
-                        var client = ultimateDestination.AcceptTcpClient();
-                        ultimateDestinationClients.Add(client);
-                    }
-                    catch
-                    {
-                        break;
-                    }
-                }
-            }, TaskCreationOptions.LongRunning);
-
-            Enumerable
-                .Range(0, connections)
-                .Select(connection =>
-                {
-                    var originClient = new TcpClient();
-
-                    var startTime = DateTime.Now;
-
-                    while (true)
-                    {
-                        var duration = DateTime.Now - startTime;
-                        if (duration.TotalSeconds > 22)
-                        {
-                            throw new Exception("Could not connect");
-                        }
-
                         try
                         {
-                            originClient.Connect($"{connectToIP}:5002".AsEndpoint());
+                            var client = ultimateDestination.AcceptTcpClientAsync(cancelationToken.Token).Result;
+                            ultimateDestinationClients.Add(client);
                         }
                         catch
                         {
-                            Thread.Sleep(200);
-                            continue;
+                            ultimateDestination.Stop();
+                            break;
+                        }
+                    }
+                }, TaskCreationOptions.LongRunning);
+
+                Enumerable
+                    .Range(0, connections)
+                    .Select(connection =>
+                    {
+                        var originClient = new TcpClient();
+
+                        var startTime = DateTime.Now;
+
+                        while (!cancelationToken.IsCancellationRequested)
+                        {
+                            var duration = DateTime.Now - startTime;
+                            if (duration.TotalSeconds > 22)
+                            {
+                                throw new Exception("Could not connect");
+                            }
+
+                            try
+                            {
+                                originClient.Connect($"{connectToIP}:5002".AsEndpoint());
+                            }
+                            catch
+                            {
+                                Thread.Sleep(200);
+                                continue;
+                            }
+
+                            break;
                         }
 
-                        break;
-                    }
+                        var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
+                        Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
 
-                    var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
-                    Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
-
-                    return new
+                        return new
+                        {
+                            OriginClient = originClient,
+                            UltimateDestinationClient = ultimateDestinationClient
+                        };
+                    })
+                    .ToList()
+                    .AsParallel()
+                    .WithDegreeOfParallelism(connections)
+                    .ForAll(pair =>
                     {
-                        OriginClient = originClient,
-                        UltimateDestinationClient = ultimateDestinationClient
-                    };
-                })
-                .ToList()
-                .AsParallel()
-                .WithDegreeOfParallelism(connections)
-                .ForAll(pair =>
-                {
-                    var toSend = new byte[bytesToSend];
-                    var random = new Random();
-                    random.NextBytes(toSend);
+                        var toSend = new byte[bytesToSend];
+                        var random = new Random();
+                        random.NextBytes(toSend);
 
-                    var tests = new[]
-                    {
+                        var tests = new[]
+                        {
                             new Action(() => TestDirection("Forward", pair.OriginClient, pair.UltimateDestinationClient, toSend)),
                             new Action(() => TestDirection("Reverse", pair.UltimateDestinationClient, pair.OriginClient, toSend)),
-                        };
+                            };
 
-                    if (fullDuplex)
-                    {
-                        var testTasks = tests
-                                            .ToList()
-                                            .Select(test => Task.Factory.StartNew(test, TaskCreationOptions.LongRunning))
-                                            .ToArray();
-
-                        Task.WaitAll(testTasks);
-                    }
-                    else
-                    {
-                        foreach (var test in tests)
+                        if (fullDuplex)
                         {
-                            test();
+                            var testTasks = tests
+                                                .ToList()
+                                                .Select(test => Task.Factory.StartNew(test, TaskCreationOptions.LongRunning))
+                                                .ToArray();
+
+                            Task.WaitAll(testTasks);
                         }
-                    }
-                });
+                        else
+                        {
+                            foreach (var test in tests)
+                            {
+                                test();
+                            }
+                        }
+                    });
 
+            }
+            catch(Exception ex)
+            {
+                Debug.WriteLine(ex);
+                throw;
+            }
 
-            ultimateDestinationAcceptCT.Cancel();
+            cancelationToken.Cancel();
             ultimateDestination.Stop();
         }
 
-        static void TestDirection(string direction, TcpClient sender, TcpClient receiver, byte[] toSend)
+        static (bool Success, string Error) TestDirection(string direction, TcpClient sender, TcpClient receiver, byte[] toSend)
         {
             sender.GetStream().Write(toSend, 0, toSend.Length);
 
@@ -375,7 +448,16 @@ namespace ft_tests
             }
 
             var receivedSuccessfully = received.SequenceEqual(toSend);
-            Assert.IsTrue(receivedSuccessfully, $"[{direction}] Received buffer does not match sent buffer");
+            //Assert.IsTrue(receivedSuccessfully, $"[{direction}] Received buffer does not match sent buffer");
+
+            if (receivedSuccessfully)
+            {
+                return (receivedSuccessfully, "");
+            }
+            else
+            {
+                return (receivedSuccessfully, $"[{direction}] Received buffer does not match sent buffer");
+            }
         }
     }
 

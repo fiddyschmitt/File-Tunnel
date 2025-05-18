@@ -37,11 +37,17 @@ namespace ft_tests.Runner
             sshClient.RunCommand(command);
         }
 
+        public override string GetFullCommand(string args)
+        {
+            var command = $"sudo \"{remoteExecutablePath}\" {args}";
+            return command;
+        }
+
         public override void Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
             // pkill by name to stop the process
-            sshClient.RunCommand($"pkill -f \"{processName}\" || true");
+            sshClient.RunCommand($"sudo pkill -f \"{processName}\" || true");
         }
     }
 }

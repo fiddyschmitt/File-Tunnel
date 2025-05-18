@@ -10,6 +10,8 @@ namespace ft_tests.Runner
     {
         public string RunOnIP { get; }
 
+        public abstract string GetFullCommand(string args);
+
         public abstract void Run(string args);
 
         public abstract void Stop();

@@ -37,5 +37,11 @@ namespace ft_tests.Runner
 
             Process.Start(psi);
         }
+
+        public override string GetFullCommand(string args)
+        {
+            var result = $"\"{localExecutablePath}\" {args}";
+            return result;
+        }
     }
 }

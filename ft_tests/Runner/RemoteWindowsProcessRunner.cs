@@ -46,6 +46,12 @@ namespace ft_tests.Runner
             Process.Start(rr, rrArgs);
         }
 
+        public override string GetFullCommand(string args)
+        {
+            var result = $"\"{remoteExecutablePath}\" {args}";
+            return result;
+        }
+
         public override void Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
