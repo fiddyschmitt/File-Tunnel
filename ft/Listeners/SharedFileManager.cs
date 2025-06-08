@@ -308,7 +308,7 @@ namespace ft.Listeners
 
                             if (latestRTT != null)
                             {
-                                logStr += $" {latestRTT.Value.Milliseconds:N0} ms";
+                                logStr += $" {latestRTT.Value.TotalMilliseconds:N0} ms";
                                 latestRTT = null;
                             }
 
