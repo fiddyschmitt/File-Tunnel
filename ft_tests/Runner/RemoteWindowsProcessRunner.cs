@@ -9,34 +9,35 @@ namespace ft_tests.Runner
     {
         SshClient sshClient;
         private readonly string host;
-        private readonly string remoteExecutablePath;
+        private readonly string? remoteExecutablePath;
 
 
-        public RemoteWindowsProcessRunner(string host, string username, string password, string localExecutablePath) : base(host)
+        public RemoteWindowsProcessRunner(string host, string username, string password, string? localExecutablePath = null) : base(host)
         {
-            var remoteFolder = "/C:/Temp/ft/";
-            remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);
+            if (localExecutablePath != null)
+            {
+                var remoteFolder = "/C:/Temp/ft/";
+                remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);
 
-            sshClient = new SshClient(host, username, password);
-            sshClient.Connect();
-            sshClient.RunCommand(@$"mkdir ""{remoteFolder}""");
+                sshClient = new SshClient(host, username, password);
+                sshClient.Connect();
+                sshClient.CreateCommand(@$"mkdir ""{remoteFolder}""").Execute();
 
 
-            Stop();
+                Stop();
 
-            var scpClient = new ScpClient(host, username, password);
-            scpClient.Connect();
-            scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
+                var scpClient = new ScpClient(host, username, password);
+                scpClient.Connect();
+                scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
 
-            this.host = host;
+                this.host = host;
 
-            remoteExecutablePath = Path.Combine(@"C:\Temp\ft", Path.GetFileName(localExecutablePath));
+                remoteExecutablePath = Path.Combine(@"C:\Temp\ft", Path.GetFileName(localExecutablePath));
+            }
         }
 
         public override void Run(string args)
         {
-            Stop();
-
             var rr = @"C:\Users\Smith\Desktop\dev\cs\RunRemote\runremote\bin\Debug\net8.0\runremote.exe";
 
             var rrArgs = $"{host}:8888 \"{remoteExecutablePath}\" {args}";
@@ -55,7 +56,27 @@ namespace ft_tests.Runner
         public override void Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
-            sshClient.RunCommand(@$"taskkill /IM {processName} /F");
+            sshClient.CreateCommand(@$"taskkill /IM {processName} /F").Execute();
+        }
+
+        public override void DeleteFile(string path)
+        {
+            var cmd = @$"@echo off & :loop & if exist ""{path}"" del /f /q ""{path}"" & if exist ""{path}"" timeout /t 1 >nul & goto loop";
+            Debug.WriteLine(cmd);
+            sshClient.CreateCommand(cmd).Execute();
+        }
+
+        public override void Run(string cmd, string args)
+        {
+            var rr = @"C:\Users\Smith\Desktop\dev\cs\RunRemote\runremote\bin\Debug\net8.0\runremote.exe";
+
+            var rrArgs = $"{host}:8888 \"{cmd}\" {args}";
+
+            Debug.WriteLine($"\"{cmd}\" {args}");
+
+            Process.Start(rr, rrArgs);
+
+            Thread.Sleep(5000);
         }
     }
 }

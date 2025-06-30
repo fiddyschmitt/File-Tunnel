@@ -137,7 +137,7 @@ namespace ft.Listeners
 
         protected void CommandReceived(Command command)
         {
-            lastContactFromCounterpart = DateTime.Now;
+             lastContactFromCounterpart = DateTime.Now;
 
             if (command is Forward forward && forward.Payload != null)
             {
@@ -259,7 +259,7 @@ namespace ft.Listeners
                                 }
                             }
 
-                            if (pingStopwatch.ElapsedMilliseconds > Program.UNIVERSAL_TIMEOUT_MS)
+                            if (pingStopwatch.ElapsedMilliseconds > TunnelTimeoutMilliseconds)
                             {
                                 latestRTT = null;
                                 break;

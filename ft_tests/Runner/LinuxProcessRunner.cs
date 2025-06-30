@@ -16,7 +16,7 @@ namespace ft_tests.Runner
             sshClient = new SshClient(host, username, password);
             sshClient.Connect();
 
-            sshClient.RunCommand($"mkdir -p \"{remoteFolder}\"");
+            sshClient.CreateCommand($"mkdir -p \"{remoteFolder}\"").Execute();
 
             Stop();
 
@@ -24,7 +24,7 @@ namespace ft_tests.Runner
             scpClient.Connect();
             scpClient.Upload(new FileInfo(localExecutablePath), this.remoteExecutablePath);
 
-            sshClient.RunCommand($"chmod +x \"{this.remoteExecutablePath}\"");
+            sshClient.CreateCommand($"chmod +x \"{this.remoteExecutablePath}\"").Execute();
         }
 
         public override void Run(string args)
@@ -34,7 +34,7 @@ namespace ft_tests.Runner
             // Run the process in background (&) to detach
             var command = $"nohup sudo \"{remoteExecutablePath}\" {args} > /dev/null 2>&1 &";
             Debug.WriteLine($"{command}");
-            sshClient.RunCommand(command);
+            sshClient.CreateCommand(command).Execute();
         }
 
         public override string GetFullCommand(string args)
@@ -47,7 +47,22 @@ namespace ft_tests.Runner
         {
             var processName = Path.GetFileName(remoteExecutablePath);
             // pkill by name to stop the process
-            sshClient.RunCommand($"sudo pkill -f \"{processName}\" || true");
+            sshClient.CreateCommand($"sudo pkill -f \"{processName}\" || true").Execute();
+        }
+
+        public override void DeleteFile(string path)
+        {
+            var deleteCmd = @$"while [ -e ""{path}"" ]; do sudo rm -f ""{path}""; sleep 1; done";
+            //var deleteCmd = @$"for i in {{1..10}}; do rm -f ""{path}""; sleep 1; done";
+            Debug.WriteLine(deleteCmd);
+            sshClient.CreateCommand(deleteCmd).Execute();
+        }
+
+        public override void Run(string cmd, string args)
+        {
+            var command = $"sudo \"{cmd}\" {args}";
+            Debug.WriteLine($"{command}");
+            sshClient.CreateCommand(command).Execute();
         }
     }
 }

@@ -25,6 +25,8 @@ namespace ft.Listeners
         private readonly int readDurationMilliseconds;
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
+        //ToggleWriterStream? setReadyForPurge;
+        //ToggleWriterStream? setPurgeComplete;
 
         public int PurgeSizeInBytes { get; }
         public bool IsolatedReads { get; }
@@ -77,6 +79,7 @@ namespace ft.Listeners
                     var sessionId = Program.Random.NextInt64();
                     binaryWriter.Write(sessionId);
                     binaryWriter.Flush();
+                    //fileStream.Flush(true);
 
                     if (Verbose)
                     {
@@ -87,11 +90,17 @@ namespace ft.Listeners
                     setReadyForPurge = new ToggleWriter(
                         new BinaryWriter(setReadyForPurgeStream),
                         READY_FOR_PURGE_FLAG);
+                    //setReadyForPurge = new ToggleWriterStream(
+                    //    setReadyForPurgeStream,
+                    //    READY_FOR_PURGE_FLAG);
 
                     var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                     setPurgeComplete = new ToggleWriter(
                         new BinaryWriter(setPurgeCompleteStream),
                         PURGE_COMPLETE_FLAG);
+                    //setPurgeComplete = new ToggleWriterStream(
+                    //    setPurgeCompleteStream,
+                    //    PURGE_COMPLETE_FLAG);
 
                     var ms = new HashingStream(new MemoryStream());
                     var msWriter = new BinaryWriter(ms);
@@ -131,6 +140,7 @@ namespace ft.Listeners
                                 var purge = new Purge();
                                 purge.Serialise(binaryWriter);
                                 fileStream.Flush();
+                                //fileStream.Flush(true);
 
                                 //wait for counterpart to be ready for purge
                                 isReadyForPurge?.Wait(1);
@@ -138,6 +148,7 @@ namespace ft.Listeners
                                 //perform the purge
                                 fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                                 fileStream.SetLength(MESSAGE_WRITE_POS);
+                                //fileStream.Flush(true);
 
                                 //signal that the purge is complete
                                 setPurgeComplete.Set(1);
@@ -193,6 +204,8 @@ namespace ft.Listeners
 
         ToggleReader? isReadyForPurge;
         ToggleReader? isPurgeComplete;
+        //ToggleReaderStream? isReadyForPurge;
+        //ToggleReaderStream? isPurgeComplete;
 
         public static long ReadSessionId(BinaryReader binaryReader)
         {
@@ -270,6 +283,9 @@ namespace ft.Listeners
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
                             READY_FOR_PURGE_FLAG);
+                        //isReadyForPurge = new ToggleReaderStream(
+                        //    isReadyForPurgeStream,
+                        //    READY_FOR_PURGE_FLAG);
 
                         Stream isPurgeCompleteStream = IsolatedReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename) :
@@ -277,6 +293,9 @@ namespace ft.Listeners
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
                             PURGE_COMPLETE_FLAG);
+                        //isPurgeComplete = new ToggleReaderStream(
+                        //    isPurgeCompleteStream,
+                        //    PURGE_COMPLETE_FLAG);
                     }
                     catch (Exception ex)
                     {

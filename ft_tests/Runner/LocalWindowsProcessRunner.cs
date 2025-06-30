@@ -43,5 +43,35 @@ namespace ft_tests.Runner
             var result = $"\"{localExecutablePath}\" {args}";
             return result;
         }
+
+        public override void DeleteFile(string path)
+        {
+            while (File.Exists(path))
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch { }
+                Thread.Sleep(1000);
+            }
+        }
+
+        public override void Run(string cmd, string args)
+        {
+            var psi = new ProcessStartInfo
+            {
+                //Verb = "runas",   //runs as admin, but prompts every time
+
+                FileName = cmd,
+                Arguments = args,
+                UseShellExecute = true
+            };
+
+            Debug.WriteLine($"\"{localExecutablePath}\" {args}");
+
+            var process = Process.Start(psi);
+            process?.WaitForExit();
+        }
     }
 }

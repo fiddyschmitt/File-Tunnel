@@ -1,6 +1,8 @@
 ﻿using CsvHelper;
 using CsvHelper.Configuration;
 using ft;
+using ft_tests.FileShares.Clients;
+using ft_tests.FileShares.Server;
 using ft_tests.Runner;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Concurrent;
@@ -18,28 +20,32 @@ namespace ft_tests
         const string LINUX_X64_EXE = @"R:\Temp\ft release\linux-x64\ft";
 
         static ProcessRunner win10_x64_1;
-        //static ProcessRunner win10_x64_2;
+        static ProcessRunner win10_x64_2;
         static ProcessRunner win10_x64_3;
 
 
         static ProcessRunner linux_x64_1;
-        //static ProcessRunner linux_x64_2;
+        static ProcessRunner linux_x64_2;
         static ProcessRunner linux_x64_3;
 
-        public CsvWriter csvWriter;
+        public static CsvWriter csvWriter;
 
-        public EndToEndTests()
+        public static int testNumber = 0;
+        public static Stopwatch totalDuration = new();
+
+        [ClassInitialize]
+        public static void ClassInit(TestContext context)
         {
             var config = new ConfigurationBuilder()
                                 .AddUserSecrets<EndToEndTests>()
                                 .Build();
 
             win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE);
-            //win10_x64_2 = new WindowsProcessRunner("192.168.1.5", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE);                 //win10 VM
-            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.1.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);        //elitedesk
+            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.1.5", config["win10_vm_username"], config["win10_vm_password"]); //win10 VM
+            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.1.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
 
             linux_x64_1 = new LinuxProcessRunner("192.168.1.80", "user", "live", LINUX_X64_EXE, "/user/home/");
-            //linux_x64_2 = new LinuxProcessRunner("192.168.1.81", "user", "live", LINUX_X64_EXE, "/user/home/");
+            linux_x64_2 = new LinuxProcessRunner("192.168.1.81", "user", "live", LINUX_X64_EXE, "/user/home/");
             linux_x64_3 = new LinuxProcessRunner("192.168.1.82", "user", "live", LINUX_X64_EXE, "/user/home/");
 
             var testResultsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_results");
@@ -55,18 +61,36 @@ namespace ft_tests
                 HasHeaderRecord = true,
             });
 
+            csvWriter.WriteField("test_num");
+
             csvWriter.WriteField("result");
-            csvWriter.WriteField("error_message");
             csvWriter.WriteField("duration");
+
 
             csvWriter.WriteField("file_share_type");
             csvWriter.WriteField("mode");
             csvWriter.WriteField("client_1");
             csvWriter.WriteField("server");
             csvWriter.WriteField("client_2");
+
             csvWriter.WriteField("command_1");
             csvWriter.WriteField("command_2");
 
+            csvWriter.WriteField("error_message");
+
+            csvWriter.Flush();
+
+            totalDuration.Start();
+        }
+
+        [ClassCleanup]
+        public static void ClassCleanup()
+        {
+            totalDuration.Stop();
+
+            csvWriter.NextRecord();
+            csvWriter.WriteField("");
+            csvWriter.WriteField($"{totalDuration.Elapsed.TotalSeconds:0.000}");
             csvWriter.Flush();
         }
 
@@ -82,10 +106,15 @@ namespace ft_tests
                                 .Select(combo =>
                                 {
                                     var lst = combo.ToList();
+
+                                    SmbServer? smbServer = null;
+                                    if (lst[1] == OS.Linux) smbServer = new SmbServer(OS.Linux, linux_x64_2);
+                                    if (lst[1] == OS.Windows) smbServer = new SmbServer(OS.Windows, win10_x64_2);
+
                                     return new
                                     {
                                         Client1 = lst[0],
-                                        Server = new Server(lst[1], FileShareType.SMB),
+                                        Server = smbServer,
                                         Client2 = lst[2]
                                     };
                                 })
@@ -113,10 +142,13 @@ namespace ft_tests
                         _ => throw new NotImplementedException()
                     };
 
-                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, "1.dat");
-                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, "2.dat");
+                    var filename1 = $"{random.Next(int.MaxValue)}.dat";
+                    var filename2 = $"{random.Next(int.MaxValue)}.dat";
 
-                    var side1 = new Side(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
+                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
+
+                    var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
 
 
@@ -127,16 +159,16 @@ namespace ft_tests
                         _ => throw new NotImplementedException()
                     };
 
-                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, "1.dat");
-                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, "2.dat");
+                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
+                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
 
-                    var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+                    var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(side1, combo.Server, side2);
+                    ConductTunnelTests(side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
                 });
         }
 
-        Random random = new();
+        readonly Random random = new();
 
         [TestMethod]
         public void Nfs()
@@ -144,6 +176,8 @@ namespace ft_tests
             OS[] client1 = [OS.Windows, OS.Linux];
             OS[] servers = [OS.Linux];
             OS[] client2 = [OS.Windows, OS.Linux];
+
+            var nfsServer = new NfsServer(linux_x64_2);
 
             var combinations = Utilities.Extensions
                                 .CartesianProduct([client1, servers, client2])
@@ -153,7 +187,7 @@ namespace ft_tests
                                     return new
                                     {
                                         Client1 = lst[0],
-                                        Server = new Server(lst[1], FileShareType.NFS),
+                                        Server = nfsServer,
                                         Client2 = lst[2]
                                     };
                                 })
@@ -186,7 +220,7 @@ namespace ft_tests
                     var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
                     var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
 
-                    var side1 = new Side(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                    var side1 = new NfsClient(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
 
 
@@ -200,53 +234,76 @@ namespace ft_tests
                     var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
                     var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
 
-                    var side2 = new Side(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+                    var side2 = new NfsClient(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(side1, combo.Server, side2);
+                    ConductTunnelTests(side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
                 });
         }
 
-        public void ConductTunnelTests(Side side1, Server server, Side side2)
+        public void ConductTunnelTests(Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
         {
+            //if ((server.FileShareType == FileShareType.NFS && (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Windows)) == false) return;
+            //Console.WriteLine();
+
+            var cleanupFiles = new Action(() =>
+            {
+                Task[] deleteTasks = [
+                    Task.Factory.StartNew(() => side1.Runner.DeleteFile(readPath1)),
+                    Task.Factory.StartNew(() => side1.Runner.DeleteFile(writePath1)),
+                    Task.Factory.StartNew(() => side2.Runner.DeleteFile(readPath2)),
+                    Task.Factory.StartNew(() => side2.Runner.DeleteFile(writePath2))];
+
+                try
+                {
+                    Task.WaitAll(deleteTasks, 10000);
+                }
+                catch { }
+            });
+
             var name = $"{server.FileShareType} {side1.OS}-{server.OS}-{side2.OS}";
 
             ConductTest(
                     $"{name} (Normal mode)",
-                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004"),
+                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004"),
                     server,
-                    new Side(side2.OS, side2.Runner, $"{side2.Args}"),
+                    new Client(side2.OS, side2.Runner, $"{side2.Args}"),
                     "Normal");
 
-            Thread.Sleep(5000);
-
-
-
+            side1.Restart();
+            side2.Restart();
+            server.Restart();
+            cleanupFiles();
 
 
             ConductTest(
                     $"{name} (Isolated Reads mode)",
-                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --isolated-reads"),
+                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --isolated-reads"),
                     server,
-                    new Side(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
+                    new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
                     "Isolated Reads");
 
-            Thread.Sleep(5000);
-
+            side1.Restart();
+            side2.Restart();
+            server.Restart();
+            cleanupFiles();
 
 
 
 
             ConductTest(
                     $"{name} (Upload-Download mode)",
-                    new Side(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --upload-download"),
+                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --upload-download --pace 100"),
                     server,
-                    new Side(side2.OS, side2.Runner, $"{side2.Args} --upload-download"),
+                    new Client(side2.OS, side2.Runner, $"{side2.Args} --upload-download --pace 100"),
                     "Upload-Download");
 
-            Thread.Sleep(5000);
+            side1.Restart();
+            side2.Restart();
+            server.Restart();
+            cleanupFiles();
         }
 
-        public void ConductTest(string name, Side side1, Server server, Side side2, string mode)
+        public void ConductTest(string name, Client side1, Server server, Client side2, string mode)
         {
             //if (!(side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux && mode == "Isolated Reads" && server.FileShareType == FileShareType.SMB)) return;
 
@@ -265,7 +322,7 @@ namespace ft_tests
             {
                 try
                 {
-                    TestTransfer(5 * 1024 * 1024, true, 10, side1.Runner.RunOnIP, stop);
+                    TestTransfer(5 * 1024 * 1024, true, 2, side1.Runner.RunOnIP, stop);
                     results.Add((true, ""));
                 }
                 catch (Exception ex)
@@ -275,7 +332,7 @@ namespace ft_tests
             });
 
 
-            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
 
             (bool Success, string Errror) result;
             try
@@ -290,22 +347,22 @@ namespace ft_tests
             stop.Cancel();
             sw.Stop();
 
+            csvWriter.WriteField($"Test {testNumber++}");
+
             if (result.Success)
             {
                 Debug.WriteLine($@"""{name}"",""Pass"",""{sw.Elapsed.TotalSeconds:N3}""");
 
                 csvWriter.WriteField($"pass");
-                csvWriter.WriteField($"{sw.Elapsed.TotalSeconds:N3}");
-                csvWriter.WriteField($"");
             }
             else
             {
                 Debug.WriteLine($@"""{name}"",""Fail"",""{sw.Elapsed.TotalSeconds:N3}""");
 
                 csvWriter.WriteField($"fail");
-                csvWriter.WriteField($"{sw.Elapsed.TotalSeconds:N3}");
-                csvWriter.WriteField(result.Errror);
             }
+
+            csvWriter.WriteField($"{sw.Elapsed.TotalSeconds:N3}");
 
             csvWriter.WriteField($"{server.FileShareType}");
             csvWriter.WriteField($"{mode}");
@@ -319,6 +376,19 @@ namespace ft_tests
 
             var command2 = side2.Runner.GetFullCommand(side2.Args);
             csvWriter.WriteField(command2);
+
+
+            if (result.Success)
+            {
+                csvWriter.WriteField($"");
+            }
+            else
+            {
+                csvWriter.WriteField(result.Errror);
+            }
+
+
+
             csvWriter.Flush();
 
             side1.Runner.Stop();
@@ -331,7 +401,7 @@ namespace ft_tests
 
             try
             {
-                ultimateDestination.Start();                
+                ultimateDestination.Start();
                 var ultimateDestinationClients = new BlockingCollection<TcpClient>();
 
                 Task.Factory.StartNew(() =>
@@ -423,7 +493,7 @@ namespace ft_tests
                     });
 
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 Debug.WriteLine(ex);
                 throw;
@@ -474,29 +544,5 @@ namespace ft_tests
         NFS
     }
 
-    public class Side
-    {
-        public Side(OS os, ProcessRunner runner, string args)
-        {
-            OS = os;
-            Runner = runner;
-            Args = args;
-        }
 
-        public OS OS { get; }
-        public ProcessRunner Runner { get; }
-        public string Args { get; }
-    }
-
-    public class Server
-    {
-        public Server(OS OS, FileShareType fileShareType)
-        {
-            this.OS = OS;
-            FileShareType = fileShareType;
-        }
-
-        public OS OS { get; }
-        public FileShareType FileShareType { get; }
-    }
 }

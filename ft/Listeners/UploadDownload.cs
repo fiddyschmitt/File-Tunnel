@@ -13,8 +13,8 @@ namespace ft.Listeners
     {
         private readonly int maxFileSizeBytes;
         private readonly int readDurationMilliseconds;
-        private readonly bool checkFileSizeAfterUpload;
-        private readonly IFileAccess fileAccess;
+        private readonly int paceMilliseconds;
+        private readonly PacedAccess fileAccess;
 
         public UploadDownload(
                     IFileAccess fileAccess,
@@ -23,29 +23,19 @@ namespace ft.Listeners
                     int maxFileSizeBytes,
                     int readDurationMilliseconds,
                     int tunnelTimeoutMilliseconds,
-                    bool checkFileSizeAfterUpload,
+                    int paceMilliseconds,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
-            this.fileAccess = fileAccess;
+            this.fileAccess = new PacedAccess(fileAccess, paceMilliseconds);
             this.maxFileSizeBytes = maxFileSizeBytes;
             this.readDurationMilliseconds = readDurationMilliseconds;
-            this.checkFileSizeAfterUpload = checkFileSizeAfterUpload;
+            this.paceMilliseconds = paceMilliseconds;
         }
 
         public override void SendPump()
         {
             var writeFileShortName = Path.GetFileName(WriteToFilename);
-            var writeFileTempName = WriteToFilename + ".preparing";
             var writingStopwatch = new Stopwatch();
-
-            try
-            {
-                if (fileAccess.Exists(writeFileTempName))
-                {
-                    fileAccess.Delete(writeFileTempName);
-                }
-            }
-            catch { }
 
             try
             {
@@ -60,6 +50,44 @@ namespace ft.Listeners
             {
                 try
                 {
+                    //wait for the previous file to be deleted by counterpart, signaling it was processed
+                    Extensions.Time(
+                        $"[{writeFileShortName}] Wait for file to be deleted by counterpart",
+                        _ => { },
+                        attempt =>
+                        {
+                            bool result;
+                            try
+                            {
+                                if (fileAccess.BaseAccess is LocalAccess localAccess)
+                                {
+                                    Thread.Sleep(paceMilliseconds);
+
+                                    //SMB slows down if both sides are using File.Exists on the same file.
+                                    using var fs = File.Open(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                    result = true;
+                                    fs.Close();
+                                }
+                                else
+                                {
+                                    result = fileAccess.Exists(WriteToFilename);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] [Wait for file to be deleted by counterpart - attempt {attempt.Attempt:N0}]: {ex.Message}");
+                                }
+                                result = false;
+                            }
+
+                            return !result;
+                        },
+                        DefaultSleepStrategy,
+                        Verbose);
+
+
                     using var memoryStream = new MemoryStream();
                     var hashingStream = new HashingStream(memoryStream);
                     var binaryWriter = new BinaryWriter(hashingStream);
@@ -119,14 +147,14 @@ namespace ft.Listeners
 
                     var memoryStreamContent = memoryStream.ToArray();
 
-                    //write the file (sometimes it takes more than one go)
+                    //write the file
                     Extensions.Time(
                         $"[{writeFileShortName}] Write file content",
                         attempt =>
                         {
                             try
                             {
-                                fileAccess.WriteAllBytes(writeFileTempName, memoryStreamContent);
+                                fileAccess.WriteAllBytes(WriteToFilename, memoryStreamContent);
                             }
                             catch (Exception ex)
                             {
@@ -138,28 +166,35 @@ namespace ft.Listeners
                         },
                         attempt =>
                         {
-                            try
+                            if (fileAccess.BaseAccess is LocalAccess)
                             {
-                                var result = fileAccess.Exists(writeFileTempName);
+                                //NFS occassionally writes a 0 byte file, so we retry until it's written properly.
 
-                                if (checkFileSizeAfterUpload)
+                                try
                                 {
-                                    result &= fileAccess.GetFileSize(writeFileTempName) == memoryStreamContent.Length;
-                                }
+                                    var result = fileAccess.Exists(WriteToFilename) && fileAccess.GetFileSize(WriteToFilename) == memoryStreamContent.Length;
 
-                                return result;
+                                    return result;
+                                }
+                                catch (Exception ex)
+                                {
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] [Confirm file was written - attempt {attempt.Attempt:N0}]: {ex.Message}");
+                                    }
+                                    return false;
+                                }
                             }
-                            catch (Exception ex)
+                            else
                             {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] [Confirm file was written - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-                                return false;
+                                return true;
                             }
                         },
                         DefaultSleepStrategy,
                         Verbose);
+
+                    //var debugFilename = $"diag-{Environment.ProcessId}-sent.txt";
+                    //File.AppendAllLines(debugFilename, [Convert.ToBase64String(memoryStreamContent)]);
 
 
                     if (Verbose)
@@ -168,82 +203,10 @@ namespace ft.Listeners
                     }
 
 
-                    //wait for the previous file to be deleted by counterpart, signaling it was processed
-                    Extensions.Time(
-                        $"[{writeFileShortName}] Wait for file to be deleted by counterpart",
-                        _ => { },
-                        attempt =>
-                        {
-                            bool result;
-                            try
-                            {
-                                if (fileAccess is LocalAccess localAccess)
-                                {
-                                    //SMB slows down if both sides are using File.Exists on the same file.
-                                    using var fs = File.Open(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                                    result = true;
-                                    fs.Close();
-                                }
-                                else
-                                {
-                                    result = fileAccess.Exists(WriteToFilename);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] [Wait for file to be deleted by counterpart - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-                                result = false;
-                            }
-
-                            return !result;
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
 
 
 
 
-                    //move the file into place
-                    var moved = 0;
-                    Extensions.Time(
-                        $"[{writeFileShortName}] Move file into place",
-                        attempt =>
-                        {
-                            try
-                            {
-                                fileAccess.Move(writeFileTempName, WriteToFilename, true);
-                                Interlocked.Increment(ref moved);
-                                return;
-                            }
-                            catch (FileNotFoundException)
-                            {
-                                //try writing it again
-                                try
-                                {
-                                    fileAccess.WriteAllBytes(writeFileTempName, memoryStreamContent);
-                                }
-                                catch (Exception ex)
-                                {
-                                    if (Verbose)
-                                    {
-                                        Program.Log($"[{writeFileShortName}] [Rewriting during move attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] [Move file into place - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-                            }
-                        },
-                        _ => moved == 1,
-                        DefaultSleepStrategy,
-                        Verbose);
                 }
                 catch (Exception ex)
                 {
@@ -317,6 +280,9 @@ namespace ft.Listeners
                         DefaultSleepStrategy,
                         Verbose);
 
+                    //var debugFilename = $"diag-{Environment.ProcessId}-received.txt";
+                    //File.AppendAllLines(debugFilename, [Convert.ToBase64String(fileContent)]);
+
 
                     var deleted = 0;
                     Extensions.Time(
@@ -332,7 +298,7 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{readFileShortName}] [Delete processed file - attempt {attempt.Attempt:N0}]: {ex.Message}");
+                                    Program.Log($"[{readFileShortName}] [Delete processed file - attempt {attempt.Attempt:N0}]: {ex.ToString()}");
                                 }
                             }
                         },

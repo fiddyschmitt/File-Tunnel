@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -14,7 +15,11 @@ namespace ft_tests.Runner
 
         public abstract void Run(string args);
 
+        public abstract void Run(string cmd, string args);
+
         public abstract void Stop();
+
+        public abstract void DeleteFile(string path);
 
         public ProcessRunner(string runOnIP)
         {

@@ -10,22 +10,20 @@ namespace ft.IO.Files
 {
     public class LocalAccess : IFileAccess
     {
-        private readonly int operationDelayMillis;
-
-        public LocalAccess(int operationDelayMillis)
+        public LocalAccess()
         {
-            this.operationDelayMillis = operationDelayMillis;
+
         }
 
         public void Delete(string path)
         {
             File.Delete(path);
-
-            Thread.Sleep(operationDelayMillis);
         }
 
         public bool Exists(string path)
         {
+            //var result = File.Exists(path);
+
             var folder = Path.GetDirectoryName(path);
             if (string.IsNullOrEmpty(folder)) folder = AppDomain.CurrentDomain.BaseDirectory;
 
@@ -35,8 +33,6 @@ namespace ft.IO.Files
             //The following is less intrusive.
             var result = Directory.EnumerateFiles(folder, filename).Any();
 
-            Thread.Sleep(operationDelayMillis);
-
             return result;
         }
 
@@ -44,23 +40,17 @@ namespace ft.IO.Files
         {
             var result = new FileInfo(path).Length;
 
-            Thread.Sleep(operationDelayMillis);
-
             return result;
         }
 
         public void Move(string sourceFileName, string destFileName, bool overwrite)
         {
             File.Move(sourceFileName, destFileName, overwrite);
-
-            Thread.Sleep(operationDelayMillis);
         }
 
         public byte[] ReadAllBytes(string path)
         {
             var result = File.ReadAllBytes(path);
-
-            Thread.Sleep(operationDelayMillis);
 
             return result;
         }
@@ -68,8 +58,6 @@ namespace ft.IO.Files
         public void WriteAllBytes(string path, byte[] bytes)
         {
             File.WriteAllBytes(path, bytes);
-
-            Thread.Sleep(operationDelayMillis);
         }
     }
 }

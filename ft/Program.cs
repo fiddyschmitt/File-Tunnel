@@ -22,7 +22,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "2.2.4";
+        const string VERSION = "2.3.0";
 
         public const int UNIVERSAL_TIMEOUT_MS = 4000;
 
@@ -74,7 +74,7 @@ namespace ft
 
         private static void RunFtpSession(FtpOptions o)
         {
-            var access = new Ftp(o.FtpHost, o.FtpPort, o.FtpUsername, o.FtpPassword, o.OperationDelayMillis);
+            var access = new Ftp(o.FtpHost, o.FtpPort, o.FtpUsername, o.FtpPassword);
 
             var sharedFileManager = new UploadDownload(
                                              access,
@@ -83,7 +83,7 @@ namespace ft
                                              o.MaxFileSizeBytes,
                                              o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
-                                             false,
+                                             o.PaceMilliseconds,
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
@@ -99,7 +99,14 @@ namespace ft
                 Log($"Continuing.", ConsoleColor.Yellow);
             }
 
-            var access = new LocalAccess(o.OperationDelayMillis);
+            if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
+            {
+                o.MaxFileSizeBytes = 1024 * 1024;
+                Log($"Warning: Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
+            }
+
+            var access = new LocalAccess();
+
 
             SharedFileManager sharedFileManager;
 
@@ -112,7 +119,7 @@ namespace ft
                                              o.MaxFileSizeBytes,
                                              o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
-                                             true,  //NFS occassionally writes a 0 byte file, so we retry until it's written properly.
+                                             o.PaceMilliseconds,
                                              o.Verbose);
             }
             else
