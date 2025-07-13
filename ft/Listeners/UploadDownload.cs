@@ -147,14 +147,16 @@ namespace ft.Listeners
 
                     var memoryStreamContent = memoryStream.ToArray();
 
-                    //write the file
+                    //Write to a temp file first.
+                    //This is required for a tsclient-based client to work.
+                    var tempFile = WriteToFilename + ".tmp";
                     Extensions.Time(
                         $"[{writeFileShortName}] Write file content",
                         attempt =>
                         {
                             try
                             {
-                                fileAccess.WriteAllBytes(WriteToFilename, memoryStreamContent);
+                                fileAccess.WriteAllBytes(tempFile, memoryStreamContent);
                             }
                             catch (Exception ex)
                             {
@@ -172,7 +174,7 @@ namespace ft.Listeners
 
                                 try
                                 {
-                                    var result = fileAccess.Exists(WriteToFilename) && fileAccess.GetFileSize(WriteToFilename) == memoryStreamContent.Length;
+                                    var result = fileAccess.Exists(tempFile) && fileAccess.GetFileSize(tempFile) == memoryStreamContent.Length;
 
                                     return result;
                                 }
@@ -193,6 +195,30 @@ namespace ft.Listeners
                         DefaultSleepStrategy,
                         Verbose);
 
+                    //move the temp file into place
+                    Extensions.Time(
+                        $"[{writeFileShortName}] Move file into place",
+                        attempt =>
+                        {
+                            try
+                            {
+                                fileAccess.Move(tempFile, WriteToFilename, true);
+                            }
+                            catch (Exception ex)
+                            {
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Move file into place - attempt {attempt.Attempt:N0}]: {ex.Message}");
+                                }
+                            }
+                        },
+                        attempt =>
+                        {
+                            return true;
+                        },
+                        DefaultSleepStrategy,
+                        Verbose);
+
                     //var debugFilename = $"diag-{Environment.ProcessId}-sent.txt";
                     //File.AppendAllLines(debugFilename, [Convert.ToBase64String(memoryStreamContent)]);
 
@@ -201,12 +227,6 @@ namespace ft.Listeners
                     {
                         Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {memoryStream.Length.BytesToString()}.");
                     }
-
-
-
-
-
-
                 }
                 catch (Exception ex)
                 {
