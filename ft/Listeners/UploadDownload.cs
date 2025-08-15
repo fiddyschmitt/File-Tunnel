@@ -303,26 +303,26 @@ namespace ft.Listeners
                     //var debugFilename = $"diag-{Environment.ProcessId}-received.txt";
                     //File.AppendAllLines(debugFilename, [Convert.ToBase64String(fileContent)]);
 
-
-                    var deleted = 0;
+                    var processedFilename = ReadFromFilename + ".processed";
+                    var moved = 0;
                     Extensions.Time(
-                        $"[{readFileShortName}] Delete processed file",
+                        $"[{readFileShortName}] Move processed file",
                         attempt =>
                         {
                             try
                             {
-                                fileAccess.Delete(ReadFromFilename);
-                                Interlocked.Increment(ref deleted);
+                                fileAccess.Move(ReadFromFilename, processedFilename, true);
+                                Interlocked.Increment(ref moved);
                             }
                             catch (Exception ex)
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{readFileShortName}] [Delete processed file - attempt {attempt.Attempt:N0}]: {ex.ToString()}");
+                                    Program.Log($"[{readFileShortName}] [Move processed file - attempt {attempt.Attempt:N0}]: {ex.ToString()}");
                                 }
                             }
                         },
-                        _ => { return deleted == 1; },
+                        _ => { return moved == 1; },
                         DefaultSleepStrategy,
                         Verbose);
 
