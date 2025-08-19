@@ -41,7 +41,7 @@ namespace ft_tests
                                 .Build();
 
             win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE);
-            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.1.5", config["win10_vm_username"], config["win10_vm_password"]); //win10 VM
+            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.1.32", config["win10_vm_username"], config["win10_vm_password"]); //win10 VM
             win10_x64_3 = new RemoteWindowsProcessRunner("192.168.1.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
 
             linux_x64_1 = new LinuxProcessRunner("192.168.1.80", "user", "live", LINUX_X64_EXE, "/user/home/");
@@ -124,9 +124,9 @@ namespace ft_tests
             {
                 var result = "";
 
-                if (client == OS.Windows && server == OS.Windows) result = @$"\\192.168.1.5\shared\{fileName}";
+                if (client == OS.Windows && server == OS.Windows) result = @$"\\192.168.1.32\shared\{fileName}";
                 if (client == OS.Windows && server == OS.Linux) result = @$"\\192.168.1.81\data\{fileName}";
-                if (client == OS.Linux && server == OS.Windows) result = @$"/media/smb/192.168.1.5/shared/{fileName}";
+                if (client == OS.Linux && server == OS.Windows) result = @$"/media/smb/192.168.1.32/shared/{fileName}";
                 if (client == OS.Linux && server == OS.Linux) result = @$"/media/smb/192.168.1.81/data/{fileName}";
 
                 return result;
