@@ -22,7 +22,7 @@ namespace ft.Listeners
         const int READY_FOR_PURGE_FLAG = sizeof(long);
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
         const int MESSAGE_WRITE_POS = PURGE_COMPLETE_FLAG + 1;
-        private readonly int readDurationMilliseconds;
+
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
         //ToggleWriterStream? setReadyForPurge;
@@ -35,20 +35,17 @@ namespace ft.Listeners
                     string readFromFilename,
                     string writeToFilename,
                     int purgeSizeInBytes,
-                    int readDurationMilliseconds,
                     int tunnelTimeoutMilliseconds,
                     bool isolatedReads,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
             PurgeSizeInBytes = purgeSizeInBytes;
-            this.readDurationMilliseconds = readDurationMilliseconds;
             IsolatedReads = isolatedReads;
         }
 
         public override void SendPump()
         {
             var writeFileShortName = Path.GetFileName(WriteToFilename);
-            var writingStopwatch = new Stopwatch();
 
             while (true)
             {
@@ -107,28 +104,12 @@ namespace ft.Listeners
 
                     fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
-                    var commandsWritten = 0;
                     var bytesWritten = 0L;
-                    //write as many commands as possible to the file
+
                     while (true)
                     {
-                        int toWaitMillis;
-                        if (commandsWritten == 0)
+                        if (SendQueue.TryTake(out Command? command, -1))
                         {
-                            toWaitMillis = -1;  //wait indefinitely for the first command
-                        }
-                        else
-                        {
-                            toWaitMillis = (int)Math.Max(0L, readDurationMilliseconds - writingStopwatch.ElapsedMilliseconds);
-                        }
-
-                        if (SendQueue.TryTake(out Command? command, toWaitMillis))
-                        {
-                            if (commandsWritten == 0)
-                            {
-                                writingStopwatch.Restart();
-                            }
-
                             ms.SetLength(0);
                             command.Serialise(msWriter);
                             msWriter.Flush();
@@ -166,7 +147,6 @@ namespace ft.Listeners
                             var commandStartPos = fileStream.Position;
                             command.Serialise(binaryWriter);
                             var commandEndPos = fileStream.Position;
-                            commandsWritten++;
 
                             bytesWritten += ms.Length;
 
@@ -178,19 +158,15 @@ namespace ft.Listeners
                             CommandSent(command);
                         }
 
-                        if (SendQueue.Count == 0 || writingStopwatch.ElapsedMilliseconds >= readDurationMilliseconds)
+                        binaryWriter.Flush();
+                        fileStream.Flush(true);
+
+                        if (Verbose)
                         {
-                            binaryWriter.Flush();
-                            fileStream.Flush(true);
-
-                            if (Verbose)
-                            {
-                                Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {bytesWritten.BytesToString()} bytes.");
-                            }
-
-                            commandsWritten = 0;
-                            bytesWritten = 0;
+                            Program.Log($"[{writeFileShortName}] Wrote 1 command in one transaction. {bytesWritten.BytesToString()} bytes.");
                         }
+
+                        bytesWritten = 0;
                     }
                 }
                 catch (Exception ex)

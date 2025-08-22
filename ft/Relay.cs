@@ -12,7 +12,7 @@ namespace ft
         public EventHandler? RelayFinished;
         bool Stopped = false;
 
-        public Relay(Stream fromStream, Stream toStream, long maxFileSizeBytes)
+        public Relay(Stream fromStream, Stream toStream, long maxFileSizeBytes, int readDurationMillis)
         {
             var bufferSize = 65535;
 
@@ -43,22 +43,13 @@ namespace ft
             {
                 try
                 {
-                    var buffer = new byte[65535 * 2];
-
-                    while (true)
+                    Extensions.CopyTo(fromStream, toStream, bufferSize, bytesRead =>
                     {
-                        var read = fromStream.Read(buffer, 0, bytesToRead);
-
-                        if (read == 0)
+                        if (bytesRead > 0)
                         {
-                            break;
+                            //Program.Log($"{fromStream.Name(true)} -> {toStream.Name(false)}    {bytesRead:N0} bytes.");
                         }
-
-                        //fs.Write(buffer, 0, read);
-                        //fs.Flush();
-
-                        toStream.Write(buffer, 0, read);
-                    }
+                    }, null, readDurationMillis);
                 }
                 catch (Exception ex)
                 {

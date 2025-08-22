@@ -128,7 +128,6 @@ namespace ft
                                             o.ReadFrom.Trim(),
                                             o.WriteTo.Trim(),
                                             o.MaxFileSizeBytes,
-                                            o.ReadDurationMillis,
                                             o.TunnelTimeoutMilliseconds,
                                             o.IsolatedReads,
                                             o.Verbose);
@@ -143,14 +142,15 @@ namespace ft
             localListeners.Add("tcp", o.LocalTcpForwards, false);
             localListeners.Add("udp", o.LocalUdpForwards, false);
 
-            var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, maxFileSizeBytes);
+            var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, maxFileSizeBytes, o.ReadDurationMillis);
             _ = new RemoteToLocalTunnel(
                                              o.RemoteTcpForwards.ToList(),
                                              o.RemoteUdpForwards.ToList(),
                                              sharedFileManager,
                                              localToRemoteTunnel,
                                              o.UdpSendFrom,
-                                             maxFileSizeBytes);
+                                             maxFileSizeBytes,
+                                             o.ReadDurationMillis);
 
             sharedFileManager.Start();
         }

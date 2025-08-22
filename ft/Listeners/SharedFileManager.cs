@@ -23,9 +23,9 @@ namespace ft.Listeners
 
         protected readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
 
-        //Buffer a maximum of 20 messages to send.
         //If left unlimited, this can fill up faster than we can send them through the file tunnel.
-        protected BlockingCollection<Command> SendQueue = new(20);
+        //FPS 22/08/2025: When this is set to 20, RDP latency is worse than when it is set to 1.
+        protected BlockingCollection<Command> SendQueue = new(1);
 
         const int reportIntervalMs = 1000;
         public int TunnelTimeoutMilliseconds { get; protected set; }
