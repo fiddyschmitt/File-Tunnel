@@ -12,7 +12,6 @@ namespace ft.Listeners
     public class UploadDownload : SharedFileManager
     {
         private readonly int maxFileSizeBytes;
-        private readonly int readDurationMilliseconds;
         private readonly int paceMilliseconds;
         private readonly PacedAccess fileAccess;
 
@@ -21,14 +20,12 @@ namespace ft.Listeners
                     string readFromFilename,
                     string writeToFilename,
                     int maxFileSizeBytes,
-                    int readDurationMilliseconds,
                     int tunnelTimeoutMilliseconds,
                     int paceMilliseconds,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
             this.fileAccess = new PacedAccess(fileAccess, paceMilliseconds);
             this.maxFileSizeBytes = maxFileSizeBytes;
-            this.readDurationMilliseconds = readDurationMilliseconds;
             this.paceMilliseconds = paceMilliseconds;
         }
 
@@ -92,55 +89,19 @@ namespace ft.Listeners
                     var hashingStream = new HashingStream(memoryStream);
                     var binaryWriter = new BinaryWriter(hashingStream);
 
-                    var commandsWritten = 0;
-                    //write as many commands as possible to the file
-                    while (true)
+                    if (SendQueue.TryTake(out Command? command, -1))
                     {
-                        int toWaitMillis;
-                        if (commandsWritten == 0)
+                        //write the message to file
+                        var commandStartPos = memoryStream.Position;
+                        command.Serialise(binaryWriter);
+                        var commandEndPos = memoryStream.Position;
+
+                        if (Verbose)
                         {
-                            toWaitMillis = -1;  //wait indefinitely for the first command
-                        }
-                        else
-                        {
-                            toWaitMillis = (int)Math.Max(0L, readDurationMilliseconds - writingStopwatch.ElapsedMilliseconds);
-                        }
-
-                        if (SendQueue.TryTake(out Command? command, toWaitMillis))
-                        {
-                            if (commandsWritten == 0)
-                            {
-                                writingStopwatch.Restart();
-                            }
-
-                            //write the message to file
-                            var commandStartPos = memoryStream.Position;
-                            command.Serialise(binaryWriter);
-                            var commandEndPos = memoryStream.Position;
-                            commandsWritten++;
-
-                            if (Verbose)
-                            {
-                                Program.Log($"[{writeFileShortName}] [{commandsWritten:N0}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
-                            }
-
-                            CommandSent(command);
+                            Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
                         }
 
-                        if (SendQueue.Count == 0)
-                        {
-                            break;
-                        }
-
-                        if (memoryStream.Length >= maxFileSizeBytes)
-                        {
-                            break;
-                        }
-
-                        if (writingStopwatch.ElapsedMilliseconds >= readDurationMilliseconds)
-                        {
-                            break;
-                        }
+                        CommandSent(command);
                     }
 
                     binaryWriter.Flush();
@@ -225,7 +186,7 @@ namespace ft.Listeners
 
                     if (Verbose)
                     {
-                        Program.Log($"[{writeFileShortName}] Wrote {commandsWritten:N0} commands in one transaction. {memoryStream.Length.BytesToString()}.");
+                        Program.Log($"[{writeFileShortName}] Wrote 1 command in one transaction. {memoryStream.Length.BytesToString()}.");
                     }
                 }
                 catch (Exception ex)

@@ -81,7 +81,6 @@ namespace ft
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
                                              o.MaxFileSizeBytes,
-                                             o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
                                              o.PaceMilliseconds,
                                              o.Verbose);
@@ -117,7 +116,6 @@ namespace ft
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
                                              o.MaxFileSizeBytes,
-                                             o.ReadDurationMillis,
                                              o.TunnelTimeoutMilliseconds,
                                              o.PaceMilliseconds,
                                              o.Verbose);
