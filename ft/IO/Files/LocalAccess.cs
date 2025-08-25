@@ -26,16 +26,14 @@ namespace ft.IO.Files
 
             var folder = Path.GetDirectoryName(path);
             if (string.IsNullOrEmpty(folder)) folder = AppDomain.CurrentDomain.BaseDirectory;
-
             var filename = Path.GetFileName(path);
 
-            //File.Exists() interferes with SMB's operations, and slows things down.
-            //The following is less intrusive.
-            var result = Directory.EnumerateFiles(folder, filename).Any();
+            //Enumerating files followed by checking if file exists seems to be the most stable way to check if a file exists (for SMB)
+            var result = Directory.EnumerateFiles(folder, filename, SearchOption.TopDirectoryOnly).Any() &&
+                            File.Exists(path);
 
             return result;
         }
-
         public long GetFileSize(string path)
         {
             var result = new FileInfo(path).Length;
