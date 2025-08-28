@@ -53,22 +53,11 @@ namespace ft.Listeners
                         _ => { },
                         attempt =>
                         {
-                            bool result;
+                            bool fileStillExists;
                             try
                             {
-                                if (fileAccess.BaseAccess is LocalAccess localAccess)
-                                {
-                                    Thread.Sleep(paceMilliseconds);
+                                fileStillExists = fileAccess.Exists(WriteToFilename);
 
-                                    //SMB slows down if both sides are using File.Exists on the same file.
-                                    using var fs = File.Open(WriteToFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                                    result = true;
-                                    fs.Close();
-                                }
-                                else
-                                {
-                                    result = fileAccess.Exists(WriteToFilename);
-                                }
                             }
                             catch (Exception ex)
                             {
@@ -76,10 +65,12 @@ namespace ft.Listeners
                                 {
                                     Program.Log($"[{writeFileShortName}] [Wait for file to be deleted by counterpart - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
-                                result = false;
+
+                                //assume it still exists
+                                fileStillExists = true;
                             }
 
-                            return !result;
+                            return !fileStillExists;
                         },
                         DefaultSleepStrategy,
                         Verbose);
@@ -113,11 +104,15 @@ namespace ft.Listeners
                     var tempFile = WriteToFilename + ".tmp";
                     Extensions.Time(
                         $"[{writeFileShortName}] Write file content",
+                        _ => { },
                         attempt =>
                         {
+                            bool writeSuccessful;
+
                             try
                             {
                                 fileAccess.WriteAllBytes(tempFile, memoryStreamContent);
+                                writeSuccessful = true;
                             }
                             catch (Exception ex)
                             {
@@ -125,19 +120,17 @@ namespace ft.Listeners
                                 {
                                     Program.Log($"[{writeFileShortName}] Write file content - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
+
+                                return false;
                             }
-                        },
-                        attempt =>
-                        {
+
                             if (fileAccess.BaseAccess is LocalAccess)
                             {
                                 //NFS occassionally writes a 0 byte file, so we retry until it's written properly.
 
                                 try
                                 {
-                                    var result = fileAccess.Exists(tempFile) && fileAccess.GetFileSize(tempFile) == memoryStreamContent.Length;
-
-                                    return result;
+                                    writeSuccessful &= fileAccess.Exists(tempFile) && fileAccess.GetFileSize(tempFile) == memoryStreamContent.Length;
                                 }
                                 catch (Exception ex)
                                 {
@@ -145,13 +138,12 @@ namespace ft.Listeners
                                     {
                                         Program.Log($"[{writeFileShortName}] [Confirm file was written - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                     }
-                                    return false;
+
+                                    writeSuccessful = false;
                                 }
                             }
-                            else
-                            {
-                                return true;
-                            }
+
+                            return writeSuccessful;
                         },
                         DefaultSleepStrategy,
                         Verbose);
@@ -159,11 +151,14 @@ namespace ft.Listeners
                     //move the temp file into place
                     Extensions.Time(
                         $"[{writeFileShortName}] Move file into place",
+                        _ => { },
                         attempt =>
                         {
+                            bool moved;
                             try
                             {
                                 fileAccess.Move(tempFile, WriteToFilename, true);
+                                moved = true;
                             }
                             catch (Exception ex)
                             {
@@ -171,18 +166,17 @@ namespace ft.Listeners
                                 {
                                     Program.Log($"[{writeFileShortName}] Move file into place - attempt {attempt.Attempt:N0}]: {ex.Message}");
                                 }
+
+                                moved = false;
                             }
-                        },
-                        attempt =>
-                        {
-                            return true;
+
+                            return moved;
                         },
                         DefaultSleepStrategy,
                         Verbose);
 
-                    //var debugFilename = $"diag-{Environment.ProcessId}-sent.txt";
+                    //var debugFilename = $"diag-sent.txt";
                     //File.AppendAllLines(debugFilename, [Convert.ToBase64String(memoryStreamContent)]);
-
 
                     if (Verbose)
                     {
@@ -222,8 +216,8 @@ namespace ft.Listeners
                         {
                             try
                             {
-                                var result = fileAccess.Exists(ReadFromFilename);
-                                return result;
+                                var fileExists = fileAccess.Exists(ReadFromFilename) && fileAccess.GetFileSize(ReadFromFilename) > 0;
+                                return fileExists;
                             }
                             catch (Exception ex)
                             {
@@ -261,29 +255,33 @@ namespace ft.Listeners
                         DefaultSleepStrategy,
                         Verbose);
 
-                    //var debugFilename = $"diag-{Environment.ProcessId}-received.txt";
+                    //var debugFilename = $"diag-received.txt";
                     //File.AppendAllLines(debugFilename, [Convert.ToBase64String(fileContent)]);
 
-                    var processedFilename = ReadFromFilename + ".processed";
-                    var moved = 0;
                     Extensions.Time(
-                        $"[{readFileShortName}] Move processed file",
+                        $"[{readFileShortName}] Delete processed file",
+                        _ => { },
                         attempt =>
                         {
+                            bool fileDeleted;
+
                             try
                             {
-                                fileAccess.Move(ReadFromFilename, processedFilename, true);
-                                Interlocked.Increment(ref moved);
+                                fileAccess.Delete(ReadFromFilename);
+                                fileDeleted = true;
                             }
                             catch (Exception ex)
                             {
                                 if (Verbose)
                                 {
-                                    Program.Log($"[{readFileShortName}] [Move processed file - attempt {attempt.Attempt:N0}]: {ex.ToString()}");
+                                    Program.Log($"[{readFileShortName}] [Delete processed file - attempt {attempt.Attempt:N0}]: {ex.ToString()}");
                                 }
+
+                                fileDeleted = false;
                             }
+
+                            return fileDeleted;
                         },
-                        _ => { return moved == 1; },
                         DefaultSleepStrategy,
                         Verbose);
 
