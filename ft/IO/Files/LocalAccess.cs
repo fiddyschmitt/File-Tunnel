@@ -22,18 +22,49 @@ namespace ft.IO.Files
 
         public bool Exists(string path)
         {
-            //var result = File.Exists(path);
+            bool result;
 
-            var folder = Path.GetDirectoryName(path);
-            if (string.IsNullOrEmpty(folder)) folder = AppDomain.CurrentDomain.BaseDirectory;
-            var filename = Path.GetFileName(path);
+            try
+            {
+                //Tuned for SMB Windows-Windows-Window
+                //This exact combination of confirming a file exists is the only one that doesn't drop the tunnel due to timeout.
 
-            //Enumerating files followed by checking if file exists seems to be the most stable way to check if a file exists (for SMB)
-            var result = Directory.EnumerateFiles(folder, filename, SearchOption.TopDirectoryOnly).Any() &&
-                            File.Exists(path);
+                var folder = Path.GetDirectoryName(path);
+                if (string.IsNullOrEmpty(folder)) folder = AppDomain.CurrentDomain.BaseDirectory;
+                var filename = Path.GetFileName(path);
+
+                //Enumerating files followed by checking if file exists seems to be the most stable way to check if a file exists (for SMB)
+                result = Directory.EnumerateFiles(folder, filename, SearchOption.TopDirectoryOnly).Any();
+
+                if (result)
+                {
+                    //Wasteful but necessary
+                    var content = File.ReadAllBytes(path);
+                    result &= content.Length > 0;
+                }
+                
+            }
+            catch
+            {
+                result = false;
+            }
 
             return result;
         }
+
+        //public bool Exists(string path)
+        //{
+        //    Serialise access to FileExists, which seems to improve stability on SMB
+        //    var resultTask = existsQueue.Enqueue(() =>
+        //    {
+        //        var exists = FileExists(path);
+        //        return Task.FromResult(exists);
+        //    });
+
+        //    var result = resultTask.Result;
+        //    return result;
+        //}
+
         public long GetFileSize(string path)
         {
             var result = new FileInfo(path).Length;

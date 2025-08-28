@@ -348,6 +348,8 @@ namespace ft.Listeners
                 throw new Exception($"{attempt.Operation} has exceeded the tunnel timeout of {TunnelTimeoutMilliseconds:N0} ms. Cancelling.");
             }
 
+            //Tuned for SMB Windows-Windows-Windows
+
             if (attempt.Elapsed.TotalMilliseconds < 100) return 1;
             if (attempt.Elapsed.TotalMilliseconds < 1000) return 20;
             return 100;
