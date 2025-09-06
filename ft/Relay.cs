@@ -14,6 +14,15 @@ namespace ft
 
         public Relay(Stream fromStream, Stream toStream, long maxFileSizeBytes, int readDurationMillis)
         {
+            //FPS 06/09/2025: Using 64 KB because it's likely the largest size that can be atomically written by both SMB and NFS.
+            //Unverified though.
+            //NFSv2 max 8 KB
+            //NFSv3 max 64 KB
+            //NFSv4 max between 64 KB and 1 MB
+            //SMB 1.x max 64 KB
+            //SMB 2.x max 8 MB
+            //SMB 3.x max 8 MB
+
             var bufferSize = 65535;
 
             var bytesToRead = bufferSize;
