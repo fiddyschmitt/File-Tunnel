@@ -30,8 +30,8 @@ namespace ft_tests.FileShares.Clients
 
             runner.Run("umount.exe", "X:");
 
-            runner.Run("mount.exe", "192.168.1.81:/mnt/tmpfs X:");
-            //runner.Run("mount.exe", "-o nolock,noac 192.168.1.81:/mnt/tmpfs X:");
+            runner.Run("mount.exe", "192.168.0.81:/mnt/tmpfs X:");
+            //runner.Run("mount.exe", "-o nolock,noac 192.168.0.81:/mnt/tmpfs X:");
         }
     }
 }

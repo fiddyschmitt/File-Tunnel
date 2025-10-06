@@ -41,12 +41,12 @@ namespace ft_tests
                                 .Build();
 
             win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE);
-            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.1.32", config["win10_vm_username"], config["win10_vm_password"]); //win10 VM
-            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.1.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
+            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); //win10 VM
+            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.0.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
 
-            linux_x64_1 = new LinuxProcessRunner("192.168.1.80", "user", "live", LINUX_X64_EXE, "/user/home/");
-            linux_x64_2 = new LinuxProcessRunner("192.168.1.81", "user", "live", LINUX_X64_EXE, "/user/home/");
-            linux_x64_3 = new LinuxProcessRunner("192.168.1.82", "user", "live", LINUX_X64_EXE, "/user/home/");
+            linux_x64_1 = new LinuxProcessRunner("192.168.0.80", "user", "live", LINUX_X64_EXE, "/user/home/");
+            linux_x64_2 = new LinuxProcessRunner("192.168.0.81", "user", "live", LINUX_X64_EXE, "/user/home/");
+            linux_x64_3 = new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, "/user/home/");
 
             var testResultsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_results");
             Directory.CreateDirectory(testResultsFolder);
@@ -124,10 +124,10 @@ namespace ft_tests
             {
                 var result = "";
 
-                if (client == OS.Windows && server == OS.Windows) result = @$"\\192.168.1.32\shared\{fileName}";
-                if (client == OS.Windows && server == OS.Linux) result = @$"\\192.168.1.81\data\{fileName}";
-                if (client == OS.Linux && server == OS.Windows) result = @$"/media/smb/192.168.1.32/shared/{fileName}";
-                if (client == OS.Linux && server == OS.Linux) result = @$"/media/smb/192.168.1.81/data/{fileName}";
+                if (client == OS.Windows && server == OS.Windows) result = @$"\\192.168.0.32\shared\{fileName}";
+                if (client == OS.Windows && server == OS.Linux) result = @$"\\192.168.0.81\data\{fileName}";
+                if (client == OS.Linux && server == OS.Windows) result = @$"/media/smb/192.168.0.32/shared/{fileName}";
+                if (client == OS.Linux && server == OS.Linux) result = @$"/media/smb/192.168.0.81/data/{fileName}";
 
                 return result;
             };
@@ -197,8 +197,8 @@ namespace ft_tests
             {
                 var result = "";
 
-                if (client == OS.Windows && server == OS.Linux) result = @$"X:\{fileName}";     //Using X:\ works, but the alternative doesn't: \\192.168.1.81\mnt\tmpfs
-                if (client == OS.Linux && server == OS.Linux) result = @$"/media/nfs/192.168.1.81/tmpfs/{fileName}";
+                if (client == OS.Windows && server == OS.Linux) result = @$"X:\{fileName.Replace("/", "\\")}";     //Using X:\ works, but the alternative doesn't: \\192.168.0.81\mnt\tmpfs
+                if (client == OS.Linux && server == OS.Linux) result = @$"/media/nfs/192.168.0.81/tmpfs/{fileName}";
 
                 return result;
             };
@@ -264,7 +264,7 @@ namespace ft_tests
 
             ConductTest(
                     $"{name} (Normal mode)",
-                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004"),
+                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                     server,
                     new Client(side2.OS, side2.Runner, $"{side2.Args}"),
                     "Normal");
@@ -277,7 +277,7 @@ namespace ft_tests
 
             ConductTest(
                     $"{name} (Isolated Reads mode)",
-                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --isolated-reads"),
+                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
                     server,
                     new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
                     "Isolated Reads");
@@ -292,7 +292,7 @@ namespace ft_tests
 
             ConductTest(
                     $"{name} (Upload-Download mode)",
-                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.1.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.1.31:5004 --upload-download --pace 100"),
+                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --upload-download --pace 100"),
                     server,
                     new Client(side2.OS, side2.Runner, $"{side2.Args} --upload-download --pace 100"),
                     "Upload-Download");
