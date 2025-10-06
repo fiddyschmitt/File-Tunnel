@@ -359,7 +359,7 @@ namespace ft.Listeners
 
                         if (Verbose)
                         {
-                            Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                            Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
                         }
 
                         CommandReceived(command);

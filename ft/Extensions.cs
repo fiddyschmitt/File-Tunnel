@@ -96,7 +96,7 @@ namespace ft
                 }
                 else
                 {
-                    result = $"Ping response for {p.ResponseToPacketNumber:N0}";
+                    result = $"Ping response for {p.ResponseToPacketNumber}";
                 }
             }
             else

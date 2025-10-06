@@ -97,7 +97,13 @@ namespace ft.Listeners
             {
                 result = SendQueue.TryAdd(cmd, TunnelTimeoutMilliseconds);
             }
-            catch
+            catch (Exception ex)
+            {
+                Program.Log($"WARNING! Error while enqueing {cmd.GetType().Name}: {ex.Message}");
+                result = false;
+            }
+
+            if (!result)
             {
                 Program.Log($"WARNING! Could not enqueue {cmd.GetType().Name}");
                 result = false;
@@ -296,7 +302,7 @@ namespace ft.Listeners
 
                     lock (Program.ConsoleOutputLock)
                     {
-                        Console.Write($"{DateTime.Now}: Counterpart: ");
+                        Console.Write($"{DateTime.Now}  Counterpart: ");
 
                         if (IsOnline)
                         {

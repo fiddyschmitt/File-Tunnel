@@ -306,7 +306,7 @@ namespace ft.Listeners
                             var exMsg = $"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}.";
                             if (Verbose)
                             {
-                                Program.Log(exMsg);
+                                Program.Log(exMsg, ConsoleColor.Red);
                             }
                             throw new Exception(exMsg);
                         }
@@ -327,12 +327,13 @@ namespace ft.Listeners
 
                     if (Verbose)
                     {
+                        Program.Log($"[{readFileShortName}] Read {fileContent.Length.BytesToString()}.");
                         Program.Log($"[{readFileShortName}] Finished processing file content");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
+                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}", ConsoleColor.Red);
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
                     Thread.Sleep(1000);
                 }

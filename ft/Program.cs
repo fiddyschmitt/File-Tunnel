@@ -168,7 +168,7 @@ namespace ft
                     Console.ForegroundColor = color.Value;
                 }
 
-                Console.WriteLine($"{DateTime.Now}: {str}");
+                Console.WriteLine($"{DateTime.Now}  {str}");
 
                 // Reset to original color
                 Console.ForegroundColor = OriginalConsoleColour;
