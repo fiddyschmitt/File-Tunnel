@@ -348,37 +348,16 @@ namespace ft
 
         public static (int Attempts, TimeSpan Duration) Time(
             string operation,
-            Action<(int Attempt, TimeSpan Elapsed)> action,
-            Func<(int Attempt, TimeSpan Elapsed), bool> finishCondition,
+            Func<(int Attempt, TimeSpan Elapsed), bool> action,
             Func<(int Attempt, TimeSpan Elapsed, string Operation), int> getSleepDurationMillis,
             bool printOutput)
         {
-            var result = Time(operation, action, finishCondition, true, getSleepDurationMillis, printOutput);
-            return result;
-        }
+            printOutput &= Debugger.IsAttached;
 
-        public static (int Attempts, TimeSpan Duration) Time(
-            string operation,
-            Func<(int Attempt, TimeSpan Elapsed), bool> finishCondition,
-            Action<(int Attempt, TimeSpan Elapsed)> action,
-            Func<(int Attempt, TimeSpan Elapsed, string Operation), int> getSleepDurationMillis,
-            bool printOutput)
-        {
-            var result = Time(operation, action, finishCondition, false, getSleepDurationMillis, printOutput);
-            return result;
-        }
 
-        public static (int Attempts, TimeSpan Duration) Time(
-            string operation,
-            Action<(int Attempt, TimeSpan Elapsed)> action,
-            Func<(int Attempt, TimeSpan Elapsed), bool> finishCondition,
-            bool actionFirst,
-            Func<(int Attempt, TimeSpan Elapsed, string Operation), int> getSleepDurationMillis,
-            bool printOutput)
-        {
             if (printOutput)
             {
-                Program.Log($"{operation}");
+                Program.Log($"Started {operation}");
             }
 
             var sw = new Stopwatch();
@@ -387,22 +366,12 @@ namespace ft
             var attempt = 1;
             while (true)
             {
-                if ((attempt == 1 && actionFirst) || attempt > 1)
+                if (printOutput)
                 {
-                    if (printOutput)
-                    {
-                        Program.Log($"{operation} - Starting attempt {attempt:N0}");
-                    }
-
-                    action((attempt, sw.Elapsed));
-
-                    if (printOutput)
-                    {
-                        Program.Log($"{operation} - Finished attempt {attempt:N0}");
-                    }
+                    Program.Log($"{operation} attempt {attempt:N0}");
                 }
 
-                var finished = finishCondition((attempt, sw.Elapsed));
+                var finished = action((attempt, sw.Elapsed));
 
                 if (finished)
                 {
@@ -411,7 +380,7 @@ namespace ft
 
                 var sleepMillis = getSleepDurationMillis((attempt, sw.Elapsed, operation));
 
-                Thread.Sleep(sleepMillis);
+                Delay.Wait(sleepMillis);
 
                 attempt++;
             }
@@ -423,7 +392,56 @@ namespace ft
                 Program.Log($"{operation} took {attempt:N0} attempts ({sw.Elapsed.TotalSeconds:N3} seconds)");
             }
 
+            if (printOutput)
+            {
+                Program.Log($"{operation} took {attempt:N0} attempts ({sw.Elapsed.TotalSeconds:N3} seconds)");
+            }
+
             return (attempt, sw.Elapsed);
+        }
+
+        public static void Retry(string operation, Action action, bool verbose, int timeoutMilliseconds)
+        {
+            Time(
+                operation,
+                (attempt) =>
+                {
+                    try
+                    {
+                        action();
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+
+                    return true;
+                },
+                (attempt) =>
+                {
+                    if (attempt.Elapsed.TotalMilliseconds > timeoutMilliseconds)
+                    {
+                        throw new Exception($"Timeout during {attempt.Operation}");
+                    }
+
+                    return 10;
+                },
+                verbose);
+        }
+
+        public static void Flush(this Stream stream, bool verbose, int timeoutMilliseconds)
+        {
+            Retry($"{nameof(stream)}.{nameof(Stream.Flush)}", stream.Flush, verbose, timeoutMilliseconds);
+        }
+
+        public static void Flush(this BinaryWriter binaryWriter, bool flushToDisk, bool verbose, int timeoutMilliseconds)
+        {
+            Retry($"{nameof(BinaryWriter)}.{nameof(BinaryWriter.Flush)}", binaryWriter.Flush, verbose, timeoutMilliseconds);
+
+            if (binaryWriter.BaseStream is FileStream fileStream)
+            {
+                Retry($"Flush to disk", () => fileStream.Flush(flushToDisk), verbose, timeoutMilliseconds);
+            }
         }
     }
 }

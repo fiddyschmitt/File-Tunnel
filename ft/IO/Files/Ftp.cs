@@ -88,13 +88,25 @@ namespace ft.IO.Files
             }
         }
 
-        public void WriteAllBytes(string path, byte[] bytes)
+        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             Reconnect();
 
             lock (client)
             {
-                client.UploadBytes(bytes, path, FtpRemoteExists.Overwrite);
+                if (overwrite)
+                {
+                    client.UploadBytes(bytes, path, FtpRemoteExists.Overwrite);
+                }
+                else
+                {
+                    if (client.FileExists(path))
+                    {
+                        throw new Exception($"{path} exists. Will not overwrite.");
+                    }
+
+                    client.UploadBytes(bytes, path);
+                }
             }
         }
 

@@ -7,8 +7,9 @@ namespace ft_tests.Runner
     {
         private readonly SshClient sshClient;
         private readonly string remoteExecutablePath;
+        private readonly string outputFilename;
 
-        public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string remoteExecutablePath = null) : base(host)
+        public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string outputFilename) : base(host)
         {
             var remoteFolder = "/tmp/ft/";
             this.remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);
@@ -22,9 +23,10 @@ namespace ft_tests.Runner
 
             var scpClient = new ScpClient(host, username, password);
             scpClient.Connect();
-            scpClient.Upload(new FileInfo(localExecutablePath), this.remoteExecutablePath);
+            scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
 
             sshClient.CreateCommand($"chmod +x \"{this.remoteExecutablePath}\"").Execute();
+            this.outputFilename = outputFilename;
         }
 
         public override void Run(string args)
@@ -32,7 +34,8 @@ namespace ft_tests.Runner
             Stop();
 
             // Run the process in background (&) to detach
-            var command = $"nohup sudo \"{remoteExecutablePath}\" {args} > /dev/null 2>&1 &";
+            var command = $"sudo bash -c 'nohup \"{remoteExecutablePath}\" {args} >> \"{outputFilename}\" 2>&1 &'";
+
             Debug.WriteLine($"{command}");
             sshClient.CreateCommand(command).Execute();
         }

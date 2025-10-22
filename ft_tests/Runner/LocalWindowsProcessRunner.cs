@@ -10,10 +10,12 @@ namespace ft_tests.Runner
     public class LocalWindowsProcessRunner : ProcessRunner
     {
         private readonly string localExecutablePath;
+        private readonly string outputFilename;
 
-        public LocalWindowsProcessRunner(string localExecutablePath) : base("127.0.0.1")
+        public LocalWindowsProcessRunner(string localExecutablePath, string outputFilename) : base("127.0.0.1")
         {
             this.localExecutablePath = localExecutablePath;
+            this.outputFilename = outputFilename;
 
             Stop();
         }
@@ -30,12 +32,33 @@ namespace ft_tests.Runner
             {
                 FileName = localExecutablePath,
                 Arguments = args,
-                UseShellExecute = true
+                UseShellExecute = false,  // must be false to redirect output
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
             };
 
             Debug.WriteLine($"\"{localExecutablePath}\" {args}");
 
-            Process.Start(psi);
+            var process = new Process { StartInfo = psi };
+
+            // Subscribe to both output and error streams
+            process.OutputDataReceived += (s, e) =>
+            {
+                if (e.Data != null)
+                    File.AppendAllText(outputFilename, e.Data + Environment.NewLine);
+            };
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (e.Data != null)
+                    File.AppendAllText(outputFilename, "[ERR] " + e.Data + Environment.NewLine);
+            };
+
+            process.Start();
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
         }
 
         public override string GetFullCommand(string args)
@@ -68,7 +91,7 @@ namespace ft_tests.Runner
                 UseShellExecute = true
             };
 
-            Debug.WriteLine($"\"{localExecutablePath}\" {args}");
+            Debug.WriteLine($"{cmd} {args}");
 
             var process = Process.Start(psi);
             process?.WaitForExit();

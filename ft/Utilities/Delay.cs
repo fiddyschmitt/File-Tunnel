@@ -12,6 +12,8 @@ namespace ft.Utilities
     {
         public static void Wait(int ms)
         {
+            if (ms == 0) return;
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 WindowsDelay.Wait(ms);

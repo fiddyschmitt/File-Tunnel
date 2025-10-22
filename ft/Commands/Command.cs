@@ -17,7 +17,8 @@ namespace ft.Commands
 
         public abstract byte CommandId { get; }
         public static ulong SentPacketCount { get; set; }
-        public ulong PacketNumber { get; set; }
+        public ulong PacketNumber { get; set; } = (ulong)Random.Shared.NextInt64();
+        public uint CRC { get; set; }
 
         protected abstract void Deserialize(BinaryReader reader);
         protected abstract void Serialize(BinaryWriter writer);
@@ -29,15 +30,15 @@ namespace ft.Commands
 
             writer.Write(CommandId);
 
-            PacketNumber = SentPacketCount++;
+            //PacketNumber = SentPacketCount++;
             writer.Write(PacketNumber);
 
             Serialize(writer);
 
             hashingStream.StopHashing();
 
-            var crc = hashingStream.GetCrc32();
-            writer.Write(crc);
+            CRC = hashingStream.GetCrc32();
+            writer.Write(CRC);
 
             //Don't flush here. This way, we can write multiple commands to the file in one go.
             //writer.Flush();
@@ -65,17 +66,17 @@ namespace ft.Commands
             {
                 result.PacketNumber = reader.ReadUInt64();
                 result.Deserialize(reader);
-            }
 
-            hashingStream.StopHashing();
+                hashingStream.StopHashing();
 
-            //check the crc
-            var actualCrc = hashingStream.GetCrc32();
-            var expectedCrc = reader.ReadUInt32();
+                //check the crc
+                var actualCrc = hashingStream.GetCrc32();
+                result.CRC = reader.ReadUInt32();
 
-            if (actualCrc != expectedCrc)
-            {
-                throw new Exception("Command is invalid.");
+                if (actualCrc != result.CRC)
+                {
+                    throw new InvalidDataException("Command is invalid (CRC mismatch).");
+                }
             }
 
             return result;

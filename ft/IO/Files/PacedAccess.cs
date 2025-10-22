@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ft.Utilities;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -21,14 +22,14 @@ namespace ft.IO.Files
 
         public void Delete(string path)
         {
-            Thread.Sleep(paceMilliseconds);
+            Delay.Wait(paceMilliseconds);
 
             BaseAccess.Delete(path);
         }
 
         public bool Exists(string path)
         {
-            Thread.Sleep(paceMilliseconds);
+            Delay.Wait(paceMilliseconds);
 
             var result = BaseAccess.Exists(path);
             return result;
@@ -36,7 +37,7 @@ namespace ft.IO.Files
 
         public long GetFileSize(string path)
         {
-            Thread.Sleep(paceMilliseconds);
+            Delay.Wait(paceMilliseconds);
 
             var result = BaseAccess.GetFileSize(path);
             return result;
@@ -44,24 +45,24 @@ namespace ft.IO.Files
 
         public void Move(string sourceFileName, string destFileName, bool overwrite)
         {
-            Thread.Sleep(paceMilliseconds);
+            Delay.Wait(paceMilliseconds);
 
             BaseAccess.Move(sourceFileName, destFileName, overwrite);
         }
 
         public byte[] ReadAllBytes(string path)
         {
-            Thread.Sleep(paceMilliseconds);
+            Delay.Wait(paceMilliseconds);
 
             var result = BaseAccess.ReadAllBytes(path);
             return result;
         }
 
-        public void WriteAllBytes(string path, byte[] bytes)
+        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
-            Thread.Sleep(paceMilliseconds);
+            Delay.Wait(paceMilliseconds);
 
-            BaseAccess.WriteAllBytes(path, bytes);
+            BaseAccess.WriteAllBytes(path, bytes, overwrite);
         }
     }
 }

@@ -8,16 +8,32 @@ using System.Threading.Tasks;
 
 namespace ft.IO
 {
-    public class ToggleWriter(BinaryWriter writer, long position)
+    public class ToggleWriter
     {
-        readonly BinaryWriter Writer = writer;
-        readonly long Position = position;
+        private readonly BinaryWriter writer;
+        private readonly long position;
+        private readonly int tunnelTimeoutMilliseconds;
+        private readonly bool verbose;
+
+        public ToggleWriter(BinaryWriter writer, long position, int tunnelTimeoutMilliseconds, bool verbose)
+        {
+            this.writer = writer;
+            this.position = position;
+            this.tunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
+            this.verbose = verbose;
+        }
 
         public void Set(byte value)
         {
-            Writer.BaseStream.Seek(Position, SeekOrigin.Begin);
-            Writer.Write(value);
-            Writer.Flush();
+            writer.BaseStream.Seek(position, SeekOrigin.Begin);
+
+            Extensions.Retry(
+                $"{nameof(ToggleWriter)}.{nameof(Set)}() -> {nameof(writer)}.{nameof(writer.Write)}()",
+                () => writer.Write(value),
+                verbose,
+                tunnelTimeoutMilliseconds);
+
+            writer.Flush(true, verbose, tunnelTimeoutMilliseconds);
         }
     }
 }

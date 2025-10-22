@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ft_tests.FileShares.Server
+namespace ft_tests.FileShares.Servers
 {
-    public abstract class Server
+    public class Server
     {
         public Server(OS OS, FileShareType fileShareType)
         {
@@ -17,6 +17,9 @@ namespace ft_tests.FileShares.Server
         public OS OS { get; }
         public FileShareType FileShareType { get; }
 
-        public abstract void Restart();
+        public virtual void Restart()
+        {
+
+        }
     }
 }

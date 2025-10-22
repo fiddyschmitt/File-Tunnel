@@ -153,89 +153,101 @@ namespace ft_tests
                 }
             }, TaskCreationOptions.LongRunning);
 
-            Enumerable
-                .Range(0, connections)
-                .Select(connection =>
-                {
-                    var originClient = new TcpClient();
-
-                    var startTime = DateTime.Now;
-
-                    while (true)
+            try
+            {
+                Enumerable
+                    .Range(0, connections)
+                    .Select(connection =>
                     {
-                        var duration = DateTime.Now - startTime;
-                        if (duration.TotalSeconds > 22)
+                        var originClient = new TcpClient();
+
+                        var startTime = DateTime.Now;
+
+                        while (true)
                         {
-                            throw new Exception("Could not connect");
+                            var duration = DateTime.Now - startTime;
+                            if (duration.TotalSeconds > 22)
+                            {
+                                throw new Exception("Could not connect");
+                            }
+
+                            try
+                            {
+                                originClient.Connect(lst.AsEndpoint());
+                            }
+                            catch
+                            {
+                                Thread.Sleep(200);
+                                continue;
+                            }
+
+                            break;
                         }
 
-                        try
+                        var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
+                        Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
+
+                        return new
                         {
-                            originClient.Connect(lst.AsEndpoint());
-                        }
-                        catch
+                            OriginClient = originClient,
+                            UltimateDestinationClient = ultimateDestinationClient
+                        };
+                    })
+                    .ToList()
+                    .AsParallel()
+                    .WithDegreeOfParallelism(connections)
+                    .ForAll(pair =>
+                    {
+                        var toSend = new byte[bytesToSend];
+                        Random.Shared.NextBytes(toSend);
+
+                        var tests = new[]
                         {
-                            Thread.Sleep(200);
-                            continue;
-                        }
-
-                        break;
-                    }
-
-                    var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
-                    Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
-
-                    return new
-                    {
-                        OriginClient = originClient,
-                        UltimateDestinationClient = ultimateDestinationClient
-                    };
-                })
-                .ToList()
-                .AsParallel()
-                .WithDegreeOfParallelism(connections)
-                .ForAll(pair =>
-                {
-                    var toSend = new byte[bytesToSend];
-                    var random = new Random();
-                    random.NextBytes(toSend);
-
-                    var tests = new[]
-                    {
                             new Action(() => TestDirection("Forward", pair.OriginClient, pair.UltimateDestinationClient, toSend)),
                             new Action(() => TestDirection("Reverse", pair.UltimateDestinationClient, pair.OriginClient, toSend)),
-                        };
+                            };
 
-                    if (fullDuplex)
-                    {
-                        var testTasks = tests
-                                            .ToList()
-                                            .Select(test => Task.Factory.StartNew(test, TaskCreationOptions.LongRunning))
-                                            .ToArray();
-
-                        Task.WaitAll(testTasks);
-                    }
-                    else
-                    {
-                        foreach (var test in tests)
+                        if (fullDuplex)
                         {
-                            test();
+                            var testTasks = tests
+                                                .ToList()
+                                                .Select(test => Task.Factory.StartNew(test, TaskCreationOptions.LongRunning))
+                                                .ToArray();
+
+                            Task.WaitAll(testTasks);
                         }
-                    }
-                });
+                        else
+                        {
+                            foreach (var test in tests)
+                            {
+                                test();
+                            }
+                        }
+                    });
+            }
+            finally
+            {
+                ultimateDestinationAcceptCT.Cancel();
+                ultimateDestination.Stop();
 
+                listenThread.Interrupt();
+                listenThread.Join();
 
-            ultimateDestinationAcceptCT.Cancel();
-            ultimateDestination.Stop();
+                forwardThread.Interrupt();
+                forwardThread.Join();
 
-            listenThread.Interrupt();
-            listenThread.Join();
+                try
+                {
+                    File.Delete(readFilename);
+                }
+                catch { }
 
-            forwardThread.Interrupt();
-            forwardThread.Join();
-
-            //File.Delete(readFilename);
-            //File.Delete(writeFilename);
+                try
+                {
+                    File.Delete(writeFilename);
+                }
+                catch { }
+            }
         }
 
         static void TestDirection(string direction, TcpClient sender, TcpClient receiver, byte[] toSend)

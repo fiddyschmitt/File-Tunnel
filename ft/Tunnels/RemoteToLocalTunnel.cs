@@ -4,6 +4,7 @@ using ft.Streams;
 using ft.Utilities;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net.Sockets;
 using System.Text;
@@ -13,11 +14,14 @@ namespace ft.Tunnels
 {
     public class RemoteToLocalTunnel
     {
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom, long maxFileSizeBytes, int readDurationMillis)
+        private readonly int tunnelTimeoutMilliseconds;
+
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom, long maxFileSizeBytes, int readDurationMillis, int tunnelTimeoutMilliseconds)
         {
             RemoteTcpForwards = remoteTcpForwards;
             RemoteUdpForwards = remoteUdpForwards;
             SharedFileManager = sharedFileManager;
+            this.tunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
 
             sharedFileManager.OnlineStatusChanged += (sender, args) =>
             {
@@ -48,8 +52,28 @@ namespace ft.Tunnels
                 {
                     try
                     {
+                        var connectStopwatch = Stopwatch.StartNew();
+
                         var tcpClient = new TcpClient();
-                        tcpClient.Connect(destinationEndpoint);
+
+                        //We try to connect in a loop, because sometimes the counterpart considers the tunnel to be online before this side does (leading it to try to setup the connection before this side is quite ready).
+                        while (true)
+                        {
+                            try
+                            {
+                                tcpClient.Connect(destinationEndpoint);
+                                break;
+                            }
+                            catch
+                            {
+                                if (connectStopwatch.ElapsedMilliseconds > tunnelTimeoutMilliseconds)
+                                {
+                                    throw new Exception($"Timed out while connecting to {destinationEndpointStr}");
+                                }
+
+                                Delay.Wait(1000);
+                            }
+                        }
 
                         if (tcpClient.Connected)
                         {

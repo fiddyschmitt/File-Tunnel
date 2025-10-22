@@ -42,7 +42,7 @@ namespace ft.IO.Files
                     var content = File.ReadAllBytes(path);
                     result &= content.Length > 0;
                 }
-                
+
             }
             catch
             {
@@ -84,9 +84,18 @@ namespace ft.IO.Files
             return result;
         }
 
-        public void WriteAllBytes(string path, byte[] bytes)
+        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
-            File.WriteAllBytes(path, bytes);
+            if (overwrite)
+            {
+                File.WriteAllBytes(path, bytes);
+            }
+            else
+            {
+                var fs = File.Open(path, FileMode.CreateNew, FileAccess.Write);     //this will only create the file when there isn't one already there
+                fs.Write(bytes, 0, bytes.Length);
+                fs.Close();
+            }
         }
     }
 }

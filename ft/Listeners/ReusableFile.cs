@@ -25,8 +25,9 @@ namespace ft.Listeners
 
         ToggleWriter? setReadyForPurge;
         ToggleWriter? setPurgeComplete;
-        //ToggleWriterStream? setReadyForPurge;
-        //ToggleWriterStream? setPurgeComplete;
+
+        ToggleReader? isReadyForPurge;
+        ToggleReader? isPurgeComplete;
 
         public int PurgeSizeInBytes { get; }
         public bool IsolatedReads { get; }
@@ -45,6 +46,9 @@ namespace ft.Listeners
 
         public override void SendPump()
         {
+            //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
+            //File.Create(debugFilename).Close();
+
             var writeFileShortName = Path.GetFileName(WriteToFilename);
 
             while (true)
@@ -62,7 +66,7 @@ namespace ft.Listeners
                 catch (Exception ex)
                 {
                     Program.Log($"Could not create file ({WriteToFilename}): {ex.Message}");
-                    Thread.Sleep(1000);
+                    Delay.Wait(1000);
                     continue;
                 }
 
@@ -70,13 +74,12 @@ namespace ft.Listeners
                 {
                     fileStream.SetLength(MESSAGE_WRITE_POS);
 
-                    var hashingStream = new HashingStream(fileStream);
+                    var hashingStream = new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds);
                     var binaryWriter = new BinaryWriter(hashingStream);
 
-                    var sessionId = Program.Random.NextInt64();
+                    var sessionId = Random.Shared.NextInt64();
                     binaryWriter.Write(sessionId);
-                    binaryWriter.Flush();
-                    //fileStream.Flush(true);
+                    binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
                     if (Verbose)
                     {
@@ -86,21 +89,20 @@ namespace ft.Listeners
                     var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                     setReadyForPurge = new ToggleWriter(
                         new BinaryWriter(setReadyForPurgeStream),
-                        READY_FOR_PURGE_FLAG);
-                    //setReadyForPurge = new ToggleWriterStream(
-                    //    setReadyForPurgeStream,
-                    //    READY_FOR_PURGE_FLAG);
+                        READY_FOR_PURGE_FLAG,
+                        TunnelTimeoutMilliseconds,
+                        Verbose);
 
                     var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                     setPurgeComplete = new ToggleWriter(
                         new BinaryWriter(setPurgeCompleteStream),
-                        PURGE_COMPLETE_FLAG);
-                    //setPurgeComplete = new ToggleWriterStream(
-                    //    setPurgeCompleteStream,
-                    //    PURGE_COMPLETE_FLAG);
+                        PURGE_COMPLETE_FLAG,
+                        TunnelTimeoutMilliseconds,
+                        Verbose);
 
-                    var ms = new HashingStream(new MemoryStream());
-                    var msWriter = new BinaryWriter(ms);
+                    var ms = new MemoryStream();
+                    var hashingMemoryStream = new HashingStream(ms, Verbose, TunnelTimeoutMilliseconds);
+                    var msWriter = new BinaryWriter(hashingMemoryStream);
 
                     fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
@@ -108,20 +110,25 @@ namespace ft.Listeners
 
                     while (true)
                     {
-                        if (SendQueue.TryTake(out Command? command, -1))
+                        if (SendQueue.TryTake(out Command? command, TunnelTimeoutMilliseconds))
                         {
-                            ms.SetLength(0);
-                            command.Serialise(msWriter);
-                            msWriter.Flush();
+                            if (Verbose)
+                            {
+                                Program.Log($"[{writeFileShortName}] Preparing to send packet number {command.PacketNumber} ({command.GetName()})");
+                            }
 
-                            if (PurgeSizeInBytes > 0 && fileStream.Position + ms.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                            hashingMemoryStream.SetLength(0);
+                            command.Serialise(msWriter);
+                            msWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+
+                            if (PurgeSizeInBytes > 0 && fileStream.Position + hashingMemoryStream.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
                             {
                                 Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
 
                                 var purge = new Purge();
                                 purge.Serialise(binaryWriter);
-                                fileStream.Flush();
-                                //fileStream.Flush(true);
+
+                                binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
                                 //wait for counterpart to be ready for purge
                                 isReadyForPurge?.Wait(1);
@@ -145,26 +152,25 @@ namespace ft.Listeners
 
                             //write the message to file
                             var commandStartPos = fileStream.Position;
-                            command.Serialise(binaryWriter);
+
+                            var commandBytes = ms.ToArray();
+                            binaryWriter.Write(commandBytes);
+
                             var commandEndPos = fileStream.Position;
 
-                            bytesWritten += ms.Length;
+                            bytesWritten += hashingMemoryStream.Length;
 
                             if (Verbose)
                             {
-                                Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                                Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
                             }
 
                             CommandSent(command);
                         }
 
-                        binaryWriter.Flush();
-                        fileStream.Flush(true);
+                        binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
-                        if (Verbose)
-                        {
-                            Program.Log($"[{writeFileShortName}] Wrote 1 command in one transaction. {bytesWritten.BytesToString()} bytes.");
-                        }
+                        //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
 
                         bytesWritten = 0;
                     }
@@ -173,15 +179,10 @@ namespace ft.Listeners
                 {
                     Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
                     Program.Log($"[{writeFileShortName}] Restarting {nameof(SendPump)}");
-                    Thread.Sleep(1000);
+                    Delay.Wait(1000);
                 }
             }
         }
-
-        ToggleReader? isReadyForPurge;
-        ToggleReader? isPurgeComplete;
-        //ToggleReaderStream? isReadyForPurge;
-        //ToggleReaderStream? isPurgeComplete;
 
         public static long ReadSessionId(BinaryReader binaryReader)
         {
@@ -196,6 +197,9 @@ namespace ft.Listeners
 
         public override void ReceivePump()
         {
+            //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
+            //File.Create(debugFilename).Close();
+
             var readFileShortName = Path.GetFileName(ReadFromFilename);
             var checkForSessionChange = new Stopwatch();
 
@@ -218,7 +222,7 @@ namespace ft.Listeners
                                 Program.Log($"[{readFileShortName}] now exists. Reading.");
                                 break;
                             }
-                            Thread.Sleep(200);
+                            Delay.Wait(200);
                         }
 
                         fileStream = IsolatedReads ?
@@ -242,7 +246,7 @@ namespace ft.Listeners
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                         }
 
-                        var hashingStream = new HashingStream(fileStream);
+                        var hashingStream = new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds);
                         binaryReader = new BinaryReader(hashingStream, Encoding.ASCII);
 
                         currentSessionId = ReadSessionId(binaryReader);
@@ -259,9 +263,6 @@ namespace ft.Listeners
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
                             READY_FOR_PURGE_FLAG);
-                        //isReadyForPurge = new ToggleReaderStream(
-                        //    isReadyForPurgeStream,
-                        //    READY_FOR_PURGE_FLAG);
 
                         Stream isPurgeCompleteStream = IsolatedReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename) :
@@ -269,9 +270,6 @@ namespace ft.Listeners
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
                             PURGE_COMPLETE_FLAG);
-                        //isPurgeComplete = new ToggleReaderStream(
-                        //    isPurgeCompleteStream,
-                        //    PURGE_COMPLETE_FLAG);
                     }
                     catch (Exception ex)
                     {
@@ -286,6 +284,7 @@ namespace ft.Listeners
                     checkForSessionChange.Restart();
                     while (true)
                     {
+                        var waitForData = Stopwatch.StartNew();
                         while (true)
                         {
                             var nextByte = binaryReader.PeekChar();
@@ -302,7 +301,7 @@ namespace ft.Listeners
                             }
                             else
                             {
-                                fileStream.Flush();
+                                fileStream.Flush(Verbose, TunnelTimeoutMilliseconds);
                             }
 
 
@@ -328,6 +327,12 @@ namespace ft.Listeners
                                 checkForSessionChange.Restart();
                             }
 
+                            if (waitForData.ElapsedMilliseconds > TunnelTimeoutMilliseconds)
+                            {
+                                currentSessionId = -1;
+                                throw new Exception($"[{readFileShortName}] Timed out while waiting for data.");
+                            }
+
                             Delay.Wait(1);
                         }
 
@@ -341,11 +346,25 @@ namespace ft.Listeners
                         catch
                         {
                             retryPos = commandStartPos;
-                            Thread.Sleep(500);
+                            Delay.Wait(500);
                             throw;
                         }
 
                         var commandEndPos = fileStream.Position;
+
+                        //var ms = new MemoryStream();
+                        //fileStream.Seek(commandStartPos, SeekOrigin.Begin);
+                        //fileStream.CopyTo(ms, commandEndPos - commandStartPos);
+                        //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
+
+                        //if (binaryReader.BaseStream is HashingStream hs)
+                        //{
+                        //    var hashingStreamBytes = hs.GetData();
+                        //    var ms = new MemoryStream(hashingStreamBytes);
+                        //    File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
+                        //}
+
+
 
                         if (command == null)
                         {
@@ -376,7 +395,7 @@ namespace ft.Listeners
 
                             //go back to the beginning
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                            fileStream.Flush(); //force read
+                            fileStream.Flush(Verbose, TunnelTimeoutMilliseconds); //force read
 
                             //clear our ready flag
                             setReadyForPurge?.Set(0);
@@ -392,7 +411,7 @@ namespace ft.Listeners
                 {
                     Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
-                    Thread.Sleep(1000);
+                    Delay.Wait(1000);
                 }
             }
         }

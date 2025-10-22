@@ -12,7 +12,7 @@ namespace ft.IO.Files
 
         void Delete(string path);
 
-        void WriteAllBytes(string path, byte[] bytes);
+        void WriteAllBytes(string path, byte[] bytes, bool overwrite = true);
 
         void Move(string sourceFileName, string destFileName, bool overwrite);
 

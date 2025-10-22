@@ -41,6 +41,8 @@ namespace ft.Tunnels
             localListeners.ConnectionAccepted += (sender, connectionDetails) =>
             {
                 var connectionId = SharedFileManager.GenerateUniqueConnectionId();
+                Program.Log($"New connection is {connectionId}. Requesting counterpart establish connection to {connectionDetails.DestinationEndpointString}");
+
                 var secondaryStream = new SharedFileStream(sharedFileManager, connectionId);
                 secondaryStream.EstablishConnection(connectionDetails.DestinationEndpointString);
 

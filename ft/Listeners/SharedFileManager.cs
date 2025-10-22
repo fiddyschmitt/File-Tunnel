@@ -1,6 +1,7 @@
 ﻿using ft.Bandwidth;
 using ft.Commands;
 using ft.Streams;
+using ft.Utilities;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -31,6 +32,7 @@ namespace ft.Listeners
         public int TunnelTimeoutMilliseconds { get; protected set; }
         public bool Verbose { get; protected set; }
         DateTime? lastContactFromCounterpart;
+        DateTime? lastSuccessfulPing;
         public bool IsOnline { get; protected set; } = false;
 
 
@@ -79,7 +81,7 @@ namespace ft.Listeners
             int result;
             while (true)
             {
-                result = Program.Random.Next(int.MaxValue);
+                result = Random.Shared.Next(int.MaxValue);
 
                 if (!ReceiveQueue.ContainsKey(result))
                 {
@@ -90,12 +92,12 @@ namespace ft.Listeners
             return result;
         }
 
-        public bool EnqueueToSend(Command cmd)
+        public bool EnqueueToSend(Command cmd, int timeoutMilliseconds)
         {
             bool result;
             try
             {
-                result = SendQueue.TryAdd(cmd, TunnelTimeoutMilliseconds);
+                result = SendQueue.TryAdd(cmd, timeoutMilliseconds);
             }
             catch (Exception ex)
             {
@@ -106,9 +108,14 @@ namespace ft.Listeners
             if (!result)
             {
                 Program.Log($"WARNING! Could not enqueue {cmd.GetType().Name}");
-                result = false;
             }
 
+            return result;
+        }
+
+        public bool EnqueueToSend(Command cmd)
+        {
+            var result = EnqueueToSend(cmd, TunnelTimeoutMilliseconds);
             return result;
         }
 
@@ -143,7 +150,7 @@ namespace ft.Listeners
 
         protected void CommandReceived(Command command)
         {
-             lastContactFromCounterpart = DateTime.Now;
+            lastContactFromCounterpart = DateTime.Now;
 
             if (command is Forward forward && forward.Payload != null)
             {
@@ -235,8 +242,9 @@ namespace ft.Listeners
         public TimeSpan? latestRTT = null;
         public void MeasureRTT()
         {
-            var pingRequest = new Ping(EnumPingType.Request);
             var pingStopwatch = new Stopwatch();
+
+            var pingTimeoutMillliseconds = (int)(0.4 * TunnelTimeoutMilliseconds);
 
             while (true)
             {
@@ -244,7 +252,9 @@ namespace ft.Listeners
                 {
                     pingStopwatch.Restart();
 
-                    if (!EnqueueToSend(pingRequest))
+                    var pingRequest = new Ping(EnumPingType.Request);
+
+                    if (!EnqueueToSend(pingRequest, pingTimeoutMillliseconds))
                     {
                         latestRTT = null;
                         continue;
@@ -261,11 +271,12 @@ namespace ft.Listeners
                                     pingStopwatch.Stop();
 
                                     latestRTT = pingStopwatch.Elapsed;
+                                    lastSuccessfulPing = DateTime.Now;
                                     break;
                                 }
                             }
 
-                            if (pingStopwatch.ElapsedMilliseconds > TunnelTimeoutMilliseconds)
+                            if (pingStopwatch.ElapsedMilliseconds > pingTimeoutMillliseconds)
                             {
                                 latestRTT = null;
                                 break;
@@ -280,7 +291,7 @@ namespace ft.Listeners
 
                     var durationToSleep = (int)(1000 - latestRTT?.TotalMilliseconds ?? 0);
                     if (durationToSleep < 0) durationToSleep = 0;
-                    Thread.Sleep(durationToSleep);
+                    Delay.Wait(durationToSleep);
                 }
                 catch (Exception ex)
                 {
@@ -333,7 +344,7 @@ namespace ft.Listeners
                         }
                     }
 
-                    Thread.Sleep(reportIntervalMs);
+                    Delay.Wait(reportIntervalMs);
                 }
                 catch (Exception ex)
                 {
@@ -348,12 +359,14 @@ namespace ft.Listeners
             {
                 while (true)
                 {
-                    if (lastContactFromCounterpart != null)
+                    if (lastContactFromCounterpart != null && lastSuccessfulPing != null)
                     {
                         var orig = IsOnline;
 
                         var timeSinceLastContact = DateTime.Now - lastContactFromCounterpart.Value;
-                        IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds;
+                        var timeSinceLastSuccessfulPing = DateTime.Now - lastSuccessfulPing.Value;
+
+                        IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds && timeSinceLastSuccessfulPing.TotalMilliseconds < TunnelTimeoutMilliseconds;
 
                         if (orig != IsOnline)
                         {
@@ -361,7 +374,7 @@ namespace ft.Listeners
                         }
                     }
 
-                    Thread.Sleep(100);
+                    Delay.Wait(100);
                 }
             }
             catch (Exception ex)
@@ -388,7 +401,7 @@ namespace ft.Listeners
 
                 Console.WriteLine(threadStr);
 
-                Thread.Sleep(10000);
+                Delay.Wait(10000);
             }
         }
     }

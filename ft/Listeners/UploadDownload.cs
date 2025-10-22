@@ -1,6 +1,7 @@
 ﻿using ft.Commands;
 using ft.IO.Files;
 using ft.Streams;
+using ft.Utilities;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -26,7 +27,7 @@ namespace ft.Listeners
         {
             this.fileAccess = new PacedAccess(fileAccess, paceMilliseconds);
             this.maxFileSizeBytes = maxFileSizeBytes;
-            this.paceMilliseconds = paceMilliseconds;
+            this.paceMilliseconds = Math.Max(1, paceMilliseconds);  //the pace should be at least 1 millisecond, otherwise we consume a lot of CPU cycles
         }
 
         public override void SendPump()
@@ -34,276 +35,185 @@ namespace ft.Listeners
             var writeFileShortName = Path.GetFileName(WriteToFilename);
             var writingStopwatch = new Stopwatch();
 
+            var timeSinceWrite = new Stopwatch();
+            byte[]? lastWrite = null;
+
             try
             {
-                if (fileAccess.Exists(WriteToFilename))
-                {
-                    fileAccess.Delete(WriteToFilename);
-                }
+                fileAccess.Delete(WriteToFilename);
             }
             catch { }
+
+            //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
+            //File.Create(debugFilename).Close();
 
             while (true)
             {
                 try
                 {
-                    //wait for the previous file to be deleted by counterpart, signaling it was processed
-                    Extensions.Time(
-                        $"[{writeFileShortName}] Wait for file to be deleted by counterpart",
-                        _ => { },
-                        attempt =>
-                        {
-                            bool fileStillExists;
-                            try
-                            {
-                                fileStillExists = fileAccess.Exists(WriteToFilename);
-
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] [Wait for file to be deleted by counterpart - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-
-                                //assume it still exists
-                                fileStillExists = true;
-                            }
-
-                            return !fileStillExists;
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
-
-
                     using var memoryStream = new MemoryStream();
-                    var hashingStream = new HashingStream(memoryStream);
+                    var hashingStream = new HashingStream(memoryStream, Verbose, TunnelTimeoutMilliseconds);
                     var binaryWriter = new BinaryWriter(hashingStream);
 
-                    if (SendQueue.TryTake(out Command? command, -1))
+                    if (SendQueue.TryTake(out Command? command, TunnelTimeoutMilliseconds))
                     {
-                        //write the message to file
-                        var commandStartPos = memoryStream.Position;
                         command.Serialise(binaryWriter);
-                        var commandEndPos = memoryStream.Position;
-
-                        if (Verbose)
-                        {
-                            Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber:N0} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
-                        }
-
-                        CommandSent(command);
                     }
 
-                    binaryWriter.Flush();
+                    binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
-                    var memoryStreamContent = memoryStream.ToArray();
+                    var commandBytes = memoryStream.ToArray();
 
-                    //Write to a temp file first.
-                    //This is required for a tsclient-based client to work.
-                    var tempFile = WriteToFilename + ".tmp";
                     Extensions.Time(
-                        $"[{writeFileShortName}] Write file content",
-                        _ => { },
-                        attempt =>
+                        $"[{writeFileShortName}] Write file",
+                        _ =>
                         {
-                            bool writeSuccessful;
+                            var writeSuccessful = false;
 
                             try
                             {
-                                fileAccess.WriteAllBytes(tempFile, memoryStreamContent);
-                                writeSuccessful = true;
+                                if (timeSinceWrite.ElapsedMilliseconds < TunnelTimeoutMilliseconds * 0.4)
+                                {
+                                    fileAccess.WriteAllBytes(WriteToFilename, commandBytes, false);     //only write the file when the existing one has been deleted (signifying it was processed by the counterpart)
+
+                                    //File.AppendAllLines(debugFilename, [$"{commandBytes.Length:N0} bytes", Convert.ToBase64String(memoryStream.ToArray())]);
+
+                                    writeSuccessful = true;
+                                }
+                                else
+                                {
+                                    //SMB Windows-Linux-Windows occassionally writes a 0 byte file. Let's re-write it.
+
+                                    if (lastWrite != null)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] File still exists after {timeSinceWrite.ElapsedMilliseconds:N0} ms. Re-writing.", ConsoleColor.Red);
+
+                                        fileAccess.WriteAllBytes(WriteToFilename, lastWrite);
+
+                                        //File.AppendAllLines(debugFilename, [$"{lastWrite.Length:N0} bytes re-write", Convert.ToBase64String(lastWrite)]);
+
+                                        timeSinceWrite.Restart();
+                                    }
+                                }
                             }
                             catch (Exception ex)
                             {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Write file content - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-
-                                return false;
+                                Program.Log($"[{writeFileShortName}] Error during write: {ex.Message}", ConsoleColor.Red);
                             }
 
-                            if (fileAccess.BaseAccess is LocalAccess)
-                            {
-                                //NFS occassionally writes a 0 byte file, so we retry until it's written properly.
 
-                                try
-                                {
-                                    writeSuccessful &= fileAccess.Exists(tempFile) && fileAccess.GetFileSize(tempFile) == memoryStreamContent.Length;
-                                }
-                                catch (Exception ex)
-                                {
-                                    if (Verbose)
-                                    {
-                                        Program.Log($"[{writeFileShortName}] [Confirm file was written - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                    }
-
-                                    writeSuccessful = false;
-                                }
-                            }
 
                             return writeSuccessful;
                         },
                         DefaultSleepStrategy,
                         Verbose);
 
-                    //move the temp file into place
-                    Extensions.Time(
-                        $"[{writeFileShortName}] Move file into place",
-                        _ => { },
-                        attempt =>
-                        {
-                            bool moved;
-                            try
-                            {
-                                fileAccess.Move(tempFile, WriteToFilename, true);
-                                moved = true;
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Move file into place - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-
-                                moved = false;
-                            }
-
-                            return moved;
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
-
-                    //var debugFilename = $"diag-sent.txt";
-                    //File.AppendAllLines(debugFilename, [Convert.ToBase64String(memoryStreamContent)]);
-
-                    if (Verbose)
+                    if (command != null)
                     {
-                        Program.Log($"[{writeFileShortName}] Wrote 1 command in one transaction. {memoryStream.Length.BytesToString()}.");
+                        CommandSent(command);
+                        lastWrite = commandBytes;
+                        timeSinceWrite.Restart();
+
+                        if (Verbose)
+                        {
+                            Program.Log($"[{writeFileShortName}] Wrote {memoryStream.Length.BytesToString()}.");
+                        }
                     }
+
+                    Delay.Wait(paceMilliseconds);
                 }
                 catch (Exception ex)
                 {
                     Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
                     Program.Log($"[{writeFileShortName}] Restarting {nameof(SendPump)}");
-                    Thread.Sleep(1000);
+
+                    Delay.Wait(1000);
                 }
             }
         }
 
         public override void ReceivePump()
         {
+            //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
+            //File.Create(debugFilename).Close();
+
             var readFileShortName = Path.GetFileName(ReadFromFilename);
 
-            try
-            {
-                if (fileAccess.Exists(ReadFromFilename))
-                {
-                    fileAccess.Delete(ReadFromFilename);
-                }
-            }
-            catch { }
+            ulong? previousPacketNumber = null;
+            uint previousPacketCRC = 0;
 
             while (true)
             {
                 try
                 {
-                    Extensions.Time(
-                        $"[{readFileShortName}] Wait for file to exist",
-                        _ => { },
-                        attempt =>
-                        {
-                            try
-                            {
-                                var fileExists = fileAccess.Exists(ReadFromFilename) && fileAccess.GetFileSize(ReadFromFilename) > 0;
-                                return fileExists;
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{ReadFromFilename}] [Wait for file to exist - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
-                                return false;
-                            }
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
-
-
-
-
                     byte[] fileContent = [];
+
                     Extensions.Time(
-                        $"[{readFileShortName}] Read file contents",
-                        attempt =>
+                        $"[{readFileShortName}] Read file",
+                        _ =>
                         {
+                            var readSuccessful = false;
+
                             try
                             {
                                 fileContent = fileAccess.ReadAllBytes(ReadFromFilename);
+
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{readFileShortName}] Read {fileContent.Length.BytesToString()}.");
+                                }
+
+                                if (fileContent.Length == 0)
+                                {
+                                    Program.Log($"[{readFileShortName}] 0 length read. Retrying.", ConsoleColor.Red);
+                                }
+                                else
+                                {
+                                    readSuccessful = true;
+                                }
                             }
                             catch (Exception ex)
                             {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{readFileShortName}] [Read file contents - attempt {attempt.Attempt:N0}]: {ex.Message}");
-                                }
+                                Program.Log($"[{readFileShortName}] Could not read: {ex.Message}");
                             }
+
+                            return readSuccessful;
                         },
-                        _ => fileContent?.Length > 0,
                         DefaultSleepStrategy,
                         Verbose);
 
-                    //var debugFilename = $"diag-received.txt";
-                    //File.AppendAllLines(debugFilename, [Convert.ToBase64String(fileContent)]);
+                    Delay.Wait(paceMilliseconds);
 
-                    Extensions.Time(
-                        $"[{readFileShortName}] Delete processed file",
-                        _ => { },
-                        attempt =>
+                    Command? command = null;
+
+                    if (fileContent.Length > 0)
+                    {
+                        using var memoryStream = new MemoryStream(fileContent);
+                        var hashingStream = new HashingStream(memoryStream, Verbose, TunnelTimeoutMilliseconds);
+                        var binaryReader = new BinaryReader(hashingStream, Encoding.ASCII);
+
+                        if (Verbose)
                         {
-                            bool fileDeleted;
+                            Program.Log($"[{readFileShortName}] Processing file content");
+                        }
 
-                            try
-                            {
-                                fileAccess.Delete(ReadFromFilename);
-                                fileDeleted = true;
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{readFileShortName}] [Delete processed file - attempt {attempt.Attempt:N0}]: {ex.ToString()}");
-                                }
-
-                                fileDeleted = false;
-                            }
-
-                            return fileDeleted;
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
-
-                    using var memoryStream = new MemoryStream(fileContent);
-                    var hashingStream = new HashingStream(memoryStream);
-                    var binaryReader = new BinaryReader(hashingStream, Encoding.ASCII);
-
-                    if (Verbose)
-                    {
-                        Program.Log($"[{readFileShortName}] Processing file content");
-                    }
-
-                    var commandsRead = 0;
-                    while (memoryStream.Position < memoryStream.Length)
-                    {
-                        var commandStartPos = memoryStream.Position;
-                        var command = Command.Deserialise(binaryReader);
-                        var commandEndPos = memoryStream.Position;
+                        try
+                        {
+                            command = Command.Deserialise(binaryReader);
+                        }
+                        catch (InvalidDataException)
+                        {
+                            Program.Log($"[{readFileShortName}] Malformed packet received. Ignoring and awaiting resend.", ConsoleColor.Red);
+                            continue;
+                        }
+                        catch (EndOfStreamException eosEx)
+                        {
+                            Program.Log($"[{readFileShortName}] {eosEx.Message}", ConsoleColor.Red);
+                        }
 
                         if (command == null)
                         {
-                            var exMsg = $"[{readFileShortName}] Could not read command at file position {commandStartPos:N0}.";
+                            var exMsg = $"[{readFileShortName}] Could not read command.";
                             if (Verbose)
                             {
                                 Program.Log(exMsg, ConsoleColor.Red);
@@ -311,19 +221,48 @@ namespace ft.Listeners
                             throw new Exception(exMsg);
                         }
 
-                        if (Verbose)
+                        if (command.PacketNumber == previousPacketNumber && command.CRC == previousPacketCRC)
                         {
-                            Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber:N0} ({command.GetName()}) from position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                            //File.AppendAllLines(debugFilename, [$"{fileContent.Length:N0} bytes (discarding duplicate)", Convert.ToBase64String(fileContent)]);
+                            Program.Log($"[{readFileShortName}] Discarding duplicate packet (Packet number: {command.PacketNumber}, Size: {fileContent.Length:N0} bytes, CRC: {command.CRC})", ConsoleColor.Yellow);
                         }
+                        else
+                        {
+                            //File.AppendAllLines(debugFilename, [$"{fileContent.Length:N0} bytes", Convert.ToBase64String(fileContent)]);
 
-                        CommandReceived(command);
-                        commandsRead++;
+                            previousPacketNumber = command.PacketNumber;
+                            previousPacketCRC = command.CRC;
+
+                            if (Verbose)
+                            {
+                                Program.Log($"[{readFileShortName}] Received packet number {command.PacketNumber} ({command.GetName()})");
+                            }
+
+                            CommandReceived(command);
+                        }
                     }
 
-                    if (Verbose)
-                    {
-                        Program.Log($"[{readFileShortName}] Read {commandsRead:N0} commands in one transaction. {memoryStream.Length.BytesToString()}.");
-                    }
+                    Extensions.Time(
+                        $"[{readFileShortName}] Move processed file",
+                        _ =>
+                        {
+                            var moveSuccessful = false;
+
+                            try
+                            {
+                                //Moving seems to block the file system much less than deleting
+                                fileAccess.Move(ReadFromFilename, ReadFromFilename + ".processed", true);
+                                moveSuccessful = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                Program.Log($"[{readFileShortName}] Could not move: {ex.Message}");
+                            }
+
+                            return moveSuccessful;
+                        },
+                        DefaultSleepStrategy,
+                        Verbose);
 
                     if (Verbose)
                     {
@@ -335,7 +274,8 @@ namespace ft.Listeners
                 {
                     Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}", ConsoleColor.Red);
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
-                    Thread.Sleep(1000);
+
+                    Delay.Wait(1000);
                 }
             }
         }
@@ -348,10 +288,11 @@ namespace ft.Listeners
             }
 
             //Tuned for SMB Windows-Windows-Windows
+            //if (attempt.Elapsed.TotalMilliseconds < 100) return 1;
+            //if (attempt.Elapsed.TotalMilliseconds < 1000) return 20;
+            //return 100;
 
-            if (attempt.Elapsed.TotalMilliseconds < 100) return 1;
-            if (attempt.Elapsed.TotalMilliseconds < 1000) return 20;
-            return 100;
+            return paceMilliseconds;
         }
 
         public override void Stop(string reason)

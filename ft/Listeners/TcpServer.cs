@@ -35,14 +35,15 @@ namespace ft.Listeners
         {
             var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
 
+            //start listener here so that it's ready should the very next message be a Connect
+            listener = new TcpListener(listenEndpoint);
+            listener.Start();
+            Program.Log($"Started listening on TCP {ListenOnEndpointStr}");
+
             listenerTask = Threads.StartNew(() =>
             {
                 try
                 {
-                    listener = new TcpListener(listenEndpoint);
-                    listener.Start();
-                    Program.Log($"Started listening on TCP {ListenOnEndpointStr}");
-
                     while (true)
                     {
                         var client = listener.AcceptTcpClient();

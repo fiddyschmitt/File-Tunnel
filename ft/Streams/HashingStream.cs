@@ -4,17 +4,31 @@ using System.IO;
 using System.IO.Hashing;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class HashingStream(Stream stream) : Stream
+    public class HashingStream : Stream
     {
         readonly Crc32 crc32 = new();
+        private readonly Stream stream;
+        private readonly bool verbose;
+        private readonly int tunnelTimeoutMilliseconds;
+        //List<byte[]> data = [];
 
         bool hashing = false;
+
+        public HashingStream(Stream stream, bool verbose, int tunnelTimeoutMilliseconds)
+        {
+            this.stream = stream;
+            this.verbose = verbose;
+            this.tunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
+        }
+
         public void StartHashing()
         {
+            //data = [];
             crc32.Reset();
             hashing = true;
         }
@@ -46,7 +60,7 @@ namespace ft.Streams
 
         public override void Flush()
         {
-            stream.Flush();
+            stream.Flush(verbose, tunnelTimeoutMilliseconds);
         }
 
         public override int Read(byte[] buffer, int offset, int count)
@@ -57,6 +71,8 @@ namespace ft.Streams
             {
                 var readBytes = new ReadOnlySpan<byte>(buffer, offset, result);
                 crc32.Append(readBytes);
+
+                //data.Add(readBytes.ToArray());
             }
 
             return result;
@@ -81,7 +97,19 @@ namespace ft.Streams
             {
                 var readBytes = new ReadOnlySpan<byte>(buffer, offset, count);
                 crc32.Append(readBytes);
+
+                //data.Add(readBytes.ToArray());
             }
         }
+
+        //public byte[] GetData()
+        //{
+        //    var result = data
+        //                    .Union([crc32.GetCurrentHash()])
+        //                    .SelectMany(bytes => bytes)
+        //                    .ToArray();
+
+        //    return result;
+        //}
     }
 }

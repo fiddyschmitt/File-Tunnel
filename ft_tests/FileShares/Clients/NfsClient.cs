@@ -26,12 +26,23 @@ namespace ft_tests.FileShares.Clients
             //if (OS == OS.Windows) runner.Run(@"cmd.exe", "/c net stop nfsclnt && net start nfsclnt");
             //Thread.Sleep(10000);
 
-            runner.Run("net.exe", "use * /delete /yes");
+            if (OS == OS.Windows)
+            {
+                runner.Run("net.exe", "use * /delete /yes");
 
-            runner.Run("umount.exe", "X:");
+                runner.Run("umount.exe", "X:");
 
-            runner.Run("mount.exe", "192.168.0.81:/mnt/tmpfs X:");
-            //runner.Run("mount.exe", "-o nolock,noac 192.168.0.81:/mnt/tmpfs X:");
+                runner.Run("mount.exe", "192.168.0.81:/mnt/tmpfs X:");
+
+                //This causes NFS Windows-Linux-Windows to not work
+                //runner.Run("mount.exe", "-o nolock,noac,nfsvers=4 192.168.0.81:/mnt/tmpfs X:");
+            }
+
+            if (OS == OS.Linux)
+            {
+                runner.Run("umount", "/media/nfs/192.168.0.81/tmpfs");
+                runner.Run("mount", "-t nfs 192.168.0.81:/mnt/tmpfs /media/nfs/192.168.0.81/tmpfs");
+            }
         }
     }
 }

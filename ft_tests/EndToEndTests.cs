@@ -2,13 +2,14 @@
 using CsvHelper.Configuration;
 using ft;
 using ft_tests.FileShares.Clients;
-using ft_tests.FileShares.Server;
+using ft_tests.FileShares.Servers;
 using ft_tests.Runner;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 
 namespace ft_tests
@@ -18,6 +19,7 @@ namespace ft_tests
     {
         const string WIN_X64_EXE = @"R:\Temp\ft release\win-x64\ft.exe";
         const string LINUX_X64_EXE = @"R:\Temp\ft release\linux-x64\ft";
+        static string localWindowsOutputFilename = "";
 
         static ProcessRunner win10_x64_1;
         static ProcessRunner win10_x64_2;
@@ -40,17 +42,25 @@ namespace ft_tests
                                 .AddUserSecrets<EndToEndTests>()
                                 .Build();
 
-            win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE);
-            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); //win10 VM
-            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.0.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
-
-            linux_x64_1 = new LinuxProcessRunner("192.168.0.80", "user", "live", LINUX_X64_EXE, "/user/home/");
-            linux_x64_2 = new LinuxProcessRunner("192.168.0.81", "user", "live", LINUX_X64_EXE, "/user/home/");
-            linux_x64_3 = new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, "/user/home/");
 
             var testResultsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_results");
             Directory.CreateDirectory(testResultsFolder);
-            var testResultsFilename = Path.Combine(testResultsFolder, $"{DateTime.Now:yyyy-MM-dd HHmm ss}.csv");
+
+            var justDateFilename = $"{DateTime.Now:yyyy-MM-dd HHmm ss}";
+            var testResultsFilename = Path.Combine(testResultsFolder, $"{justDateFilename}.csv");
+            localWindowsOutputFilename = Path.ChangeExtension(testResultsFilename, ".log");
+            var remoteLinuxOutputFilename = $"/media/smb/192.168.0.31/r/Temp/ft release/linux-x64/output/{justDateFilename}";
+
+
+
+            win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE, localWindowsOutputFilename);
+            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); //win10 VM
+            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.0.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
+
+            linux_x64_1 = new LinuxProcessRunner("192.168.0.80", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.80.log");
+            linux_x64_2 = new LinuxProcessRunner("192.168.0.81", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.81.log");
+            linux_x64_3 = new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.82.log");
+
 
             var writer = new StreamWriter(testResultsFilename)
             {
@@ -122,53 +132,65 @@ namespace ft_tests
 
             var pathLookup = (OS client, OS server, string fileName) =>
             {
-                var result = "";
+                var clientSep = client == OS.Windows ? '\\' : '/';
+                var otherSep = client == OS.Windows ? '/' : '\\';
 
-                if (client == OS.Windows && server == OS.Windows) result = @$"\\192.168.0.32\shared\{fileName}";
-                if (client == OS.Windows && server == OS.Linux) result = @$"\\192.168.0.81\data\{fileName}";
-                if (client == OS.Linux && server == OS.Windows) result = @$"/media/smb/192.168.0.32/shared/{fileName}";
-                if (client == OS.Linux && server == OS.Linux) result = @$"/media/smb/192.168.0.81/data/{fileName}";
+                // Normalise separators to the client’s style and strip leading separators
+                fileName = fileName.Replace(otherSep, clientSep).TrimStart('\\', '/');
 
-                return result;
+                string basePath = (client, server) switch
+                {
+                    (OS.Windows, OS.Windows) => @$"\\192.168.0.32\shared\",
+                    (OS.Windows, OS.Linux) => @$"\\192.168.0.81\data\",
+                    (OS.Linux, OS.Windows) => @$"/media/smb/192.168.0.32/shared/",
+                    (OS.Linux, OS.Linux) => @$"/media/smb/192.168.0.81/data/",
+                    _ => throw new InvalidOperationException("Unsupported client/server OS combo")
+                };
+
+                // Ensure exactly one separator between base and fileName
+                if (!basePath.EndsWith(clientSep)) basePath += clientSep;
+                return basePath + fileName;
             };
 
+            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
             combinations
                 .ForEach(combo =>
                 {
-                    var client1_process_runner = combo.Client1 switch
+                    foreach (var mode in modes)
                     {
-                        OS.Windows => win10_x64_1,
-                        OS.Linux => linux_x64_1,
-                        _ => throw new NotImplementedException()
-                    };
+                        var client1_process_runner = combo.Client1 switch
+                        {
+                            OS.Windows => win10_x64_1,
+                            OS.Linux => linux_x64_1,
+                            _ => throw new NotImplementedException()
+                        };
 
-                    var filename1 = $"{random.Next(int.MaxValue)}.dat";
-                    var filename2 = $"{random.Next(int.MaxValue)}.dat";
+                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
-                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
+                        var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
+                        var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
 
-                    var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
 
 
-                    var client2_process_runner = combo.Client2 switch
-                    {
-                        OS.Windows => win10_x64_3,
-                        OS.Linux => linux_x64_3,
-                        _ => throw new NotImplementedException()
-                    };
+                        var client2_process_runner = combo.Client2 switch
+                        {
+                            OS.Windows => win10_x64_3,
+                            OS.Linux => linux_x64_3,
+                            _ => throw new NotImplementedException()
+                        };
 
-                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
-                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
+                        var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
+                        var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
 
-                    var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
+                        ConductTunnelTests(mode, side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
+                    }
                 });
         }
-
-        readonly Random random = new();
 
         [TestMethod]
         public void Nfs()
@@ -195,55 +217,207 @@ namespace ft_tests
 
             var pathLookup = (OS client, OS server, string fileName) =>
             {
-                var result = "";
+                var clientSep = client == OS.Windows ? '\\' : '/';
+                var otherSep = client == OS.Windows ? '/' : '\\';
 
-                if (client == OS.Windows && server == OS.Linux) result = @$"X:\{fileName.Replace("/", "\\")}";     //Using X:\ works, but the alternative doesn't: \\192.168.0.81\mnt\tmpfs
-                if (client == OS.Linux && server == OS.Linux) result = @$"/media/nfs/192.168.0.81/tmpfs/{fileName}";
+                // Normalise separators to the client’s style and strip leading separators
+                fileName = fileName.Replace(otherSep, clientSep).TrimStart('\\', '/');
 
-                return result;
+                string basePath = (client, server) switch
+                {
+                    (OS.Windows, OS.Linux) => @"X:\",
+                    (OS.Linux, OS.Linux) => "/media/nfs/192.168.0.81/tmpfs/",
+                    _ => throw new InvalidOperationException("Unsupported client/server OS combo")
+                };
+
+                // Ensure exactly one separator between base and fileName
+                if (!basePath.EndsWith(clientSep)) basePath += clientSep;
+                return basePath + fileName;
             };
 
+            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
             combinations
                 .ForEach(combo =>
                 {
-                    var client1_process_runner = combo.Client1 switch
+                    foreach (var mode in modes)
                     {
-                        OS.Windows => win10_x64_1,
-                        OS.Linux => linux_x64_1,
-                        _ => throw new NotImplementedException()
-                    };
+                        var client1_process_runner = combo.Client1 switch
+                        {
+                            OS.Windows => win10_x64_1,
+                            OS.Linux => linux_x64_1,
+                            _ => throw new NotImplementedException()
+                        };
 
-                    var filename1 = $"{random.Next(int.MaxValue)}.dat";
-                    var filename2 = $"{random.Next(int.MaxValue)}.dat";
-
-
-                    var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
-                    var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
-
-                    var side1 = new NfsClient(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
 
+                        var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
+                        var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
 
-                    var client2_process_runner = combo.Client2 switch
-                    {
-                        OS.Windows => win10_x64_3,
-                        OS.Linux => linux_x64_3,
-                        _ => throw new NotImplementedException()
-                    };
+                        var side1 = new NfsClient(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
 
-                    var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
-                    var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
 
-                    var side2 = new NfsClient(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
 
-                    ConductTunnelTests(side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
+                        var client2_process_runner = combo.Client2 switch
+                        {
+                            OS.Windows => win10_x64_3,
+                            OS.Linux => linux_x64_3,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
+                        var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
+
+                        var side2 = new NfsClient(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+
+
+                        ConductTunnelTests(mode, side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
+                    }
                 });
         }
 
-        public void ConductTunnelTests(Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
+        [TestMethod]
+        public void Rdp()
+        {
+            OS[] client1 = [OS.Windows];
+            OS[] servers = [OS.Windows];
+            OS[] client2 = [OS.Windows];
+
+            var server = new Server(OS.Windows, FileShareType.RDP);
+
+            var combinations = Utilities.Extensions
+                                .CartesianProduct([client1, servers, client2])
+                                .Select(combo =>
+                                {
+                                    var lst = combo.ToList();
+
+                                    return new
+                                    {
+                                        Client1 = lst[0],
+                                        Server = lst[1],
+                                        Client2 = lst[2]
+                                    };
+                                })
+                                .ToList();
+
+            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
+            combinations
+                .ForEach(combo =>
+                {
+                    foreach (var mode in modes)
+                    {
+                        var client1_process_runner = combo.Client1 switch
+                        {
+                            OS.Windows => win10_x64_1,
+                            OS.Linux => linux_x64_1,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+                        var writePath1 = $@"C:\Temp\{filename1}";
+                        var readPath1 = $@"C:\Temp\{filename2}";
+
+                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+
+
+
+                        var client2_process_runner = combo.Client2 switch
+                        {
+                            OS.Windows => win10_x64_3,
+                            OS.Linux => linux_x64_3,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var readPath2 = $@"\\tsclient\c\Temp\{filename1}";
+                        var writePath2 = $@"\\tsclient\c\Temp\{filename2}";
+
+                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+
+                        ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
+                    }
+                });
+        }
+
+        [TestMethod]
+        public void VirtualBoxSharedFolder()
+        {
+            OS[] client1 = [OS.Windows, OS.Linux];
+            OS[] servers = [OS.Windows];
+            OS[] client2 = [OS.Windows, OS.Linux];
+
+            List<(OS Client1, OS Client2)> combinations = [
+                (OS.Windows, OS.Windows),
+                (OS.Windows, OS.Linux),
+                (OS.Linux, OS.Linux),
+            ];
+
+            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
+            combinations
+                .ForEach(combo =>
+                {
+                    foreach (var mode in modes)
+                    {
+                        var client1_process_runner = combo.Client1 switch
+                        {
+                            OS.Windows => win10_x64_1,
+                            OS.Linux => linux_x64_1,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+                        var writePath1 = combo.Client1 switch
+                        {
+                            OS.Windows => $@"C:\Temp\{filename1}",
+                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
+                        };
+
+                        var readPath1 = combo.Client1 switch
+                        {
+                            OS.Windows => $@"C:\Temp\{filename2}",
+                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
+                        };
+
+                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+
+
+
+                        var client2_process_runner = combo.Client2 switch
+                        {
+                            OS.Windows => win10_x64_2,
+                            OS.Linux => linux_x64_3,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var readPath2 = combo.Client2 switch
+                        {
+                            OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename1}",
+                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
+                        };
+
+                        var writePath2 = combo.Client2 switch
+                        {
+                            OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename2}",
+                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
+                        };
+
+
+
+                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+
+                        ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
+                    }
+                });
+        }
+
+
+        public void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
         {
             //if ((server.FileShareType == FileShareType.NFS && (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Windows)) == false) return;
-            //Console.WriteLine();
 
             var cleanupFiles = new Action(() =>
             {
@@ -262,50 +436,63 @@ namespace ft_tests
 
             var name = $"{server.FileShareType} {side1.OS}-{server.OS}-{side2.OS}";
 
-            ConductTest(
-                    $"{name} (Normal mode)",
-                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
-                    server,
-                    new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                    "Normal");
 
-            side1.Restart();
-            side2.Restart();
-            server.Restart();
-            cleanupFiles();
+            if (mode == Mode.Normal)
+            {
+                server.Restart();
+                side1.Restart();
+                side2.Restart();
+                cleanupFiles();
 
-
-            ConductTest(
-                    $"{name} (Isolated Reads mode)",
-                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
-                    server,
-                    new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
-                    "Isolated Reads");
-
-            side1.Restart();
-            side2.Restart();
-            server.Restart();
-            cleanupFiles();
+                ConductTest(
+                        $"{name} (Normal mode)",
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        server,
+                        new Client(side2.OS, side2.Runner, $"{side2.Args}"),
+                        "Normal");
+            }
 
 
 
+            if (mode == Mode.IsolatedReads)
+            {
+                server.Restart();
+                side1.Restart();
+                side2.Restart();
+                cleanupFiles();
 
-            ConductTest(
-                    $"{name} (Upload-Download mode)",
-                    new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --upload-download --pace 100"),
-                    server,
-                    new Client(side2.OS, side2.Runner, $"{side2.Args} --upload-download --pace 100"),
-                    "Upload-Download");
+                ConductTest(
+                        $"{name} (Isolated Reads mode)",
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
+                        server,
+                        new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
+                        "Isolated Reads");
+            }
 
-            side1.Restart();
-            side2.Restart();
-            server.Restart();
-            cleanupFiles();
+
+
+            if (mode == Mode.UploadDownload)
+            {
+                server.Restart();
+                side1.Restart();
+                side2.Restart();
+                cleanupFiles();
+
+                ConductTest(
+                        $"{name} (Upload-Download mode)",
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --upload-download --pace 100"),
+                        server,
+                        new Client(side2.OS, side2.Runner, $"{side2.Args} --upload-download --pace 100"),
+                        "Upload-Download");
+            }
         }
 
         public void ConductTest(string name, Client side1, Server server, Client side2, string mode)
         {
             //if (!(side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux && mode == "Isolated Reads" && server.FileShareType == FileShareType.SMB)) return;
+
+            var testNumberStr = $"Test {testNumber++}";
+            File.AppendAllLines(localWindowsOutputFilename, [testNumberStr]);
 
             csvWriter.NextRecord();
 
@@ -318,21 +505,21 @@ namespace ft_tests
 
             var stop = new CancellationTokenSource();
 
-            Task.Factory.StartNew(() =>
+            var transfersTask = Task.Factory.StartNew(() =>
             {
                 try
                 {
-                    TestTransfer(5 * 1024 * 1024, true, 2, side1.Runner.RunOnIP, stop);
+                    TestTransfer(5 * 1024 * 1024, true, 2, side1.Runner.RunOnIP, stop.Token);
                     results.Add((true, ""));
                 }
                 catch (Exception ex)
                 {
                     results.Add((false, ex.Message));
                 }
-            });
+            }, TaskCreationOptions.LongRunning);
 
 
-            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
 
             (bool Success, string Errror) result;
             try
@@ -345,9 +532,11 @@ namespace ft_tests
             }
 
             stop.Cancel();
+            transfersTask.Wait();
+
             sw.Stop();
 
-            csvWriter.WriteField($"Test {testNumber++}");
+            csvWriter.WriteField(testNumberStr);
 
             if (result.Success)
             {
@@ -393,86 +582,91 @@ namespace ft_tests
 
             side1.Runner.Stop();
             side2.Runner.Stop();
+
+            File.AppendAllLines(localWindowsOutputFilename, ["--------------------------------------------------------------------------------"]);
         }
 
-        public static void TestTransfer(int bytesToSend, bool fullDuplex, int connections, string connectToIP, CancellationTokenSource cancelationToken)
+        public static (TcpClient connected, TcpClient accepted) EstablishConnection(TcpListener listener, IPEndPoint connectTo, CancellationToken cancelationToken)
+        {
+            var acceptConnectionTask = listener.AcceptTcpClientAsync(cancelationToken);
+
+            var originClient = new TcpClient();
+
+            var startTime = DateTime.Now;
+            while (!cancelationToken.IsCancellationRequested)
+            {
+                var duration = DateTime.Now - startTime;
+                if (duration.TotalSeconds > 150)
+                {
+                    throw new Exception("Could not connect");
+                }
+
+                try
+                {
+                    originClient.Connect(connectTo);
+                }
+                catch
+                {
+                    Thread.Sleep(200);
+                    continue;
+                }
+
+                break;
+            }
+
+
+            while (!acceptConnectionTask.IsCompletedSuccessfully && !cancelationToken.IsCancellationRequested)
+            {
+                Thread.Sleep(200);
+            }
+            var acceptedConnection = acceptConnectionTask.Result;
+
+            return (originClient, acceptedConnection);
+        }
+
+
+        public static void TestTransfer(int bytesToSend, bool fullDuplex, int connections, string connectToIP, CancellationToken cancelationToken)
         {
             var ultimateDestination = new TcpListener($"0.0.0.0:5004".AsEndpoint());
+            ultimateDestination.Start();
 
             try
             {
-                ultimateDestination.Start();
-                var ultimateDestinationClients = new BlockingCollection<TcpClient>();
+                var establishedConnections = Enumerable
+                                                .Range(0, connections)
+                                                .Select(connection =>
+                                                {
+                                                    var connectTo = $"{connectToIP}:5002".AsEndpoint();
+                                                    (var originClient, var ultimateDestinationClient) = EstablishConnection(ultimateDestination, connectTo, cancelationToken);
 
-                Task.Factory.StartNew(() =>
+                                                    Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
+
+                                                    return new
+                                                    {
+                                                        OriginClient = originClient,
+                                                        UltimateDestinationClient = ultimateDestinationClient
+                                                    };
+                                                })
+                                                .ToList();
+
+                if (cancelationToken.IsCancellationRequested)
                 {
-                    while (!cancelationToken.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            var client = ultimateDestination.AcceptTcpClientAsync(cancelationToken.Token).Result;
-                            ultimateDestinationClients.Add(client);
-                        }
-                        catch
-                        {
-                            ultimateDestination.Stop();
-                            break;
-                        }
-                    }
-                }, TaskCreationOptions.LongRunning);
+                    throw new Exception($"Connections were not established within the timeout window");
+                }
 
-                Enumerable
-                    .Range(0, connections)
-                    .Select(connection =>
-                    {
-                        var originClient = new TcpClient();
-
-                        var startTime = DateTime.Now;
-
-                        while (!cancelationToken.IsCancellationRequested)
-                        {
-                            var duration = DateTime.Now - startTime;
-                            if (duration.TotalSeconds > 22)
-                            {
-                                throw new Exception("Could not connect");
-                            }
-
-                            try
-                            {
-                                originClient.Connect($"{connectToIP}:5002".AsEndpoint());
-                            }
-                            catch
-                            {
-                                Thread.Sleep(200);
-                                continue;
-                            }
-
-                            break;
-                        }
-
-                        var ultimateDestinationClient = ultimateDestinationClients.GetConsumingEnumerable().First();
-                        Debug.WriteLine($"Accepted connection from: {ultimateDestinationClient.Client.RemoteEndPoint}");
-
-                        return new
-                        {
-                            OriginClient = originClient,
-                            UltimateDestinationClient = ultimateDestinationClient
-                        };
-                    })
-                    .ToList()
+                establishedConnections
                     .AsParallel()
                     .WithDegreeOfParallelism(connections)
                     .ForAll(pair =>
                     {
                         var toSend = new byte[bytesToSend];
-                        var random = new Random();
-                        random.NextBytes(toSend);
+                        Random.Shared.NextBytes(toSend);
 
                         var tests = new[]
                         {
                             new Action(() => TestDirection("Forward", pair.OriginClient, pair.UltimateDestinationClient, toSend)),
                             new Action(() => TestDirection("Reverse", pair.UltimateDestinationClient, pair.OriginClient, toSend)),
-                            };
+                        };
 
                         if (fullDuplex)
                         {
@@ -481,7 +675,7 @@ namespace ft_tests
                                                 .Select(test => Task.Factory.StartNew(test, TaskCreationOptions.LongRunning))
                                                 .ToArray();
 
-                            Task.WaitAll(testTasks);
+                            Task.WaitAll(testTasks, cancelationToken);
                         }
                         else
                         {
@@ -498,9 +692,10 @@ namespace ft_tests
                 Debug.WriteLine(ex);
                 throw;
             }
-
-            cancelationToken.Cancel();
-            ultimateDestination.Stop();
+            finally
+            {
+                ultimateDestination.Stop();
+            }
         }
 
         static (bool Success, string Error) TestDirection(string direction, TcpClient sender, TcpClient receiver, byte[] toSend)
@@ -514,6 +709,12 @@ namespace ft_tests
             {
                 var toRead = Math.Min(1024 * 1024, received.Length - totalRead);
                 var read = receiver.GetStream().Read(received, totalRead, toRead);
+
+                if (read == 0)
+                {
+                    break;
+                }
+
                 totalRead += read;
             }
 
@@ -541,8 +742,17 @@ namespace ft_tests
     public enum FileShareType
     {
         SMB,
-        NFS
+        NFS,
+
+        RDP,
+
+        VirtualBoxSharedFolder
     }
 
-
+    public enum Mode
+    {
+        Normal,
+        IsolatedReads,
+        UploadDownload
+    }
 }

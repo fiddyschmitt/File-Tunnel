@@ -63,7 +63,7 @@ namespace ft
             {
                 try
                 {
-                    Thread.Sleep(1000);
+                    Delay.Wait(1000);
                 }
                 catch
                 {
@@ -148,13 +148,13 @@ namespace ft
                                              localToRemoteTunnel,
                                              o.UdpSendFrom,
                                              maxFileSizeBytes,
-                                             o.ReadDurationMillis);
+                                             o.ReadDurationMillis,
+                                             o.TunnelTimeoutMilliseconds);
 
             sharedFileManager.Start();
         }
 
         public static readonly ConsoleColor OriginalConsoleColour = Console.ForegroundColor;
-        public static readonly Random Random = new();
 
         public static readonly object ConsoleOutputLock = new();
 

@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace ft.Streams
 {
-    public class SharedFileStream(SharedFileManager sharedFileManager, int connectionId) : Stream
+    public class SharedFileStream : Stream
     {
         public void EstablishConnection(string destinationEndpointStr)
         {
@@ -27,8 +27,8 @@ namespace ft.Streams
         public override long Length => throw new NotImplementedException();
 
         public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public SharedFileManager SharedFileManager { get; } = sharedFileManager;
-        public int ConnectionId { get; } = connectionId;
+        public SharedFileManager SharedFileManager { get; }
+        public int ConnectionId { get; }
 
         public override void Flush()
         {
@@ -37,6 +37,18 @@ namespace ft.Streams
 
         byte[]? currentData = null;
         int currentDataIndex;
+
+        public SharedFileStream(SharedFileManager sharedFileManager, int connectionId)
+        {
+            SharedFileManager = sharedFileManager;
+            ConnectionId = connectionId;
+
+            //File.Create(sentFile).Close();
+            //File.Create(receivedFile).Close();
+        }
+
+        //string sentFile = $"diag-sent-{Environment.MachineName}.txt";
+        //string receivedFile = $"diag-received-{Environment.MachineName}.txt";
 
         public override int Read(byte[] buffer, int offset, int count)
         {
@@ -56,6 +68,10 @@ namespace ft.Streams
                 toCopy = Math.Min(toCopy, currentData.Length - currentDataIndex);
 
                 Array.Copy(currentData, currentDataIndex, buffer, offset, toCopy);
+
+                //var received = new ReadOnlySpan<byte>(buffer, offset, toCopy);
+                //File.AppendAllLines(receivedFile, [$"{received.Length:N0} bytes", Convert.ToBase64String(received.ToArray())]);
+
                 currentDataIndex += toCopy;
 
                 return toCopy;
@@ -74,14 +90,18 @@ namespace ft.Streams
 
         public override void Write(byte[] buffer, int offset, int count)
         {
-            var toSend = buffer;
-            if (offset != 0 || count != buffer.Length)
-            {
-                toSend = buffer.Skip(offset).Take(count).ToArray();
-            }
+            // Always copy to decouple from caller’s buffer
+            var toSend = new byte[count];
+            Buffer.BlockCopy(buffer, offset, toSend, 0, count);
 
             var forwardCommand = new Forward(ConnectionId, toSend);
-            SharedFileManager.EnqueueToSend(forwardCommand);
+
+            while (true)
+            {
+                var enqueuedSuccessfully = SharedFileManager.EnqueueToSend(forwardCommand);
+
+                if (enqueuedSuccessfully) break;
+            }
         }
 
         public override void Close()

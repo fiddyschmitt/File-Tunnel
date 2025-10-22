@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ft_tests.FileShares.Server
+namespace ft_tests.FileShares.Servers
 {
     public class NfsServer : Server
     {

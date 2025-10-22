@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ft.Utilities;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -47,7 +48,7 @@ namespace ft.Bandwidth
 
                 samples.Add(TotalBytesTransferred);
 
-                Thread.Sleep(SampleIntervalMs);
+                Delay.Wait(SampleIntervalMs);
             }
         }
 
