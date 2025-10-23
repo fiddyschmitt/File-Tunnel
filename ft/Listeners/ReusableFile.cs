@@ -130,21 +130,36 @@ namespace ft.Listeners
 
                                 binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
-                                //wait for counterpart to be ready for purge
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Waiting for counterpart to be ready for purge.");
+                                }
                                 isReadyForPurge?.Wait(1);
 
-                                //perform the purge
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Performing truncation.");
+                                }
                                 fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                                 fileStream.SetLength(MESSAGE_WRITE_POS);
                                 //fileStream.Flush(true);
 
-                                //signal that the purge is complete
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Signaling that the purge is complete.");
+                                }
                                 setPurgeComplete.Set(1);
 
-                                //wait for counterpart clear their ready flag
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Waiting for counterpart clear their ready flag.");
+                                }
                                 isReadyForPurge?.Wait(0);
 
-                                //clear our complete flag
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Clearing our complete flag.");
+                                }
                                 setPurgeComplete.Set(0);
 
                                 Program.Log($"[{writeFileShortName}] Purge complete.");
@@ -387,20 +402,35 @@ namespace ft.Listeners
                         {
                             Program.Log($"[{readFileShortName}] Counterpart is about to purge this file.");
 
-                            //signal that we're ready for purge
+                            if (Verbose)
+                            {
+                                Program.Log($"[{readFileShortName}] Signaling that we're ready for purge.");
+                            }
                             setReadyForPurge?.Set(1);
 
-                            //wait for the purge to be complete
+                            if (Verbose)
+                            {
+                                Program.Log($"[{readFileShortName}] Waiting for the purge to be complete.");
+                            }
                             isPurgeComplete.Wait(1);
 
-                            //go back to the beginning
+                            if (Verbose)
+                            {
+                                Program.Log($"[{readFileShortName}] Seeking to the beginning of file.");
+                            }
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                             fileStream.Flush(Verbose, TunnelTimeoutMilliseconds); //force read
 
-                            //clear our ready flag
+                            if (Verbose)
+                            {
+                                Program.Log($"[{readFileShortName}] Clearing ready flag.");
+                            }
                             setReadyForPurge?.Set(0);
 
-                            //wait for counterpart to clear the complete flag
+                            if (Verbose)
+                            {
+                                Program.Log($"[{readFileShortName}] Waiting for counterpart to clear the complete flag.");
+                            }
                             isPurgeComplete.Wait(0);
 
                             Program.Log($"[{readFileShortName}] File was purged by counterpart.");
