@@ -277,14 +277,18 @@ namespace ft.Listeners
                                                             new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
-                            READY_FOR_PURGE_FLAG);
+                            READY_FOR_PURGE_FLAG,
+                            TunnelTimeoutMilliseconds,
+                            Verbose);
 
                         Stream isPurgeCompleteStream = IsolatedReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename) :
                                                             new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
-                            PURGE_COMPLETE_FLAG);
+                            PURGE_COMPLETE_FLAG,
+                            TunnelTimeoutMilliseconds,
+                            Verbose);
                     }
                     catch (Exception ex)
                     {
@@ -308,17 +312,7 @@ namespace ft.Listeners
                                 break;
                             }
 
-                            //force read
-                            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                            {
-                                using var tempFs = new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                                tempFs.Read(new byte[4096]);
-                            }
-                            else
-                            {
-                                fileStream.Flush(Verbose, TunnelTimeoutMilliseconds);
-                            }
-
+                            //fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
 
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
@@ -419,7 +413,7 @@ namespace ft.Listeners
                                 Program.Log($"[{readFileShortName}] Seeking to the beginning of file.");
                             }
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                            fileStream.Flush(Verbose, TunnelTimeoutMilliseconds); //force read
+                            //fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
 
                             if (Verbose)
                             {

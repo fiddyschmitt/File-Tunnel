@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -441,6 +442,26 @@ namespace ft
             if (binaryWriter.BaseStream is FileStream fileStream)
             {
                 Retry($"Flush to disk", () => fileStream.Flush(flushToDisk), verbose, timeoutMilliseconds);
+            }
+        }
+
+        public static void ForceRead(this Stream stream, int tunnelTimeoutMilliseconds, bool verbose)
+        {
+            if (stream is FileStream fileStream)
+            {
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                {
+                    using var tempFs = new FileStream(fileStream.Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    tempFs.Read(new byte[4096]);
+                }
+                else
+                {
+                    fileStream.Flush(verbose, tunnelTimeoutMilliseconds);
+                }
+            }
+            else
+            {
+                stream.Flush(verbose, tunnelTimeoutMilliseconds);
             }
         }
     }
