@@ -312,7 +312,7 @@ namespace ft.Listeners
                                 break;
                             }
 
-                            //fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
+                            fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
 
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {
