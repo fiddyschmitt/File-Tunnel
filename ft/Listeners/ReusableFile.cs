@@ -413,7 +413,6 @@ namespace ft.Listeners
                                 Program.Log($"[{readFileShortName}] Seeking to the beginning of file.");
                             }
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                            //fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
 
                             if (Verbose)
                             {
