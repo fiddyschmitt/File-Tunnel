@@ -101,6 +101,7 @@ namespace ft
             if (Options.Citrix && !o.IsolatedReads)
             {
                 Log($"Optimizing for Citrix by changing to isolated-reads mode.", ConsoleColor.Yellow);
+                o.IsolatedReads = true;
             }
 
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
