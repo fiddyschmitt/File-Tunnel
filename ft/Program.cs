@@ -98,10 +98,15 @@ namespace ft
                 Log($"Continuing.", ConsoleColor.Yellow);
             }
 
+            if (Options.Citrix && !o.IsolatedReads)
+            {
+                Log($"Optimizing for Citrix by changing to isolated-reads mode.", ConsoleColor.Yellow);
+            }
+
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
             {
                 o.MaxFileSizeBytes = 1024 * 1024;
-                Log($"Warning: Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
+                Log($"Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
             }
 
             var access = new LocalAccess();

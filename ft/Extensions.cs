@@ -1,3 +1,4 @@
+﻿using ft.CLI;
 ﻿using ft.Commands;
 using ft.Streams;
 using ft.Utilities;
@@ -432,7 +433,7 @@ namespace ft
 
         public static void Flush(this Stream stream, bool verbose, int timeoutMilliseconds)
         {
-            if (stream is FileStream fileStream)
+            if (Options.Citrix && stream is FileStream fileStream)
             {
                 Retry($"Flush to disk", () => fileStream.Flush(true), verbose, timeoutMilliseconds);
             }

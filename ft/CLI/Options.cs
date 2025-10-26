@@ -52,5 +52,10 @@ namespace ft.CLI
 
         [Option("verbose", Required = false, HelpText = @"Display more detailed output")]
         public bool Verbose { get; set; } = false;
+
+
+
+        [Option("citrix", Required = false, HelpText = @"Optimize the tunnel for Citrix file shares such as \\client\c$")]
+        public static bool Citrix { get; set; } = false;
     }
 }
