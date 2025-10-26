@@ -61,7 +61,7 @@ namespace ft.Listeners
                     bufferSize = Math.Max(bufferSize, 1024 * 1024 * 1024);
 
                     //the writer always creates the file
-                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize); //large buffer to prevent FileStream from autoflushing
+                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize, FileOptions.WriteThrough); //large buffer to prevent FileStream from autoflushing
                 }
                 catch (Exception ex)
                 {
@@ -86,14 +86,14 @@ namespace ft.Listeners
                         Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
                     }
 
-                    var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                    var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
                     setReadyForPurge = new ToggleWriter(
                         new BinaryWriter(setReadyForPurgeStream),
                         READY_FOR_PURGE_FLAG,
                         TunnelTimeoutMilliseconds,
                         Verbose);
 
-                    var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                    var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
                     setPurgeComplete = new ToggleWriter(
                         new BinaryWriter(setPurgeCompleteStream),
                         PURGE_COMPLETE_FLAG,
