@@ -432,16 +432,23 @@ namespace ft
 
         public static void Flush(this Stream stream, bool verbose, int timeoutMilliseconds)
         {
-            Retry($"{nameof(stream)}.{nameof(Stream.Flush)}", stream.Flush, verbose, timeoutMilliseconds);
+            if (stream is FileStream fileStream)
+            {
+                Retry($"Flush to disk", () => fileStream.Flush(true), verbose, timeoutMilliseconds);
+            }
+            else
+            {
+                Retry($"{nameof(stream)}.{nameof(Stream.Flush)}", stream.Flush, verbose, timeoutMilliseconds);
+            }
         }
 
         public static void Flush(this BinaryWriter binaryWriter, bool flushToDisk, bool verbose, int timeoutMilliseconds)
         {
             Retry($"{nameof(BinaryWriter)}.{nameof(BinaryWriter.Flush)}", binaryWriter.Flush, verbose, timeoutMilliseconds);
 
-            if (binaryWriter.BaseStream is FileStream fileStream)
+            if (binaryWriter.BaseStream != null)
             {
-                Retry($"Flush to disk", () => fileStream.Flush(flushToDisk), verbose, timeoutMilliseconds);
+                Flush(binaryWriter.BaseStream, verbose, timeoutMilliseconds);
             }
         }
 
