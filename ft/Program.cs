@@ -104,6 +104,11 @@ namespace ft
                 o.IsolatedReads = true;
             }
 
+            if (Options.Citrix && Options.PaceMilliseconds < 400)
+            {
+                Log($"Warning: When using --citrix mode, it is recommended to use --pace 400 or higher (for tunnel stability).", ConsoleColor.Yellow);
+            }
+
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
             {
                 o.MaxFileSizeBytes = 1024 * 1024;
