@@ -82,7 +82,7 @@ namespace ft
                                              o.WriteTo.Trim(),
                                              o.MaxFileSizeBytes,
                                              o.TunnelTimeoutMilliseconds,
-                                             o.PaceMilliseconds,
+                                             Options.PaceMilliseconds,
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
@@ -123,7 +123,7 @@ namespace ft
                                              o.WriteTo.Trim(),
                                              o.MaxFileSizeBytes,
                                              o.TunnelTimeoutMilliseconds,
-                                             o.PaceMilliseconds,
+                                             Options.PaceMilliseconds,
                                              o.Verbose);
             }
             else

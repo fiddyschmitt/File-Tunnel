@@ -1,4 +1,5 @@
 ﻿using ft.Bandwidth;
+using ft.CLI;
 using ft.Commands;
 using ft.IO;
 using ft.Streams;
@@ -48,6 +49,8 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
+
+            var lastWrite = DateTime.Now;
 
             var writeFileShortName = Path.GetFileName(WriteToFilename);
 
@@ -183,7 +186,13 @@ namespace ft.Listeners
                             CommandSent(command);
                         }
 
+                        var timeSinceLastWrite = DateTime.Now - lastWrite;
+                        var toSleep = (int)Math.Max(0, Options.PaceMilliseconds - timeSinceLastWrite.TotalMilliseconds);
+                        Delay.Wait(toSleep);
+
                         binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+
+                        lastWrite = DateTime.Now;
 
                         //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
 
