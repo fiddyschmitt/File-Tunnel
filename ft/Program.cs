@@ -112,7 +112,7 @@ namespace ft
             if (Options.Citrix && Options.PaceMilliseconds < 400)
             {
                 //pace needs to be set just on the client side
-                Log($"Warning: When using --citrix mode, it is recommended to use --pace 400 or higher on the Citrix client end (for tunnel stability).", ConsoleColor.Yellow);
+                Log($"Warning: When using --citrix mode, if the tunnel drops out regularly try using --pace 400 or higher on the Citrix client end.", ConsoleColor.Yellow);
             }
 
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
