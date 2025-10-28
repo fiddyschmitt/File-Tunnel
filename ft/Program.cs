@@ -16,6 +16,7 @@ using System.Threading.Tasks;
 using System.Diagnostics.CodeAnalysis;
 using ft.Tunnels;
 using ft.IO.Files;
+using System.Diagnostics;
 
 namespace ft
 {
@@ -37,6 +38,10 @@ namespace ft
             }
 
             Log($"{PROGRAM_NAME} {VERSION}");
+            if (Debugger.IsAttached)
+            {
+                Log($"{args.ToString(" ")}");
+            }
 
             var parser = new Parser(settings =>
             {
