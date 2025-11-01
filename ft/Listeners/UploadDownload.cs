@@ -86,7 +86,7 @@ namespace ft.Listeners
 
                                     if (lastWrite != null)
                                     {
-                                        Program.Log($"[{writeFileShortName}] File still exists after {timeSinceWrite.ElapsedMilliseconds:N0} ms. Re-writing.", ConsoleColor.Red);
+                                        Program.Log($"[{writeFileShortName}] File still exists after {timeSinceWrite.ElapsedMilliseconds:N0} ms. Re-writing.");
 
                                         fileAccess.WriteAllBytes(WriteToFilename, lastWrite);
 
@@ -98,7 +98,10 @@ namespace ft.Listeners
                             }
                             catch (Exception ex)
                             {
-                                Program.Log($"[{writeFileShortName}] Error during write: {ex.Message}", ConsoleColor.Red);
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Error during write: {ex.Message}");
+                                }
                             }
 
 
@@ -165,7 +168,7 @@ namespace ft.Listeners
 
                                 if (fileContent.Length == 0)
                                 {
-                                    Program.Log($"[{readFileShortName}] 0 length read. Retrying.", ConsoleColor.Red);
+                                    Program.Log($"[{readFileShortName}] 0 length read. Retrying.");
                                 }
                                 else
                                 {
@@ -174,7 +177,10 @@ namespace ft.Listeners
                             }
                             catch (Exception ex)
                             {
+                                if (Verbose)
+                                {
                                 Program.Log($"[{readFileShortName}] Could not read: {ex.Message}");
+                            }
                             }
 
                             return readSuccessful;
@@ -203,12 +209,12 @@ namespace ft.Listeners
                         }
                         catch (InvalidDataException)
                         {
-                            Program.Log($"[{readFileShortName}] Malformed packet received. Ignoring and awaiting resend.", ConsoleColor.Red);
+                            Program.Log($"[{readFileShortName}] Malformed packet received. Ignoring and awaiting resend.");
                             continue;
                         }
                         catch (EndOfStreamException eosEx)
                         {
-                            Program.Log($"[{readFileShortName}] {eosEx.Message}", ConsoleColor.Red);
+                            Program.Log($"[{readFileShortName}] {eosEx.Message}");
                         }
 
                         if (command == null)
@@ -216,7 +222,7 @@ namespace ft.Listeners
                             var exMsg = $"[{readFileShortName}] Could not read command.";
                             if (Verbose)
                             {
-                                Program.Log(exMsg, ConsoleColor.Red);
+                                Program.Log(exMsg);
                             }
                             throw new Exception(exMsg);
                         }
@@ -272,7 +278,7 @@ namespace ft.Listeners
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}", ConsoleColor.Red);
+                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
 
                     Delay.Wait(1000);
