@@ -166,7 +166,7 @@ namespace ft.Listeners
                                     Program.Log($"[{readFileShortName}] Read {fileContent.Length.BytesToString()}.");
                                 }
 
-                                if (fileContent == null ||fileContent.Length == 0)
+                                if (fileContent == null || fileContent.Length == 0)
                                 {
                                     Program.Log($"[{readFileShortName}] 0 length read. Retrying.");
                                 }
@@ -179,8 +179,8 @@ namespace ft.Listeners
                             {
                                 if (Verbose)
                                 {
-                                Program.Log($"[{readFileShortName}] Could not read: {ex.Message}");
-                            }
+                                    Program.Log($"[{readFileShortName}] Could not read: {ex.Message}");
+                                }
                             }
 
                             return readSuccessful;
