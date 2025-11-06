@@ -23,6 +23,8 @@ namespace ft_tests.Runner
 
             var scpClient = new ScpClient(host, username, password);
             scpClient.Connect();
+
+            Stop();
             scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
 
             sshClient.CreateCommand($"chmod +x \"{this.remoteExecutablePath}\"").Execute();
@@ -50,7 +52,7 @@ namespace ft_tests.Runner
         {
             var processName = Path.GetFileName(remoteExecutablePath);
             // pkill by name to stop the process
-            sshClient.CreateCommand($"sudo pkill -f \"{processName}\" || true").Execute();
+            sshClient.CreateCommand($"sudo pkill -x \"{processName}\" || true").Execute();
         }
 
         public override void DeleteFile(string path)

@@ -57,5 +57,8 @@ namespace ft.CLI
 
         [Option("citrix", Required = false, HelpText = @"Optimize the tunnel for Citrix file shares such as \\client\c$")]
         public static bool Citrix { get; set; } = false;
+
+        [Option("s3", Required = false, HelpText = @"Optimize the tunnel for S3 file shares")]
+        public static bool S3 { get; set; } = false;
     }
 }

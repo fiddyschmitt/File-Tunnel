@@ -255,7 +255,7 @@ namespace ft_tests
                         var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
                         var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
 
-                        var side1 = new NfsClient(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                        var side1 = new NfsClient(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1} --verbose");
 
 
 
@@ -269,7 +269,7 @@ namespace ft_tests
                         var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
                         var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
 
-                        var side2 = new NfsClient(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+                        var side2 = new NfsClient(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2} --verbose");
 
 
                         ConductTunnelTests(mode, side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
@@ -382,7 +382,7 @@ namespace ft_tests
                             OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
                         };
 
-                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
+                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1} --verbose");
 
 
 
@@ -407,9 +407,64 @@ namespace ft_tests
 
 
 
-                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
+                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2} --verbose");
 
                         ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
+                    }
+                });
+        }
+
+        [TestMethod]
+        public void FTP()
+        {
+            //OS[] client1 = [OS.Windows, OS.Linux];
+            //OS[] servers = [OS.Windows];
+            //OS[] client2 = [OS.Windows, OS.Linux];
+
+            OS[] client1 = [OS.Linux];
+            OS[] client2 = [OS.Linux];
+
+            List<(OS Client1, OS Client2)> combinations = [
+                (OS.Windows, OS.Windows),
+                (OS.Windows, OS.Linux),
+                (OS.Linux, OS.Linux),
+            ];
+
+            Mode[] modes = [Mode.FTP];
+            combinations
+                .ForEach(combo =>
+                {
+                    foreach (var mode in modes)
+                    {
+                        var client1_process_runner = combo.Client1 switch
+                        {
+                            OS.Windows => win10_x64_1,
+                            OS.Linux => linux_x64_1,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var writePath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
+                        var readPath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
+
+                        var side1 = new Client(combo.Client1, client1_process_runner, $"--ftp -u anonymous -h 192.168.0.81 -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
+
+
+
+                        var client2_process_runner = combo.Client2 switch
+                        {
+                            OS.Windows => win10_x64_2,
+                            OS.Linux => linux_x64_3,
+                            _ => throw new NotImplementedException()
+                        };
+
+                        var readPath2 = writePath1;
+                        var writePath2 = readPath1;
+
+
+
+                        var side2 = new Client(combo.Client2, client2_process_runner, $"--ftp -u anonymous -h 192.168.0.81 -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
+
+                        ConductTunnelTests(mode, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
                     }
                 });
         }
@@ -484,6 +539,21 @@ namespace ft_tests
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args} --upload-download --pace 100"),
                         "Upload-Download");
+            }
+
+            if (mode == Mode.FTP)
+            {
+                server.Restart();
+                side1.Restart();
+                side2.Restart();
+                cleanupFiles();
+
+                ConductTest(
+                        $"{name} (FTP mode)",
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        server,
+                        new Client(side2.OS, side2.Runner, $"{side2.Args}"),
+                        "FTP");
             }
         }
 
@@ -743,6 +813,7 @@ namespace ft_tests
     {
         SMB,
         NFS,
+        FTP,
 
         RDP,
 
@@ -753,6 +824,7 @@ namespace ft_tests
     {
         Normal,
         IsolatedReads,
-        UploadDownload
+        UploadDownload,
+        FTP
     }
 }

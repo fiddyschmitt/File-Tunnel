@@ -15,7 +15,6 @@ namespace ft.Streams
         private readonly Stream stream;
         private readonly bool verbose;
         private readonly int tunnelTimeoutMilliseconds;
-        //List<byte[]> data = [];
 
         bool hashing = false;
 
@@ -28,14 +27,18 @@ namespace ft.Streams
 
         public void StartHashing()
         {
-            //data = [];
-            crc32.Reset();
+            Reset();
             hashing = true;
         }
 
         public void StopHashing()
         {
             hashing = false;
+        }
+
+        public void Reset()
+        {
+            crc32.Reset();
         }
 
         public uint GetCrc32()
@@ -71,8 +74,6 @@ namespace ft.Streams
             {
                 var readBytes = new ReadOnlySpan<byte>(buffer, offset, result);
                 crc32.Append(readBytes);
-
-                //data.Add(readBytes.ToArray());
             }
 
             return result;
@@ -97,19 +98,7 @@ namespace ft.Streams
             {
                 var readBytes = new ReadOnlySpan<byte>(buffer, offset, count);
                 crc32.Append(readBytes);
-
-                //data.Add(readBytes.ToArray());
             }
         }
-
-        //public byte[] GetData()
-        //{
-        //    var result = data
-        //                    .Union([crc32.GetCurrentHash()])
-        //                    .SelectMany(bytes => bytes)
-        //                    .ToArray();
-
-        //    return result;
-        //}
     }
 }

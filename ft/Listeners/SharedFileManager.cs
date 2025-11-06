@@ -244,7 +244,7 @@ namespace ft.Listeners
         {
             var pingStopwatch = new Stopwatch();
 
-            var pingTimeoutMillliseconds = (int)(0.4 * TunnelTimeoutMilliseconds);
+            var pingTimeoutMillliseconds = TunnelTimeoutMilliseconds;
 
             while (true)
             {

@@ -52,6 +52,7 @@ namespace ft
         {
             var buffer = BufferPool.Rent(bufferSize);
 
+            //optimisation to get good responsiveness, and good bandwidth when there's lots of incoming data
             var maxQuietDurationMillis = (int)Math.Max(1, readDurationMillis / 4d);
 
             var read = 0;

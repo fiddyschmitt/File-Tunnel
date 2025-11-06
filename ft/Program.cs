@@ -23,7 +23,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "2.3.0";
+        const string VERSION = "3.0.0";
 
         public const int UNIVERSAL_TIMEOUT_MS = 4000;
 
@@ -119,6 +119,12 @@ namespace ft
             {
                 o.MaxFileSizeBytes = 1024 * 1024;
                 Log($"Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
+            }
+
+            if (Options.S3)
+            {
+                //change to upload-download mode
+                o.UploadDownload = true;
             }
 
             var access = new LocalAccess();
