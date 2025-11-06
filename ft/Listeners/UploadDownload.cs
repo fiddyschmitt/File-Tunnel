@@ -164,6 +164,11 @@ namespace ft.Listeners
                             try
                             {
                                 fileAccess.Delete(writeToFilename);
+                            }
+                            catch { }
+
+                            try
+                            {
                                 fileAccess.WriteAllBytes(writeToFilename, commandBytes, true);
 
                                 filesInUse[writeToFilename] = DateTime.Now;
@@ -230,7 +235,7 @@ namespace ft.Listeners
                         //read the current index from the main file
                         try
                         {
-                            var ixFileContent = File.ReadAllBytes(ReadFromFilename);
+                            var ixFileContent = fileAccess.ReadAllBytes(ReadFromFilename);
                             readFromIx = int.Parse(Encoding.UTF8.GetString(ixFileContent));
 
                             if (Verbose)
