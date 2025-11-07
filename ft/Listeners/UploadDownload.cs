@@ -1,4 +1,5 @@
-﻿using ft.Commands;
+﻿using ft.CLI;
+using ft.Commands;
 using ft.IO.Files;
 using ft.Streams;
 using ft.Utilities;
@@ -14,7 +15,6 @@ namespace ft.Listeners
 {
     public class UploadDownload : SharedFileManager
     {
-        private readonly int paceMilliseconds;
         private readonly PacedAccess fileAccess;
 
         public UploadDownload(
@@ -23,11 +23,10 @@ namespace ft.Listeners
                     string writeToFilename,
                     int maxFileSizeBytes,
                     int tunnelTimeoutMilliseconds,
-                    int paceMilliseconds,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
-            this.fileAccess = new PacedAccess(fileAccess, paceMilliseconds);
-            this.paceMilliseconds = Math.Max(1, paceMilliseconds);  //the pace should be at least 1 millisecond, otherwise we consume a lot of CPU cycles
+            Options.PaceMilliseconds = Math.Max(1, Options.PaceMilliseconds);  //the pace should be at least 1 millisecond, otherwise we consume a lot of CPU cycles
+            this.fileAccess = new PacedAccess(fileAccess, Options.PaceMilliseconds);
 
             //this class can combine multiple commands into a single file
             SendQueue = new BlockingCollection<Command>(20);
@@ -47,6 +46,8 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
+
+            DateTime? lastWrite = null;
 
             var writeFileShortName = Path.GetFileName(WriteToFilename);
             var writingStopwatch = new Stopwatch();
@@ -117,6 +118,17 @@ namespace ft.Listeners
                         DefaultSleepStrategy,
                         Verbose);
 
+
+                    //Wait without touching the write file, which lets rclone sync.
+                    //By waiting here, we allow commands to accumulate which lets us write them to a single further below.
+                    if (lastWrite.HasValue)
+                    {
+                        var timeSinceLastWrite = DateTime.Now - lastWrite.Value;
+                        var toSleep = (int)Math.Max(0, Options.WriteIntervalMilliseconds - timeSinceLastWrite.TotalMilliseconds);
+                        Delay.Wait(toSleep);
+                    }
+
+
                     using var memoryStream = new MemoryStream();
                     var hashingStream = new HashingStream(memoryStream, Verbose, TunnelTimeoutMilliseconds);
                     var binaryWriter = new BinaryWriter(hashingStream);
@@ -157,7 +169,7 @@ namespace ft.Listeners
 
                     if (Verbose)
                     {
-                        Program.Log($"[{writeFileShortName}] Serialised {commandsSent:N0} commands into one file ({memoryStream.Length.BytesToString()})");
+                        Program.Log($"[{writeFileShortName}] Serialised {commandsSent:N0} commands into {Path.GetFileName(writeToFilename)} ({memoryStream.Length.BytesToString()})");
                     }
 
                     var commandBytes = memoryStream.ToArray();
@@ -185,6 +197,8 @@ namespace ft.Listeners
                                 //the main file contains the latest index we wrote
                                 fileAccess.WriteAllBytes(WriteToFilename, Encoding.UTF8.GetBytes($"{fileIx}"), true);
 
+                                lastWrite = DateTime.Now;
+
                                 writeSuccessful = true;
                                 fileIx++;
 
@@ -209,7 +223,7 @@ namespace ft.Listeners
                         Verbose);
 
 
-                    Delay.Wait(paceMilliseconds);
+                    Delay.Wait(Options.PaceMilliseconds);
                 }
                 catch (Exception ex)
                 {
@@ -225,6 +239,8 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
+
+            DateTime? lastRead = null;
 
             var readFileShortName = Path.GetFileName(ReadFromFilename);
 
@@ -259,6 +275,13 @@ namespace ft.Listeners
                             Delay.Wait(1000);
                             continue;
                         }
+                    }
+
+                    if (lastRead.HasValue)
+                    {
+                        var timeSinceLastRead = DateTime.Now - lastRead.Value;
+                        var toSleep = (int)Math.Max(0, Options.ReadIntervalMilliseconds - timeSinceLastRead.TotalMilliseconds);
+                        Delay.Wait(toSleep);
                     }
 
                     var readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value);
@@ -310,7 +333,7 @@ namespace ft.Listeners
                         DefaultSleepStrategy,
                         Verbose);
 
-                    Delay.Wait(paceMilliseconds);
+                    Delay.Wait(Options.PaceMilliseconds);
 
                     Command? command = null;
 
@@ -382,9 +405,21 @@ namespace ft.Listeners
                         var filesInUseSnapshot = filesInUse.ToList();
                         foreach (var entry in filesInUseSnapshot)
                         {
+                            if (fileAccess.Exists(entry.Key))
+                            {
                             var timeSinceSent = DateTime.Now - entry.Value;
+                                if (timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds)
+                                {
+                                    try
+                                    {
+                                        fileAccess.Delete(entry.Key);
+                                    }
+                                    catch { }
 
-                            if (timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds || !fileAccess.Exists(entry.Key))
+                                    filesInUse.TryRemove(entry.Key, out var _);
+                                }
+                            }
+                            else
                             {
                                 filesInUse.TryRemove(entry.Key, out var _);
                             }
@@ -447,7 +482,7 @@ namespace ft.Listeners
             //if (attempt.Elapsed.TotalMilliseconds < 1000) return 20;
             //return 100;
 
-            var toSleep = Math.Max(1, paceMilliseconds);
+            var toSleep = Options.PaceMilliseconds;
 
             return toSleep;
         }

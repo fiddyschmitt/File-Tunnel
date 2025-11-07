@@ -86,8 +86,7 @@ namespace ft
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
                                              o.MaxFileSizeBytes,
-                                             o.TunnelTimeoutMilliseconds,
-                                             Options.PaceMilliseconds,
+                                             Options.TunnelTimeoutMilliseconds,
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
@@ -103,16 +102,15 @@ namespace ft
                 Log($"Continuing.", ConsoleColor.Yellow);
             }
 
-            if (Options.Citrix && !o.IsolatedReads)
+            if (Options.Citrix)
             {
-                Log($"Optimizing for Citrix by changing to isolated-reads mode.", ConsoleColor.Yellow);
                 o.IsolatedReads = true;
-            }
 
-            if (Options.Citrix && Options.PaceMilliseconds < 400)
-            {
-                //pace needs to be set just on the client side
-                Log($"Warning: When using --citrix mode, if the tunnel drops out regularly try using --pace 400 or higher on the Citrix client end.", ConsoleColor.Yellow);
+                if (Options.PaceMilliseconds < 400)
+                {
+                    //pace needs to be set just on the client side
+                    Log($"Warning: When using --citrix mode, if the tunnel drops out regularly try using --pace 400 or higher on the Citrix client end.", ConsoleColor.Yellow);
+                }
             }
 
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
@@ -123,8 +121,42 @@ namespace ft
 
             if (Options.S3)
             {
-                //change to upload-download mode
                 o.UploadDownload = true;
+            }
+
+            if (Options.Dropbox)
+            {
+                o.UploadDownload = true;
+
+                var recommendedWriteIntervalMillis = 4000;
+                if (Options.WriteIntervalMilliseconds == 0)
+                {
+                    //If we write too often, Rclone waits a long time until until it start uploading.
+                    //Rclone only starts uploading 1 second after the file is no longer in use. This is controlled by the arg given to rclone (--vfs-write-back 1s).
+                    //Also, rclone takes about 3 seconds to upload the file so we have to include that also.
+                    Options.WriteIntervalMilliseconds = recommendedWriteIntervalMillis;
+                }
+                else
+                {
+                    if (Options.WriteIntervalMilliseconds < recommendedWriteIntervalMillis)
+                    {
+                        Log($"Warning: Dropbox only supports writing every 4 seconds or longer. Recommend using --write-interval {recommendedWriteIntervalMillis} or higher.", ConsoleColor.Yellow);
+                    }
+                }
+
+                var recommendedTunnelTimeoutMillis = 60000;
+                if (Options.TunnelTimeoutMilliseconds == Options.DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS)
+                {
+                    //Dropbox latency is anywhere between 12-30 seconds. Let's increase the tunnel timeout
+                    Options.TunnelTimeoutMilliseconds = recommendedTunnelTimeoutMillis;
+                }
+                else
+                {
+                    if (Options.TunnelTimeoutMilliseconds < recommendedTunnelTimeoutMillis)
+                    {
+                        Log($"Warning: Dropbox has high latency. Recommend using --tunnel-timeout {recommendedTunnelTimeoutMillis} or higher.", ConsoleColor.Yellow);
+                    }
+                }
             }
 
             var access = new LocalAccess();
@@ -139,8 +171,7 @@ namespace ft
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
                                              o.MaxFileSizeBytes,
-                                             o.TunnelTimeoutMilliseconds,
-                                             Options.PaceMilliseconds,
+                                             Options.TunnelTimeoutMilliseconds,
                                              o.Verbose);
             }
             else
@@ -149,7 +180,7 @@ namespace ft
                                             o.ReadFrom.Trim(),
                                             o.WriteTo.Trim(),
                                             o.MaxFileSizeBytes,
-                                            o.TunnelTimeoutMilliseconds,
+                                            Options.TunnelTimeoutMilliseconds,
                                             o.IsolatedReads,
                                             o.Verbose);
             }
@@ -172,7 +203,7 @@ namespace ft
                                              o.UdpSendFrom,
                                              maxFileSizeBytes,
                                              o.ReadDurationMillis,
-                                             o.TunnelTimeoutMilliseconds);
+                                             Options.TunnelTimeoutMilliseconds);
 
             sharedFileManager.Start();
         }

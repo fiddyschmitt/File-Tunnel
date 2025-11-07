@@ -50,7 +50,7 @@ namespace ft.Listeners
             //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
 
-            var lastWrite = DateTime.Now;
+            DateTime? lastWrite = null;
 
             var writeFileShortName = Path.GetFileName(WriteToFilename);
 
@@ -186,9 +186,12 @@ namespace ft.Listeners
                             CommandSent(command);
                         }
 
-                        var timeSinceLastWrite = DateTime.Now - lastWrite;
-                        var toSleep = (int)Math.Max(0, Options.PaceMilliseconds - timeSinceLastWrite.TotalMilliseconds);
-                        Delay.Wait(toSleep);
+                        if (lastWrite.HasValue)
+                        {
+                            var timeSinceLastWrite = DateTime.Now - lastWrite;
+                            var toSleep = (int)Math.Max(0, Options.WriteIntervalMilliseconds - timeSinceLastWrite.Value.TotalMilliseconds);
+                            Delay.Wait(toSleep);
+                        }
 
                         binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
@@ -223,6 +226,8 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
+
+            DateTime? lastRead = null;
 
             var readFileShortName = Path.GetFileName(ReadFromFilename);
             var checkForSessionChange = new Stopwatch();
@@ -354,6 +359,13 @@ namespace ft.Listeners
                             Delay.Wait(1);
                         }
 
+                        if (lastRead.HasValue)
+                        {
+                            var timeSinceLastRead = DateTime.Now - lastRead;
+                            var toSleep = (int)Math.Max(0, Options.ReadIntervalMilliseconds - timeSinceLastRead.Value.TotalMilliseconds);
+                            Delay.Wait(toSleep);
+                        }
+
                         var commandStartPos = fileStream.Position;
                         Command? command;
 
@@ -369,6 +381,8 @@ namespace ft.Listeners
                         }
 
                         var commandEndPos = fileStream.Position;
+
+                        lastRead = DateTime.Now;
 
                         //var ms = new MemoryStream();
                         //fileStream.Seek(commandStartPos, SeekOrigin.Begin);

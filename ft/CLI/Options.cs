@@ -42,11 +42,20 @@ namespace ft.CLI
 
 
 
+        public const int DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS = 10000;
+
         [Option("tunnel-timeout", Required = false, HelpText = @"The duration (in milliseconds) to wait for responses from the counterpart. If this timeout is reached, the tunnel is considered offline and TCP connections will be closed at this point. (Default 10000 ms)")]
-        public int TunnelTimeoutMilliseconds { get; set; } = 10000;
+        public static int TunnelTimeoutMilliseconds { get; set; } = DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS;
 
         [Option("pace", Required = false, HelpText = @"The delay (in milliseconds) between file operations. This can be used to reduce the impact on the file server. Default: 0 (no delay)")]
         public static int PaceMilliseconds { get; set; } = 0;
+
+        [Option("write-interval", Required = false, HelpText = @"How often (in milliseconds) file writes should be performed. Default: 0 (as fast as possible)")]
+        public static int WriteIntervalMilliseconds { get; set; } = 0;
+
+        [Option("read-interval", Required = false, HelpText = @"How often (in milliseconds) file reads should be performed. Default: 0 (as fast as possible)")]
+        public static int ReadIntervalMilliseconds { get; set; } = 0;
+
 
 
 
@@ -60,5 +69,8 @@ namespace ft.CLI
 
         [Option("s3", Required = false, HelpText = @"Optimize the tunnel for S3 file shares")]
         public static bool S3 { get; set; } = false;
+
+        [Option("dropbox", Required = false, HelpText = @"Optimize the tunnel for Dropbox")]
+        public static bool Dropbox { get; set; } = false;
     }
 }
