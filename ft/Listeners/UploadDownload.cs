@@ -75,7 +75,7 @@ namespace ft.Listeners
             {
                 try
                 {
-                    var writeToFilename = $"{WriteToFilename}.ft{fileIx}";
+                    var writeToFilename = GetSubfileName(WriteToFilename, fileIx);
 
                     Extensions.Time(
                         $"[{writeFileShortName}] Wait for file to be available",
