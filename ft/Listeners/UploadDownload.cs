@@ -33,6 +33,13 @@ namespace ft.Listeners
             SendQueue = new BlockingCollection<Command>(20);
         }
 
+        static string GetSubfileName(string filename, int index)
+        {
+            var originalExtension = Path.GetExtension(filename);
+            var result = Path.ChangeExtension(filename, $"ft{index}{originalExtension}");
+            return result;
+        }
+
         private readonly int maxSubfiles = 10;
         readonly ConcurrentDictionary<string, DateTime> filesInUse = [];
 
@@ -57,7 +64,7 @@ namespace ft.Listeners
             {
                 try
                 {
-                    var subFilename = $"{WriteToFilename}.ft{i}";
+                    var subFilename = GetSubfileName(WriteToFilename, i);
                     fileAccess.Delete(subFilename);
                 }
                 catch { }
@@ -254,7 +261,7 @@ namespace ft.Listeners
                         }
                     }
 
-                    var readFromFilename = $"{ReadFromFilename}.ft{readFromIx}";
+                    var readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value);
 
                     byte[] fileContent = [];
 
