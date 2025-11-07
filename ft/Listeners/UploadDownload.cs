@@ -418,7 +418,7 @@ namespace ft.Listeners
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex}");
+                    Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
 
                     readFromIx = null;
