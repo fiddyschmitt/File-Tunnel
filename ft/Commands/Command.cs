@@ -16,7 +16,6 @@ namespace ft.Commands
         }
 
         public abstract byte CommandId { get; }
-        public static ulong SentPacketCount { get; set; }
         public ulong PacketNumber { get; set; } = (ulong)Random.Shared.NextInt64();
         public uint CRC { get; set; }
 
