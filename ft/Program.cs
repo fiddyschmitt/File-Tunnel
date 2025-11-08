@@ -128,6 +128,8 @@ namespace ft
             {
                 o.UploadDownload = true;
 
+                Options.PaceMilliseconds = Math.Max(100, Options.PaceMilliseconds);
+
                 var recommendedWriteIntervalMillis = 4000;
                 if (Options.WriteIntervalMilliseconds == 0)
                 {
