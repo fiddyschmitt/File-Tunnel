@@ -24,23 +24,34 @@ namespace ft.Listeners
                     string writeToFilename,
                     int maxFileSizeBytes,
                     int tunnelTimeoutMilliseconds,
+                    int maxSubfiles,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
             Options.PaceMilliseconds = Math.Max(1, Options.PaceMilliseconds);  //the pace should be at least 1 millisecond, otherwise we consume a lot of CPU cycles
+
             this.fileAccess = new PacedAccess(fileAccess, Options.PaceMilliseconds);
+            this.maxSubfiles = maxSubfiles;
 
             //this class can combine multiple commands into a single file
             SendQueue = new BlockingCollection<Command>(20);
         }
 
-        static string GetSubfileName(string filename, int index)
+        static string GetSubfileName(string filename, int index, int maxSubfiles)
         {
-            var originalExtension = Path.GetExtension(filename);
-            var result = Path.ChangeExtension(filename, $"ft{index}{originalExtension}");
+            string result;
+            if (maxSubfiles == 1)
+            {
+                result = filename;
+            }
+            else
+            {
+                var originalExtension = Path.GetExtension(filename);
+                result = Path.ChangeExtension(filename, $"ft{index}{originalExtension}");
+            }
             return result;
         }
 
-        private readonly int maxSubfilesForSending = 10;
+        private readonly int maxSubfiles;
         readonly ConcurrentDictionary<string, DateTime> filesInUse = [];
 
         public override void SendPump()
@@ -55,18 +66,12 @@ namespace ft.Listeners
 
             var timeSinceWrite = new Stopwatch();
 
-            try
-            {
-                fileAccess.Delete(WriteToFilename);
-            }
-            catch { }
 
-
-            for (int i = 1; i <= maxSubfilesForSending; i++)
+            for (int i = 1; i <= maxSubfiles; i++)
             {
                 try
                 {
-                    var subFilename = GetSubfileName(WriteToFilename, i);
+                    var subFilename = GetSubfileName(WriteToFilename, i, maxSubfiles);
                     fileAccess.Delete(subFilename);
                 }
                 catch { }
@@ -79,7 +84,7 @@ namespace ft.Listeners
             {
                 try
                 {
-                    var writeToFilename = GetSubfileName(WriteToFilename, fileIx);
+                    var writeToFilename = GetSubfileName(WriteToFilename, fileIx, maxSubfiles);
 
                     Extensions.Time(
                         $"[{writeFileShortName}] Wait for file to be available",
@@ -147,6 +152,8 @@ namespace ft.Listeners
                         {
                             if (commandsSent == 0)
                             {
+                                //write the file header
+
                                 binaryWriter.Write(sessionId);
 
                                 var currentEpochDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -205,18 +212,23 @@ namespace ft.Listeners
 
                                 //File.AppendAllLines(debugFilename, [writeToFilename, $"{commandBytes.Length:N0} bytes", Convert.ToBase64String(commandBytes)]);
 
-                                //the main file contains metadata about the session
-                                var sessionMetadata = new string[] { $"{sessionId}", $"{maxSubfilesForSending}" }
-                                                        .ToString(Environment.NewLine);
+                                if (maxSubfiles > 1)
+                                {
+                                    //the main file contains metadata about the session
+                                    using var sessionMetadataMemoryStream = new MemoryStream();
+                                    using var sessionMetadataWriter = new BinaryWriter(sessionMetadataMemoryStream);
+                                    sessionMetadataWriter.Write(sessionId);
+                                    var sessionMetadata = sessionMetadataMemoryStream.ToArray();
 
-                                fileAccess.WriteAllBytes(WriteToFilename, Encoding.UTF8.GetBytes(sessionMetadata), true);
+                                    fileAccess.WriteAllBytes(WriteToFilename, sessionMetadata, true);
+                                }
 
                                 lastWrite = DateTime.Now;
 
                                 writeSuccessful = true;
                                 fileIx++;
 
-                                if (fileIx > maxSubfilesForSending)
+                                if (fileIx > maxSubfiles)
                                 {
                                     fileIx = 1;
                                 }
@@ -228,8 +240,6 @@ namespace ft.Listeners
                                     Program.Log($"[{writeFileShortName}] Error during write: {ex.Message}");
                                 }
                             }
-
-
 
                             return writeSuccessful;
                         },
@@ -249,17 +259,15 @@ namespace ft.Listeners
             }
         }
 
-        public static (long SessionId, int MaxSubfiles) ReadSessionMetadata(IFileAccess fileAccess, string filename)
+        public static long ReadSessionMetadata(IFileAccess fileAccess, string filename)
         {
             var sessionMetadataBytes = fileAccess.ReadAllBytes(filename);
-            var sessionMetadata = Encoding.UTF8.GetString(sessionMetadataBytes);
+            using var memoryStream = new MemoryStream(sessionMetadataBytes);
+            using var binaryReader = new BinaryReader(memoryStream);
 
-            var lines = Regex.Split(sessionMetadata, "\r\n|\r|\n");
+            var sessionId = binaryReader.ReadInt64();
 
-            var sessionId = long.Parse(lines[0]);
-            var maxSubfilesForReceiving = int.Parse(lines[1]);
-
-            return (sessionId, maxSubfilesForReceiving);
+            return sessionId;
         }
 
         public override void ReceivePump()
@@ -276,7 +284,6 @@ namespace ft.Listeners
 
             long? currentSessionId = null;
             int? readFromIx = null;
-            int? maxSubfilesForReceiving = null;
 
             while (true)
             {
@@ -284,57 +291,63 @@ namespace ft.Listeners
                 {
                     if (readFromIx == null)
                     {
-                        //read the current index from the main file
                         try
                         {
-                            (currentSessionId, maxSubfilesForReceiving) = ReadSessionMetadata(fileAccess, ReadFromFilename);
+                            currentSessionId = ReadSessionMetadata(fileAccess, ReadFromFilename);
 
                             if (Verbose)
                             {
-                                Program.Log($"[{readFileShortName}] Read session metadata file. [{nameof(currentSessionId)} = {currentSessionId}] [{nameof(maxSubfilesForReceiving)} = {maxSubfilesForReceiving}]");
+                                Program.Log($"[{readFileShortName}] Read session metadata. [{nameof(currentSessionId)} = {currentSessionId}]");
                             }
 
-                            //Let's find the subfile we're actually up to
-                            var candidate = Enumerable
-                                            .Range(0, maxSubfilesForReceiving.Value)
-                                            .Select(candidateIndex => new
-                                            {
-                                                Index = candidateIndex,
-                                                Filename = GetSubfileName(ReadFromFilename, candidateIndex)
-                                            })
-                                            .Where(candidate =>
-                                            {
-                                                var exists = fileAccess.Exists(candidate.Filename);
-                                                return exists;
-                                            })
-                                            .OrderByDescending(candidate =>
-                                            {
-                                                var dateWrittenEpoch = 0L;
-                                                try
-                                                {
-                                                    var content = fileAccess.ReadAllBytes(candidate.Filename);
-                                                    using var contentMs = new MemoryStream(content);
-                                                    using var br = new BinaryReader(contentMs);
-
-                                                    var fileSessionId = br.ReadInt64();
-
-                                                    if (fileSessionId == currentSessionId)
-                                                    {
-                                                        dateWrittenEpoch = br.ReadInt64();
-                                                    }
-                                                }
-                                                catch { }
-
-                                                return dateWrittenEpoch;
-                                            })
-                                            .FirstOrDefault();
-
-                            readFromIx = candidate?.Index ?? 1;
-                            var candidateFilename = GetSubfileName(ReadFromFilename, readFromIx.Value);
-
-                            if (Verbose)
+                            if (maxSubfiles == 1)
                             {
-                                Program.Log($"[{readFileShortName}] The latest file from counterpart appears to be: {Path.GetFileName(candidateFilename)}");
+                                readFromIx = 1;
+                            }
+                            else
+                            {
+                                //Let's find the subfile we're actually up to
+                                var candidate = Enumerable
+                                                .Range(0, maxSubfiles)
+                                                .Select(candidateIndex => new
+                                                {
+                                                    Index = candidateIndex,
+                                                    Filename = GetSubfileName(ReadFromFilename, candidateIndex, maxSubfiles)
+                                                })
+                                                .Where(candidate =>
+                                                {
+                                                    var exists = fileAccess.Exists(candidate.Filename);
+                                                    return exists;
+                                                })
+                                                .OrderByDescending(candidate =>
+                                                {
+                                                    var dateWrittenEpoch = 0L;
+                                                    try
+                                                    {
+                                                        var content = fileAccess.ReadAllBytes(candidate.Filename);
+                                                        using var contentMs = new MemoryStream(content);
+                                                        using var br = new BinaryReader(contentMs);
+
+                                                        var fileSessionId = br.ReadInt64();
+
+                                                        if (fileSessionId == currentSessionId)
+                                                        {
+                                                            dateWrittenEpoch = br.ReadInt64();
+                                                        }
+                                                    }
+                                                    catch { }
+
+                                                    return dateWrittenEpoch;
+                                                })
+                                                .FirstOrDefault();
+
+                                readFromIx = candidate?.Index ?? 1;
+                                var candidateFilename = GetSubfileName(ReadFromFilename, readFromIx.Value, maxSubfiles);
+
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{readFileShortName}] The latest file from counterpart appears to be: {Path.GetFileName(candidateFilename)}");
+                                }
                             }
                         }
                         catch
@@ -355,7 +368,7 @@ namespace ft.Listeners
                         Delay.Wait(toSleep);
                     }
 
-                    var readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value);
+                    var readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value, maxSubfiles);
 
                     byte[] fileContent = [];
 
@@ -398,11 +411,10 @@ namespace ft.Listeners
                             if (checkForSessionChange.ElapsedMilliseconds > 5000)
                             {
                                 long? latestSessionId = null;
-                                int? latestMaxSubfilesForReceiving = null;
 
                                 try
                                 {
-                                    (latestSessionId, latestMaxSubfilesForReceiving) = ReadSessionMetadata(fileAccess, ReadFromFilename);
+                                    latestSessionId = ReadSessionMetadata(fileAccess, ReadFromFilename);
                                 }
                                 catch { }
 
@@ -415,10 +427,9 @@ namespace ft.Listeners
                                     }
 
                                     currentSessionId = latestSessionId;
-                                    maxSubfilesForReceiving = latestMaxSubfilesForReceiving;
 
                                     readFromIx = 1;
-                                    readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value);
+                                    readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value, maxSubfiles);
 
                                     //throw new Exception(exMsg);
                                 }
@@ -434,7 +445,7 @@ namespace ft.Listeners
                     Delay.Wait(Options.PaceMilliseconds);
 
                     readFromIx++;
-                    if (readFromIx > maxSubfilesForReceiving)
+                    if (readFromIx > maxSubfiles)
                     {
                         readFromIx = 1;
                     }
