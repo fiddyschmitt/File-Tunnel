@@ -19,8 +19,6 @@ namespace ft_tests.FileShares.Servers
         public override void Restart()
         {
             if (OS == OS.Linux) processRunner.Run("systemctl", "restart nfs-server");
-
-            Thread.Sleep(10000);
         }
     }
 }
