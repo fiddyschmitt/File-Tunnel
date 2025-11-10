@@ -64,9 +64,6 @@ namespace ft.Listeners
             var writeFileShortName = Path.GetFileName(WriteToFilename);
             var writingStopwatch = new Stopwatch();
 
-            var timeSinceWrite = new Stopwatch();
-
-
             for (int i = 1; i <= maxSubfiles; i++)
             {
                 try
@@ -170,8 +167,6 @@ namespace ft.Listeners
                         {
                             CommandSent(command);
                             commandsSent++;
-
-                            timeSinceWrite.Restart();
 
                             if (Verbose)
                             {
