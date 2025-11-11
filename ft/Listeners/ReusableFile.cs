@@ -43,6 +43,10 @@ namespace ft.Listeners
         {
             PurgeSizeInBytes = purgeSizeInBytes;
             IsolatedReads = isolatedReads;
+
+            //FPS 11/11/2025: This class can write multiple commands to the file.
+            //But there doesn't seem to be a performance improvement, so leaving as 1 for now.
+            SendQueue = new BlockingCollection<Command>(1);
         }
 
         public override void SendPump()
@@ -113,77 +117,93 @@ namespace ft.Listeners
 
                     while (true)
                     {
-                        if (SendQueue.TryTake(out Command? command, TunnelTimeoutMilliseconds))
+                        var commandsSent = 0;
+                        int? commandsToSend = null;
+
+                        while (true)
                         {
-                            if (Verbose)
+                            hashingStream.Reset();
+
+                            if (SendQueue.TryTake(out Command? command, TunnelTimeoutMilliseconds))
                             {
-                                Program.Log($"[{writeFileShortName}] Preparing to send packet number {command.PacketNumber} ({command.GetName()})");
+                                commandsToSend ??= SendQueue.Count + 1;
+
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Preparing to send packet number {command.PacketNumber} ({command.GetName()})");
+                                }
+
+                                hashingMemoryStream.SetLength(0);
+                                command.Serialise(msWriter);
+                                msWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+
+                                if (PurgeSizeInBytes > 0 && fileStream.Position + hashingMemoryStream.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
+
+                                    var purge = new Purge();
+                                    purge.Serialise(binaryWriter);
+
+                                    binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] Waiting for counterpart to be ready for purge.");
+                                    }
+                                    isReadyForPurge?.Wait(1);
+
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] Performing truncation.");
+                                    }
+                                    fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                                    fileStream.SetLength(MESSAGE_WRITE_POS);
+                                    //fileStream.Flush(true);
+
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] Signaling that the purge is complete.");
+                                    }
+                                    setPurgeComplete.Set(1);
+
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] Waiting for counterpart clear their ready flag.");
+                                    }
+                                    isReadyForPurge?.Wait(0);
+
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{writeFileShortName}] Clearing our complete flag.");
+                                    }
+                                    setPurgeComplete.Set(0);
+
+                                    Program.Log($"[{writeFileShortName}] Purge complete.");
+                                }
+
+                                //write the message to file
+                                var commandStartPos = fileStream.Position;
+
+                                var commandBytes = ms.ToArray();
+                                binaryWriter.Write(commandBytes);
+
+                                var commandEndPos = fileStream.Position;
+
+                                bytesWritten += hashingMemoryStream.Length;
+
+                                if (Verbose)
+                                {
+                                    Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
+                                }
+
+                                CommandSent(command);
+                                commandsSent++;
                             }
 
-                            hashingMemoryStream.SetLength(0);
-                            command.Serialise(msWriter);
-                            msWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
-
-                            if (PurgeSizeInBytes > 0 && fileStream.Position + hashingMemoryStream.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
+                            if (commandsToSend.HasValue && commandsSent >= commandsToSend.Value)
                             {
-                                Program.Log($"[{writeFileShortName}] Instructing counterpart to prepare for purge.");
-
-                                var purge = new Purge();
-                                purge.Serialise(binaryWriter);
-
-                                binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
-
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Waiting for counterpart to be ready for purge.");
-                                }
-                                isReadyForPurge?.Wait(1);
-
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Performing truncation.");
-                                }
-                                fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                                fileStream.SetLength(MESSAGE_WRITE_POS);
-                                //fileStream.Flush(true);
-
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Signaling that the purge is complete.");
-                                }
-                                setPurgeComplete.Set(1);
-
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Waiting for counterpart clear their ready flag.");
-                                }
-                                isReadyForPurge?.Wait(0);
-
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{writeFileShortName}] Clearing our complete flag.");
-                                }
-                                setPurgeComplete.Set(0);
-
-                                Program.Log($"[{writeFileShortName}] Purge complete.");
+                                break;
                             }
-
-                            //write the message to file
-                            var commandStartPos = fileStream.Position;
-
-                            var commandBytes = ms.ToArray();
-                            binaryWriter.Write(commandBytes);
-
-                            var commandEndPos = fileStream.Position;
-
-                            bytesWritten += hashingMemoryStream.Length;
-
-                            if (Verbose)
-                            {
-                                Program.Log($"[{writeFileShortName}] Wrote packet number {command.PacketNumber} ({command.GetName()}) to position {commandStartPos:N0} - {commandEndPos:N0} ({(commandEndPos - commandStartPos).BytesToString()})");
-                            }
-
-                            CommandSent(command);
                         }
 
                         if (lastWrite.HasValue)
@@ -198,6 +218,11 @@ namespace ft.Listeners
                         lastWrite = DateTime.Now;
 
                         //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
+
+                        if (Verbose)
+                        {
+                            Program.Log($"[{writeFileShortName}] Serialised {commandsSent:N0} commands into {Path.GetFileName(WriteToFilename)} ({bytesWritten.BytesToString()})");
+                        }
 
                         bytesWritten = 0;
                     }
