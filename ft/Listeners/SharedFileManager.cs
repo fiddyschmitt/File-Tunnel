@@ -67,7 +67,7 @@ namespace ft.Listeners
         {
             Threads.StartNew(ReceivePump, nameof(ReceivePump));
             Threads.StartNew(SendPump, nameof(SendPump));
-            Threads.StartNew(MeasureRTT, nameof(MeasureRTT));
+            Threads.StartNew(SendPingRequests, nameof(SendPingRequests));
             Threads.StartNew(ReportNetworkPerformance, nameof(ReportNetworkPerformance));
             Threads.StartNew(MonitorOnlineStatus, nameof(MonitorOnlineStatus));
 
@@ -147,6 +147,14 @@ namespace ft.Listeners
                 var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
                 sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
             }
+
+            if (command is Ping ping && ping.PingType == EnumPingType.Request)
+            {
+                lock (sentPingRequests)
+                {
+                    sentPingRequests.Add((DateTime.Now, ping));
+                }
+            }
         }
 
         protected void CommandReceived(Command command)
@@ -207,7 +215,16 @@ namespace ft.Listeners
 
                 if (ping.PingType == EnumPingType.Response)
                 {
-                    pingResponsesReceived.Add(ping);
+                    lock (sentPingRequests)
+                    {
+                        var pingRequest = sentPingRequests.FirstOrDefault(sentPing => sentPing.Ping.PacketNumber == ping.ResponseToPacketNumber);
+
+                        if (pingRequest != default)
+                        {
+                            latestRTT = DateTime.Now - pingRequest.DateSent;
+                            lastSuccessfulPing = DateTime.Now;
+                        }
+                    }
                 }
             }
         }
@@ -239,71 +256,44 @@ namespace ft.Listeners
                 });
         }
 
-        readonly BlockingCollection<Ping> pingResponsesReceived = [];
+        private readonly List<(DateTime DateSent, Ping Ping)> sentPingRequests = [];
+
         public TimeSpan? latestRTT = null;
-        public void MeasureRTT()
+        public void SendPingRequests()
         {
             var pingRateLimiter = new FixedWindowRateLimiter(
                     new FixedWindowRateLimiterOptions()
                     {
                         PermitLimit = 1,
-                        Window = TimeSpan.FromSeconds(1),
+                        Window = TimeSpan.FromMilliseconds(1000),
                         QueueLimit = int.MaxValue,
                         QueueProcessingOrder = QueueProcessingOrder.OldestFirst
                     });
-
-            var pingStopwatch = new Stopwatch();
-
-            var pingTimeoutMillliseconds = TunnelTimeoutMilliseconds;
 
             while (true)
             {
                 try
                 {
-                    pingStopwatch.Restart();
+                    pingRateLimiter.Wait();
 
                     var pingRequest = new Ping(EnumPingType.Request);
 
-                    if (!EnqueueToSend(pingRequest, pingTimeoutMillliseconds))
-                    {
-                        latestRTT = null;
-                        continue;
-                    }
+                    EnqueueToSend(pingRequest, 1000);
 
-                    try
+                    lock (sentPingRequests)
                     {
-                        while (true)
-                        {
-                            if (pingResponsesReceived.TryTake(out Ping? pingResponse, 100))
+                        sentPingRequests
+                            .RemoveAll(ping =>
                             {
-                                if (pingRequest.PacketNumber == pingResponse.ResponseToPacketNumber)
-                                {
-                                    pingStopwatch.Stop();
-
-                                    latestRTT = pingStopwatch.Elapsed;
-                                    lastSuccessfulPing = DateTime.Now;
-                                    break;
-                                }
-                            }
-
-                            if (pingStopwatch.ElapsedMilliseconds > pingTimeoutMillliseconds)
-                            {
-                                latestRTT = null;
-                                break;
-                            }
-                        }
+                                var timeSinceSent = DateTime.Now - ping.DateSent;
+                                var remove = timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds;
+                                return remove;
+                            });
                     }
-                    catch
-                    {
-                        latestRTT = null;
-                        continue;
-                    }
-
-                    pingRateLimiter.Wait();
                 }
                 catch (Exception ex)
                 {
-                    Program.Log($"{nameof(MeasureRTT)}: {ex}");
+                    Program.Log($"{nameof(SendPingRequests)}: {ex}");
                 }
             }
         }
