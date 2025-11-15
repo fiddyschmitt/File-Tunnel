@@ -11,6 +11,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.RateLimiting;
 
 namespace ft.Listeners
 {
@@ -34,7 +35,34 @@ namespace ft.Listeners
 
             //this class can combine multiple commands into a single file
             SendQueue = new BlockingCollection<Command>(20);
+
+            if (Options.WriteIntervalMilliseconds > 0)
+            {
+                WriteLimiter = new FixedWindowRateLimiter(
+                    new FixedWindowRateLimiterOptions()
+                    {
+                        PermitLimit = 1,
+                        Window = TimeSpan.FromMilliseconds(Options.WriteIntervalMilliseconds),
+                        QueueLimit = int.MaxValue,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                    });
+            }
+
+            if (Options.ReadIntervalMilliseconds > 0)
+            {
+                ReadLimiter = new FixedWindowRateLimiter(
+                    new FixedWindowRateLimiterOptions()
+                    {
+                        PermitLimit = 1,
+                        Window = TimeSpan.FromMilliseconds(Options.ReadIntervalMilliseconds),
+                        QueueLimit = int.MaxValue,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                    });
+            }
         }
+
+        private readonly ReplenishingRateLimiter? WriteLimiter;
+        private readonly ReplenishingRateLimiter? ReadLimiter;
 
         static string GetSubfileName(string filename, int index, int maxSubfiles)
         {
@@ -58,8 +86,6 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
-
-            DateTime? lastWrite = null;
 
             var writeFileShortName = Path.GetFileName(WriteToFilename);
             var writingStopwatch = new Stopwatch();
@@ -126,13 +152,7 @@ namespace ft.Listeners
 
                     //Wait without touching the write file, which lets rclone sync.
                     //By waiting here, we allow commands to accumulate which lets us write them to a single further below.
-                    if (lastWrite.HasValue)
-                    {
-                        var timeSinceLastWrite = DateTime.Now - lastWrite.Value;
-                        var toSleep = (int)Math.Max(0, Options.WriteIntervalMilliseconds - timeSinceLastWrite.TotalMilliseconds);
-                        Delay.Wait(toSleep);
-                    }
-
+                    WriteLimiter.Wait();
 
                     using var memoryStream = new MemoryStream();
                     var hashingStream = new HashingStream(memoryStream, Verbose, TunnelTimeoutMilliseconds);
@@ -218,8 +238,6 @@ namespace ft.Listeners
                                     fileAccess.WriteAllBytes(WriteToFilename, sessionMetadata, true);
                                 }
 
-                                lastWrite = DateTime.Now;
-
                                 writeSuccessful = true;
                                 fileIx++;
 
@@ -269,8 +287,6 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
-
-            DateTime? lastRead = null;
 
             var readFileShortName = Path.GetFileName(ReadFromFilename);
 
@@ -356,12 +372,7 @@ namespace ft.Listeners
                         }
                     }
 
-                    if (lastRead.HasValue)
-                    {
-                        var timeSinceLastRead = DateTime.Now - lastRead.Value;
-                        var toSleep = (int)Math.Max(0, Options.ReadIntervalMilliseconds - timeSinceLastRead.TotalMilliseconds);
-                        Delay.Wait(toSleep);
-                    }
+                    ReadLimiter.Wait();
 
                     var readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value, maxSubfiles);
 

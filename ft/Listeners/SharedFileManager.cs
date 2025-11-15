@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.RateLimiting;
 using System.Threading.Tasks;
 
 namespace ft.Listeners
@@ -242,6 +243,15 @@ namespace ft.Listeners
         public TimeSpan? latestRTT = null;
         public void MeasureRTT()
         {
+            var pingRateLimiter = new FixedWindowRateLimiter(
+                    new FixedWindowRateLimiterOptions()
+                    {
+                        PermitLimit = 1,
+                        Window = TimeSpan.FromSeconds(1),
+                        QueueLimit = int.MaxValue,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                    });
+
             var pingStopwatch = new Stopwatch();
 
             var pingTimeoutMillliseconds = TunnelTimeoutMilliseconds;
@@ -289,9 +299,7 @@ namespace ft.Listeners
                         continue;
                     }
 
-                    var durationToSleep = (int)(1000 - latestRTT?.TotalMilliseconds ?? 0);
-                    if (durationToSleep < 0) durationToSleep = 0;
-                    Delay.Wait(durationToSleep);
+                    pingRateLimiter.Wait();
                 }
                 catch (Exception ex)
                 {

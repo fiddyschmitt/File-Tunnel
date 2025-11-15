@@ -13,6 +13,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.RateLimiting;
 using System.Threading.Tasks;
 
 namespace ft.Listeners
@@ -47,14 +48,39 @@ namespace ft.Listeners
             //FPS 11/11/2025: This class can write multiple commands to the file.
             //But there doesn't seem to be a performance improvement, so leaving as 1 for now.
             SendQueue = new BlockingCollection<Command>(1);
+
+            if (Options.WriteIntervalMilliseconds > 0)
+            {
+                WriteLimiter = new FixedWindowRateLimiter(
+                    new FixedWindowRateLimiterOptions()
+                    {
+                        PermitLimit = 1,
+                        Window = TimeSpan.FromMilliseconds(Options.WriteIntervalMilliseconds),
+                        QueueLimit = int.MaxValue,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                    });
+            }
+
+            if (Options.ReadIntervalMilliseconds > 0)
+            {
+                ReadLimiter = new FixedWindowRateLimiter(
+                    new FixedWindowRateLimiterOptions()
+                    {
+                        PermitLimit = 1,
+                        Window = TimeSpan.FromMilliseconds(Options.ReadIntervalMilliseconds),
+                        QueueLimit = int.MaxValue,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                    });
+            }
         }
+
+        private readonly ReplenishingRateLimiter? WriteLimiter;
+        private readonly ReplenishingRateLimiter? ReadLimiter;
 
         public override void SendPump()
         {
             //var debugFilename = $"diag-sent-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
-
-            DateTime? lastWrite = null;
 
             var writeFileShortName = Path.GetFileName(WriteToFilename);
 
@@ -206,16 +232,9 @@ namespace ft.Listeners
                             }
                         }
 
-                        if (lastWrite.HasValue)
-                        {
-                            var timeSinceLastWrite = DateTime.Now - lastWrite;
-                            var toSleep = (int)Math.Max(0, Options.WriteIntervalMilliseconds - timeSinceLastWrite.Value.TotalMilliseconds);
-                            Delay.Wait(toSleep);
-                        }
-
+                        WriteLimiter.Wait();
                         binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
 
-                        lastWrite = DateTime.Now;
 
                         //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
 
@@ -251,8 +270,6 @@ namespace ft.Listeners
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
             //File.Create(debugFilename).Close();
-
-            DateTime? lastRead = null;
 
             var readFileShortName = Path.GetFileName(ReadFromFilename);
             var checkForSessionChange = new Stopwatch();
@@ -384,12 +401,7 @@ namespace ft.Listeners
                             Delay.Wait(1);
                         }
 
-                        if (lastRead.HasValue)
-                        {
-                            var timeSinceLastRead = DateTime.Now - lastRead;
-                            var toSleep = (int)Math.Max(0, Options.ReadIntervalMilliseconds - timeSinceLastRead.Value.TotalMilliseconds);
-                            Delay.Wait(toSleep);
-                        }
+                        ReadLimiter.Wait();
 
                         var commandStartPos = fileStream.Position;
                         Command? command;
@@ -406,8 +418,6 @@ namespace ft.Listeners
                         }
 
                         var commandEndPos = fileStream.Position;
-
-                        lastRead = DateTime.Now;
 
                         //var ms = new MemoryStream();
                         //fileStream.Seek(commandStartPos, SeekOrigin.Begin);

@@ -13,6 +13,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.RateLimiting;
 using System.Threading.Tasks;
 
 namespace ft
@@ -472,6 +473,11 @@ namespace ft
             {
                 stream.Flush(verbose, tunnelTimeoutMilliseconds);
             }
+        }
+
+        public static void Wait(this ReplenishingRateLimiter? limiter)
+        {
+            limiter?.AcquireAsync(1, CancellationToken.None).AsTask().GetAwaiter().GetResult();
         }
     }
 }
