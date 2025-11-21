@@ -33,7 +33,7 @@ namespace ft.IO
                 verbose,
                 tunnelTimeoutMilliseconds);
 
-            writer.Flush(true, verbose, tunnelTimeoutMilliseconds);
+            writer.Flush(verbose, tunnelTimeoutMilliseconds);
         }
     }
 }

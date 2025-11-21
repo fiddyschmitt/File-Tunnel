@@ -112,7 +112,7 @@ namespace ft.Listeners
 
                     var sessionId = Random.Shared.NextInt64();
                     binaryWriter.Write(sessionId);
-                    binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+                    binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                     if (Verbose)
                     {
@@ -161,7 +161,7 @@ namespace ft.Listeners
 
                                 hashingMemoryStream.SetLength(0);
                                 command.Serialise(msWriter);
-                                msWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+                                msWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                                 if (PurgeSizeInBytes > 0 && fileStream.Position + hashingMemoryStream.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
                                 {
@@ -170,7 +170,7 @@ namespace ft.Listeners
                                     var purge = new Purge();
                                     purge.Serialise(binaryWriter);
 
-                                    binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+                                    binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                                     if (Verbose)
                                     {
@@ -233,7 +233,7 @@ namespace ft.Listeners
                         }
 
                         WriteLimiter.Wait();
-                        binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+                        binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
 
                         //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);

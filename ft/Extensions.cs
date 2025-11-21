@@ -445,7 +445,7 @@ namespace ft
             }
         }
 
-        public static void Flush(this BinaryWriter binaryWriter, bool flushToDisk, bool verbose, int timeoutMilliseconds)
+        public static void Flush(this BinaryWriter binaryWriter, bool verbose, int timeoutMilliseconds)
         {
             Retry($"{nameof(BinaryWriter)}.{nameof(BinaryWriter.Flush)}", binaryWriter.Flush, verbose, timeoutMilliseconds);
 

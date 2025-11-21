@@ -85,7 +85,6 @@ namespace ft
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
-                                             o.MaxFileSizeBytes,
                                              Options.TunnelTimeoutMilliseconds,
                                              1,
                                              o.Verbose);
@@ -173,7 +172,6 @@ namespace ft
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
-                                             o.MaxFileSizeBytes,
                                              Options.TunnelTimeoutMilliseconds,
                                              5,    //using multiple subfiles improves latency for remote file systems such as Dropbox and S3
                                              o.Verbose);

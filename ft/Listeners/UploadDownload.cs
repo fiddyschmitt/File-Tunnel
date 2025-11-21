@@ -23,7 +23,6 @@ namespace ft.Listeners
                     IFileAccess fileAccess,
                     string readFromFilename,
                     string writeToFilename,
-                    int maxFileSizeBytes,
                     int tunnelTimeoutMilliseconds,
                     int maxSubfiles,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
@@ -181,7 +180,7 @@ namespace ft.Listeners
                             command.Serialise(binaryWriter);
                         }
 
-                        binaryWriter.Flush(true, Verbose, TunnelTimeoutMilliseconds);
+                        binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                         if (command != null)
                         {

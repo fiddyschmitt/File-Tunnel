@@ -30,13 +30,14 @@ namespace ft_tests
         static ProcessRunner linux_x64_2;
         static ProcessRunner linux_x64_3;
 
-        public static CsvWriter csvWriter;
+        static CsvWriter csvWriter;
 
-        public static int testNumber = 0;
-        public static Stopwatch totalDuration = new();
-        public static double totalCpuUsageMs = 0;
+        static int testNumber = 0;
+        static readonly Stopwatch totalDuration = new();
+        static double totalCpuUsageMs = 0;
 
         [ClassInitialize]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "<Pending>")]
         public static void ClassInit(TestContext context)
         {
             var config = new ConfigurationBuilder()
@@ -146,7 +147,7 @@ namespace ft_tests
                                 })
                                 .ToList();
 
-            var pathLookup = (OS client, OS server, string fileName) =>
+            static string pathLookup(OS client, OS server, string fileName)
             {
                 var clientSep = client == OS.Windows ? '\\' : '/';
                 var otherSep = client == OS.Windows ? '/' : '\\';
@@ -166,7 +167,7 @@ namespace ft_tests
                 // Ensure exactly one separator between base and fileName
                 if (!basePath.EndsWith(clientSep)) basePath += clientSep;
                 return basePath + fileName;
-            };
+            }
 
             Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
             combinations
@@ -231,7 +232,7 @@ namespace ft_tests
                                 })
                                 .ToList();
 
-            var pathLookup = (OS client, OS server, string fileName) =>
+            static string pathLookup(OS client, OS server, string fileName)
             {
                 var clientSep = client == OS.Windows ? '\\' : '/';
                 var otherSep = client == OS.Windows ? '/' : '\\';
@@ -249,7 +250,7 @@ namespace ft_tests
                 // Ensure exactly one separator between base and fileName
                 if (!basePath.EndsWith(clientSep)) basePath += clientSep;
                 return basePath + fileName;
-            };
+            }
 
             Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
             combinations
@@ -486,7 +487,7 @@ namespace ft_tests
         }
 
 
-        public void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
+        public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
         {
             //if ((server.FileShareType == FileShareType.NFS && (side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Windows)) == false) return;
 
@@ -573,7 +574,7 @@ namespace ft_tests
             }
         }
 
-        public void ConductTest(string name, Client side1, Server server, Client side2, string mode)
+        public static void ConductTest(string name, Client side1, Server server, Client side2, string mode)
         {
             //if (!(side1.OS == OS.Windows && server.OS == OS.Linux && side2.OS == OS.Linux && mode == "Isolated Reads" && server.FileShareType == FileShareType.SMB)) return;
 
@@ -711,7 +712,7 @@ namespace ft_tests
             }
 
 
-            while (!acceptConnectionTask.IsCompletedSuccessfully && !cancelationToken.IsCancellationRequested)
+            while (!acceptConnectionTask.IsCompleted && acceptConnectionTask.IsCompletedSuccessfully && !cancelationToken.IsCancellationRequested)
             {
                 Thread.Sleep(200);
             }

@@ -7,7 +7,7 @@ namespace ft_tests.Runner
 {
     public class RemoteWindowsProcessRunner : ProcessRunner
     {
-        SshClient sshClient;
+        readonly SshClient sshClient;
         private readonly string host;
         private readonly string? remoteExecutablePath;
 
