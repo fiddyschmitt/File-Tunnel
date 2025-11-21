@@ -34,6 +34,7 @@ namespace ft_tests
 
         public static int testNumber = 0;
         public static Stopwatch totalDuration = new();
+        public static double totalCpuUsageMs = 0;
 
         [ClassInitialize]
         public static void ClassInit(TestContext context)
@@ -83,6 +84,9 @@ namespace ft_tests
             csvWriter.WriteField("server");
             csvWriter.WriteField("client_2");
 
+            csvWriter.WriteField("total_processor_time_ms_1");
+            csvWriter.WriteField("total_processor_time_ms_2");
+
             csvWriter.WriteField("command_1");
             csvWriter.WriteField("command_2");
 
@@ -99,8 +103,20 @@ namespace ft_tests
             totalDuration.Stop();
 
             csvWriter.NextRecord();
+
             csvWriter.WriteField("");
+            csvWriter.WriteField("");
+
             csvWriter.WriteField($"{totalDuration.Elapsed.TotalSeconds:0.000}");
+
+            csvWriter.WriteField("");
+            csvWriter.WriteField("");
+            csvWriter.WriteField("");
+            csvWriter.WriteField("");
+            csvWriter.WriteField("");
+
+            csvWriter.WriteField($"{totalCpuUsageMs.ToString("0", CultureInfo.InvariantCulture)}");
+
             csvWriter.Flush();
         }
 
@@ -630,6 +646,17 @@ namespace ft_tests
             csvWriter.WriteField($"{side2.OS}");
 
 
+
+            var side1Duration = side1.Runner.Stop();
+            var side2Duration = side2.Runner.Stop();
+
+            csvWriter.WriteField(side1Duration?.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture) ?? "");
+            csvWriter.WriteField(side2Duration?.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture) ?? "");
+
+            totalCpuUsageMs += side1Duration?.TotalMilliseconds ?? 0;
+            totalCpuUsageMs += side2Duration?.TotalMilliseconds ?? 0;
+
+
             var command1 = side1.Runner.GetFullCommand(side1.Args);
             csvWriter.WriteField(command1);
 
@@ -650,8 +677,7 @@ namespace ft_tests
 
             csvWriter.Flush();
 
-            side1.Runner.Stop();
-            side2.Runner.Stop();
+
 
             File.AppendAllLines(localWindowsOutputFilename, ["--------------------------------------------------------------------------------"]);
         }

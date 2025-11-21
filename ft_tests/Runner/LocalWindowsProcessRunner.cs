@@ -20,11 +20,16 @@ namespace ft_tests.Runner
             Stop();
         }
 
-        public override void Stop()
+        public override TimeSpan? Stop()
         {
             var processName = Path.GetFileName(localExecutablePath);
             Process.Start("taskkill.exe", @$"/IM {processName} /F");
+
+            var result = process?.TotalProcessorTime;
+            return result;
         }
+
+        Process? process;
 
         public override void Run(string args)
         {
@@ -40,7 +45,7 @@ namespace ft_tests.Runner
 
             Debug.WriteLine($"\"{localExecutablePath}\" {args}");
 
-            var process = new Process { StartInfo = psi };
+            process = new Process { StartInfo = psi };
 
             // Subscribe to both output and error streams
             process.OutputDataReceived += (s, e) =>

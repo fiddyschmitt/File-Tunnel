@@ -48,11 +48,13 @@ namespace ft_tests.Runner
             return command;
         }
 
-        public override void Stop()
+        public override TimeSpan? Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
             // pkill by name to stop the process
             sshClient.CreateCommand($"sudo pkill -x \"{processName}\" || true").Execute();
+
+            return null;
         }
 
         public override void DeleteFile(string path)

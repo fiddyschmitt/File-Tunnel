@@ -53,10 +53,12 @@ namespace ft_tests.Runner
             return result;
         }
 
-        public override void Stop()
+        public override TimeSpan? Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
             sshClient.CreateCommand(@$"taskkill /IM {processName} /F").Execute();
+
+            return null;
         }
 
         public override void DeleteFile(string path)

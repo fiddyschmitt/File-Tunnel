@@ -17,7 +17,7 @@ namespace ft_tests.Runner
 
         public abstract void Run(string cmd, string args);
 
-        public abstract void Stop();
+        public abstract TimeSpan? Stop();
 
         public abstract void DeleteFile(string path);
 
