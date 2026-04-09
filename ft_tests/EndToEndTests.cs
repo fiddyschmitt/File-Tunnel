@@ -1,4 +1,4 @@
-﻿using CsvHelper;
+using CsvHelper;
 using CsvHelper.Configuration;
 using ft;
 using ft_tests.FileShares.Clients;
@@ -121,369 +121,189 @@ namespace ft_tests
             csvWriter.Flush();
         }
 
-        [TestMethod]
-        public void Smb()
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Windows, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Windows, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Linux, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Linux, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Windows, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Windows, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Linux, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Windows, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Windows, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Linux, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Linux, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Windows, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Windows, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        public void Smb(OS client1OS, OS serverOS, OS client2OS, Mode mode)
         {
-            OS[] client1 = [OS.Windows, OS.Linux];
-            OS[] servers = [OS.Windows, OS.Linux];
-            OS[] client2 = [OS.Windows, OS.Linux];
+            SmbServer smbServer = serverOS == OS.Linux
+                ? new SmbServer(OS.Linux, linux_x64_2)
+                : new SmbServer(OS.Windows, win10_x64_2);
 
-            var combinations = Utilities.Extensions
-                                .CartesianProduct([client1, servers, client2])
-                                .Select(combo =>
-                                {
-                                    var lst = combo.ToList();
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-                                    SmbServer? smbServer = null;
-                                    if (lst[1] == OS.Linux) smbServer = new SmbServer(OS.Linux, linux_x64_2);
-                                    if (lst[1] == OS.Windows) smbServer = new SmbServer(OS.Windows, win10_x64_2);
+            var writePath1 = SmbPathLookup(client1OS, serverOS, filename1);
+            var readPath1 = SmbPathLookup(client1OS, serverOS, filename2);
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1}");
 
-                                    return new
-                                    {
-                                        Client1 = lst[0],
-                                        Server = smbServer,
-                                        Client2 = lst[2]
-                                    };
-                                })
-                                .ToList();
+            var readPath2 = SmbPathLookup(client2OS, serverOS, filename1);
+            var writePath2 = SmbPathLookup(client2OS, serverOS, filename2);
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2}");
 
-            static string pathLookup(OS client, OS server, string fileName)
-            {
-                var clientSep = client == OS.Windows ? '\\' : '/';
-                var otherSep = client == OS.Windows ? '/' : '\\';
-
-                // Normalise separators to the client’s style and strip leading separators
-                fileName = fileName.Replace(otherSep, clientSep).TrimStart('\\', '/');
-
-                string basePath = (client, server) switch
-                {
-                    (OS.Windows, OS.Windows) => @$"\\192.168.0.32\shared\",
-                    (OS.Windows, OS.Linux) => @$"\\192.168.0.81\data\",
-                    (OS.Linux, OS.Windows) => @$"/media/smb/192.168.0.32/shared/",
-                    (OS.Linux, OS.Linux) => @$"/media/smb/192.168.0.81/data/",
-                    _ => throw new InvalidOperationException("Unsupported client/server OS combo")
-                };
-
-                // Ensure exactly one separator between base and fileName
-                if (!basePath.EndsWith(clientSep)) basePath += clientSep;
-                return basePath + fileName;
-            }
-
-            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
-            combinations
-                .ForEach(combo =>
-                {
-                    foreach (var mode in modes)
-                    {
-                        var client1_process_runner = combo.Client1 switch
-                        {
-                            OS.Windows => win10_x64_1,
-                            OS.Linux => linux_x64_1,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-
-                        var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
-                        var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
-
-                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
-
-
-
-                        var client2_process_runner = combo.Client2 switch
-                        {
-                            OS.Windows => win10_x64_3,
-                            OS.Linux => linux_x64_3,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
-                        var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
-
-                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
-
-                        ConductTunnelTests(mode, side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
-                    }
-                });
+            ConductTunnelTests(mode, side1, smbServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        [TestMethod]
-        public void Nfs()
+        private static string SmbPathLookup(OS client, OS server, string fileName)
         {
-            OS[] client1 = [OS.Windows, OS.Linux];
-            OS[] servers = [OS.Linux];
-            OS[] client2 = [OS.Windows, OS.Linux];
+            var clientSep = client == OS.Windows ? '\\' : '/';
+            var otherSep = client == OS.Windows ? '/' : '\\';
+            fileName = fileName.Replace(otherSep, clientSep).TrimStart('\\', '/');
 
+            string basePath = (client, server) switch
+            {
+                (OS.Windows, OS.Windows) => @$"\\192.168.0.32\shared\",
+                (OS.Windows, OS.Linux) => @$"\\192.168.0.81\data\",
+                (OS.Linux, OS.Windows) => @$"/media/smb/192.168.0.32/shared/",
+                (OS.Linux, OS.Linux) => @$"/media/smb/192.168.0.81/data/",
+                _ => throw new InvalidOperationException("Unsupported client/server OS combo")
+            };
+
+            if (!basePath.EndsWith(clientSep)) basePath += clientSep;
+            return basePath + fileName;
+        }
+
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        public void Nfs(OS client1OS, OS client2OS, Mode mode)
+        {
             var nfsServer = new NfsServer(linux_x64_2);
 
-            var combinations = Utilities.Extensions
-                                .CartesianProduct([client1, servers, client2])
-                                .Select(combo =>
-                                {
-                                    var lst = combo.ToList();
-                                    return new
-                                    {
-                                        Client1 = lst[0],
-                                        Server = nfsServer,
-                                        Client2 = lst[2]
-                                    };
-                                })
-                                .ToList();
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            static string pathLookup(OS client, OS server, string fileName)
-            {
-                var clientSep = client == OS.Windows ? '\\' : '/';
-                var otherSep = client == OS.Windows ? '/' : '\\';
+            var writePath1 = NfsPathLookup(client1OS, filename1);
+            var readPath1 = NfsPathLookup(client1OS, filename2);
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new NfsClient(client1OS, client1Runner, $"-w {writePath1} -r {readPath1} --verbose");
 
-                // Normalise separators to the client’s style and strip leading separators
-                fileName = fileName.Replace(otherSep, clientSep).TrimStart('\\', '/');
+            var readPath2 = NfsPathLookup(client2OS, filename1);
+            var writePath2 = NfsPathLookup(client2OS, filename2);
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var side2 = new NfsClient(client2OS, client2Runner, $"-r {readPath2} -w {writePath2} --verbose");
 
-                string basePath = (client, server) switch
-                {
-                    (OS.Windows, OS.Linux) => @"X:\",
-                    (OS.Linux, OS.Linux) => "/media/nfs/192.168.0.81/tmpfs/",
-                    _ => throw new InvalidOperationException("Unsupported client/server OS combo")
-                };
-
-                // Ensure exactly one separator between base and fileName
-                if (!basePath.EndsWith(clientSep)) basePath += clientSep;
-                return basePath + fileName;
-            }
-
-            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
-            combinations
-                .ForEach(combo =>
-                {
-                    foreach (var mode in modes)
-                    {
-                        var client1_process_runner = combo.Client1 switch
-                        {
-                            OS.Windows => win10_x64_1,
-                            OS.Linux => linux_x64_1,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-
-
-                        var writePath1 = pathLookup(combo.Client1, combo.Server.OS, filename1);
-                        var readPath1 = pathLookup(combo.Client1, combo.Server.OS, filename2);
-
-                        var side1 = new NfsClient(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1} --verbose");
-
-
-
-                        var client2_process_runner = combo.Client2 switch
-                        {
-                            OS.Windows => win10_x64_3,
-                            OS.Linux => linux_x64_3,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var readPath2 = pathLookup(combo.Client2, combo.Server.OS, filename1);
-                        var writePath2 = pathLookup(combo.Client2, combo.Server.OS, filename2);
-
-                        var side2 = new NfsClient(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2} --verbose");
-
-
-                        ConductTunnelTests(mode, side1, combo.Server, side2, readPath1, writePath1, readPath2, writePath2);
-                    }
-                });
+            ConductTunnelTests(mode, side1, nfsServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        [TestMethod]
-        public void Rdp()
+        private static string NfsPathLookup(OS client, string fileName)
         {
-            OS[] client1 = [OS.Windows];
-            OS[] servers = [OS.Windows];
-            OS[] client2 = [OS.Windows];
+            var clientSep = client == OS.Windows ? '\\' : '/';
+            var otherSep = client == OS.Windows ? '/' : '\\';
+            fileName = fileName.Replace(otherSep, clientSep).TrimStart('\\', '/');
 
+            string basePath = client switch
+            {
+                OS.Windows => @"X:\",
+                OS.Linux => "/media/nfs/192.168.0.81/tmpfs/",
+                _ => throw new InvalidOperationException("Unsupported client OS")
+            };
+
+            if (!basePath.EndsWith(clientSep)) basePath += clientSep;
+            return basePath + fileName;
+        }
+
+        [DataTestMethod]
+        [DataRow(Mode.Normal)]
+        [DataRow(Mode.IsolatedReads)]
+        public void Rdp(Mode mode)
+        {
             var server = new Server(OS.Windows, FileShareType.RDP);
 
-            var combinations = Utilities.Extensions
-                                .CartesianProduct([client1, servers, client2])
-                                .Select(combo =>
-                                {
-                                    var lst = combo.ToList();
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-                                    return new
-                                    {
-                                        Client1 = lst[0],
-                                        Server = lst[1],
-                                        Client2 = lst[2]
-                                    };
-                                })
-                                .ToList();
+            var writePath1 = $@"C:\Temp\{filename1}";
+            var readPath1 = $@"C:\Temp\{filename2}";
+            var side1 = new Client(OS.Windows, win10_x64_1, $"-w {writePath1} -r {readPath1}");
 
-            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
-            combinations
-                .ForEach(combo =>
-                {
-                    foreach (var mode in modes)
-                    {
-                        var client1_process_runner = combo.Client1 switch
-                        {
-                            OS.Windows => win10_x64_1,
-                            OS.Linux => linux_x64_1,
-                            _ => throw new NotImplementedException()
-                        };
+            var readPath2 = $@"\\tsclient\c\Temp\{filename1}";
+            var writePath2 = $@"\\tsclient\c\Temp\{filename2}";
+            var side2 = new Client(OS.Windows, win10_x64_3, $"-r {readPath2} -w {writePath2}");
 
-                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-
-                        var writePath1 = $@"C:\Temp\{filename1}";
-                        var readPath1 = $@"C:\Temp\{filename2}";
-
-                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1}");
-
-
-
-                        var client2_process_runner = combo.Client2 switch
-                        {
-                            OS.Windows => win10_x64_3,
-                            OS.Linux => linux_x64_3,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var readPath2 = $@"\\tsclient\c\Temp\{filename1}";
-                        var writePath2 = $@"\\tsclient\c\Temp\{filename2}";
-
-                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2}");
-
-                        ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
-                    }
-                });
+            ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        [TestMethod]
-        public void VirtualBoxSharedFolder()
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Windows, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Linux, Mode.Normal)]
+        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        public void VirtualBoxSharedFolder(OS client1OS, OS client2OS, Mode mode)
         {
-            OS[] client1 = [OS.Windows, OS.Linux];
-            OS[] servers = [OS.Windows];
-            OS[] client2 = [OS.Windows, OS.Linux];
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            List<(OS Client1, OS Client2)> combinations = [
-                (OS.Windows, OS.Windows),
-                (OS.Windows, OS.Linux),
-                (OS.Linux, OS.Linux),
-            ];
+            var writePath1 = client1OS switch
+            {
+                OS.Windows => $@"C:\Temp\{filename1}",
+                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
+            };
+            var readPath1 = client1OS switch
+            {
+                OS.Windows => $@"C:\Temp\{filename2}",
+                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
+            };
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1} --verbose");
 
-            Mode[] modes = [Mode.Normal, Mode.IsolatedReads];
-            combinations
-                .ForEach(combo =>
-                {
-                    foreach (var mode in modes)
-                    {
-                        var client1_process_runner = combo.Client1 switch
-                        {
-                            OS.Windows => win10_x64_1,
-                            OS.Linux => linux_x64_1,
-                            _ => throw new NotImplementedException()
-                        };
+            var readPath2 = client2OS switch
+            {
+                OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename1}",
+                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
+            };
+            var writePath2 = client2OS switch
+            {
+                OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename2}",
+                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
+            };
+            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2} --verbose");
 
-                        var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-                        var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-
-                        var writePath1 = combo.Client1 switch
-                        {
-                            OS.Windows => $@"C:\Temp\{filename1}",
-                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
-                        };
-
-                        var readPath1 = combo.Client1 switch
-                        {
-                            OS.Windows => $@"C:\Temp\{filename2}",
-                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
-                        };
-
-                        var side1 = new Client(combo.Client1, client1_process_runner, $"-w {writePath1} -r {readPath1} --verbose");
-
-
-
-                        var client2_process_runner = combo.Client2 switch
-                        {
-                            OS.Windows => win10_x64_2,
-                            OS.Linux => linux_x64_3,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var readPath2 = combo.Client2 switch
-                        {
-                            OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename1}",
-                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
-                        };
-
-                        var writePath2 = combo.Client2 switch
-                        {
-                            OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename2}",
-                            OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
-                        };
-
-
-
-                        var side2 = new Client(combo.Client2, client2_process_runner, $"-r {readPath2} -w {writePath2} --verbose");
-
-                        ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
-                    }
-                });
+            ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        [TestMethod]
-        public void FTP()
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Windows)]
+        [DataRow(OS.Windows, OS.Linux)]
+        [DataRow(OS.Linux, OS.Linux)]
+        public void FTP(OS client1OS, OS client2OS)
         {
-            //OS[] client1 = [OS.Windows, OS.Linux];
-            //OS[] servers = [OS.Windows];
-            //OS[] client2 = [OS.Windows, OS.Linux];
+            var writePath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
+            var readPath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"--ftp -u anonymous -h 192.168.0.81 -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
 
-            OS[] client1 = [OS.Linux];
-            OS[] client2 = [OS.Linux];
+            var readPath2 = writePath1;
+            var writePath2 = readPath1;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"--ftp -u anonymous -h 192.168.0.81 -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
-            List<(OS Client1, OS Client2)> combinations = [
-                (OS.Windows, OS.Windows),
-                (OS.Windows, OS.Linux),
-                (OS.Linux, OS.Linux),
-            ];
-
-            Mode[] modes = [Mode.FTP];
-            combinations
-                .ForEach(combo =>
-                {
-                    foreach (var mode in modes)
-                    {
-                        var client1_process_runner = combo.Client1 switch
-                        {
-                            OS.Windows => win10_x64_1,
-                            OS.Linux => linux_x64_1,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var writePath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
-                        var readPath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
-
-                        var side1 = new Client(combo.Client1, client1_process_runner, $"--ftp -u anonymous -h 192.168.0.81 -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
-
-
-
-                        var client2_process_runner = combo.Client2 switch
-                        {
-                            OS.Windows => win10_x64_2,
-                            OS.Linux => linux_x64_3,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        var readPath2 = writePath1;
-                        var writePath2 = readPath1;
-
-
-
-                        var side2 = new Client(combo.Client2, client2_process_runner, $"--ftp -u anonymous -h 192.168.0.81 -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
-
-                        ConductTunnelTests(mode, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
-                    }
-                });
+            ConductTunnelTests(Mode.FTP, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
 
@@ -674,13 +494,13 @@ namespace ft_tests
                 csvWriter.WriteField(result.Errror);
             }
 
-
-
             csvWriter.Flush();
 
 
 
             File.AppendAllLines(localWindowsOutputFilename, ["--------------------------------------------------------------------------------"]);
+
+            Assert.IsTrue(result.Success);
         }
 
         public static (TcpClient connected, TcpClient accepted) EstablishConnection(TcpListener listener, IPEndPoint connectTo, CancellationToken cancelationToken)

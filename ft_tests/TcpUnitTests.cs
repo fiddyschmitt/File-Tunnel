@@ -18,22 +18,13 @@ namespace ft_tests
     [TestClass]
     public partial class TcpUnitTests
     {
-        [TestMethod]
-        public void SingleConnection_HalfDuplex()
+        [DataTestMethod]
+        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", false, 1,  DisplayName = "SingleConnection_HalfDuplex")]
+        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", true,  1,  DisplayName = "SingleConnection_FullDuplex")]
+        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", true,  10, DisplayName = "MultipleConnections_FullDuplex")]
+        public void Transfer(int bytesToSend, string forwardStr, bool fullDuplex, int connections)
         {
-            TestTransfer(50 * 1024 * 1024, "5001:127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), false, 1);
-        }
-
-        [TestMethod]
-        public void SingleConnection_FullDuplex()
-        {
-            TestTransfer(50 * 1024 * 1024, "5001:127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 1);
-        }
-
-        [TestMethod]
-        public void MultipleConnections_FullDuplex()
-        {
-            TestTransfer(50 * 1024 * 1024, "5001:127.0.0.1:8001", Path.GetTempFileName(), Path.GetTempFileName(), true, 10);
+            TestTransfer(bytesToSend, forwardStr, Path.GetTempFileName(), Path.GetTempFileName(), fullDuplex, connections);
         }
 
         [TestMethod]

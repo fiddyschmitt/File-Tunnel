@@ -16,46 +16,21 @@ namespace ft_tests
     [TestClass]
     public partial class ParseTests
     {
-        [TestMethod]
-        public void ParseForwardString()
+        [DataTestMethod]
+        [DataRow("5000:192.168.0.20:3389",          "127.0.0.1:5000", "192.168.0.20:3389")]
+        [DataRow("5000:server01:3389",              "127.0.0.1:5000", "server01:3389")]
+        [DataRow("127.0.0.1:5000:192.168.0.20:3389","127.0.0.1:5000", "192.168.0.20:3389")]
+        [DataRow("0.0.0.0:5000:192.168.0.20:3389",  "0.0.0.0:5000",  "192.168.0.20:3389")]
+        [DataRow("*:5000:192.168.0.20:3389",        "*:5000",         "192.168.0.20:3389")]
+        [DataRow("5000/192.168.0.20/3389",          "[::1]:5000",     "192.168.0.20:3389")]
+        [DataRow("5000/server01/3389",              "[::1]:5000",     "server01:3389")]
+        [DataRow("::1/5000/192.168.0.20/3389",      "[::1]:5000",     "192.168.0.20:3389")]
+        [DataRow("::/5000/192.168.0.20/3389",       "[::]:5000",      "192.168.0.20:3389")]
+        public void ParseForwardString(string input, string expectedListen, string expectedDest)
         {
-            (var l, var d) = NetworkUtilities.ParseForwardString("5000:192.168.0.20:3389");
-            Assert.AreEqual(l, "127.0.0.1:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("5000:server01:3389");
-            Assert.AreEqual(l, "127.0.0.1:5000");
-            Assert.AreEqual(d, "server01:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("127.0.0.1:5000:192.168.0.20:3389");
-            Assert.AreEqual(l, "127.0.0.1:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("0.0.0.0:5000:192.168.0.20:3389");
-            Assert.AreEqual(l, "0.0.0.0:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("*:5000:192.168.0.20:3389");
-            Assert.AreEqual(l, "*:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
-
-
-
-            (l, d) = NetworkUtilities.ParseForwardString("5000/192.168.0.20/3389");
-            Assert.AreEqual(l, "[::1]:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("5000/server01/3389");
-            Assert.AreEqual(l, "[::1]:5000");
-            Assert.AreEqual(d, "server01:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("::1/5000/192.168.0.20/3389");
-            Assert.AreEqual(l, "[::1]:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
-
-            (l, d) = NetworkUtilities.ParseForwardString("::/5000/192.168.0.20/3389");
-            Assert.AreEqual(l, "[::]:5000");
-            Assert.AreEqual(d, "192.168.0.20:3389");
+            (var l, var d) = NetworkUtilities.ParseForwardString(input);
+            Assert.AreEqual(expectedListen, l);
+            Assert.AreEqual(expectedDest, d);
         }
     }
 }
