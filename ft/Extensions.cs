@@ -1,5 +1,5 @@
 ﻿using ft.CLI;
-﻿using ft.Commands;
+using ft.Commands;
 using ft.Streams;
 using ft.Utilities;
 using System;
@@ -125,7 +125,7 @@ namespace ft
             using var md5Instance = System.Security.Cryptography.MD5.Create();
             var hashResult = md5Instance.ComputeHash(stream);
 
-            var result = BitConverter.ToString(hashResult).Replace("-", "").ToLowerInvariant(); ;
+            var result = Convert.ToHexStringLower(hashResult);
             return result;
         }
 
@@ -462,7 +462,7 @@ namespace ft
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 {
                     using var tempFs = new FileStream(fileStream.Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                    tempFs.Read(new byte[4096]);
+                    _ = tempFs.Read(new byte[4096]);
                 }
                 else
                 {
