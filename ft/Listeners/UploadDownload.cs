@@ -5,6 +5,7 @@ using ft.Streams;
 using ft.Utilities;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -289,8 +290,10 @@ namespace ft.Listeners
 
             var readFileShortName = Path.GetFileName(ReadFromFilename);
 
-            ulong? previousPacketNumber = null;
-            uint previousPacketCRC = 0;
+            //a file can contain multiple commands, so remember recently processed packets to avoid re-delivering any of them when a file is re-read
+            const int MAX_RECENT_PACKETS = 1000;
+            var recentPackets = new HashSet<(ulong PacketNumber, uint CRC)>();
+            var recentPacketsOrder = new Queue<(ulong PacketNumber, uint CRC)>();
 
             long? currentSessionId = null;
             int? readFromIx = null;
@@ -502,14 +505,17 @@ namespace ft.Listeners
                                 throw new Exception(exMsg);
                             }
 
-                            if (command.PacketNumber == previousPacketNumber && command.CRC == previousPacketCRC)
+                            if (!recentPackets.Add((command.PacketNumber, command.CRC)))
                             {
                                 Program.Log($"[{readFileShortName}] Discarding duplicate packet (Packet number: {command.PacketNumber}, Size: {fileContent.Length:N0} bytes, CRC: {command.CRC})", ConsoleColor.Yellow);
                             }
                             else
                             {
-                                previousPacketNumber = command.PacketNumber;
-                                previousPacketCRC = command.CRC;
+                                recentPacketsOrder.Enqueue((command.PacketNumber, command.CRC));
+                                while (recentPacketsOrder.Count > MAX_RECENT_PACKETS)
+                                {
+                                    recentPackets.Remove(recentPacketsOrder.Dequeue());
+                                }
 
                                 if (Verbose)
                                 {
