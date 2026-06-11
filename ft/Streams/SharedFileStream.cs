@@ -98,14 +98,23 @@ namespace ft.Streams
 
             while (true)
             {
+                if (closed)
+                {
+                    throw new IOException($"Connection {ConnectionId} is closed.");
+                }
+
                 var enqueuedSuccessfully = SharedFileManager.EnqueueToSend(forwardCommand);
 
                 if (enqueuedSuccessfully) break;
             }
         }
 
+        volatile bool closed = false;
+
         public override void Close()
         {
+            closed = true;
+
             base.Close();
 
             SharedFileManager.TearDown(ConnectionId);
