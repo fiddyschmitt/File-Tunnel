@@ -90,8 +90,8 @@ namespace ft.Listeners
 
                 try
                 {
-                    var bufferSize = PurgeSizeInBytes * 2;
-                    bufferSize = Math.Max(bufferSize, 1024 * 1024 * 1024);
+                    //buffer must comfortably hold a full purge cycle, capped at 1 GB
+                    var bufferSize = (int)Math.Clamp(PurgeSizeInBytes * 2L, 1024 * 1024, 1024 * 1024 * 1024);
 
                     //the writer always creates the file
                     fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize, FileOptions.WriteThrough); //large buffer to prevent FileStream from autoflushing
