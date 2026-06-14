@@ -53,7 +53,14 @@ namespace ft_tests
             localWindowsOutputFilename = Path.ChangeExtension(testResultsFilename, ".log");
             var remoteLinuxOutputFilename = $"/media/smb/192.168.0.31/r/Temp/ft release/linux-x64/output/{justDateFilename}";
 
-
+            // The runners redirect each ft's output into an 'output' folder beside its binary
+            // (the Linux nodes reach it via the dev box's 'r' share). These folders must exist or
+            // the redirect fails and ft never launches, so ensure them up front. R: is local to
+            // the dev box, so creating them here also makes them visible to the nodes over CIFS.
+            foreach (var exePath in new[] { WIN_X64_EXE, LINUX_X64_EXE })
+            {
+                Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(exePath)!, "output"));
+            }
 
             win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE, localWindowsOutputFilename);
             win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); //win10 VM
