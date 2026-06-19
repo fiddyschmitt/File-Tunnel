@@ -14,11 +14,16 @@ using ft.Utilities;
 
 namespace ft_tests
 {
+    // In-process: spins up ft.Program.Main on threads over temp files and loops back through
+    // localhost. No lab needed, so it's part of the hermetic "Unit" set. [Timeout] bounds any hang
+    // (e.g. a half-closed stream or a teardown thread that won't join).
     [DoNotParallelize]
     [TestClass]
+    [TestCategory("Unit")]
     public partial class TcpUnitTests
     {
         [DataTestMethod]
+        [Timeout(180000)]
         [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", false, 1,  DisplayName = "SingleConnection_HalfDuplex")]
         [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", true,  1,  DisplayName = "SingleConnection_FullDuplex")]
         [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", true,  10, DisplayName = "MultipleConnections_FullDuplex")]
@@ -28,6 +33,7 @@ namespace ft_tests
         }
 
         [TestMethod]
+        [Timeout(60000)]
         public void ServerSendsFirst()
         {
             var forwardStr = "5000:127.0.0.1:6000";
@@ -194,8 +200,8 @@ namespace ft_tests
 
                         var tests = new[]
                         {
-                            new Action(() => TestDirection("Forward", pair.OriginClient, pair.UltimateDestinationClient, toSend)),
-                            new Action(() => TestDirection("Reverse", pair.UltimateDestinationClient, pair.OriginClient, toSend)),
+                            new Action(() => TransferVerification.TestDirection("Forward", pair.OriginClient, pair.UltimateDestinationClient, toSend)),
+                            new Action(() => TransferVerification.TestDirection("Reverse", pair.UltimateDestinationClient, pair.OriginClient, toSend)),
                             };
 
                         if (fullDuplex)
@@ -241,22 +247,5 @@ namespace ft_tests
             }
         }
 
-        static void TestDirection(string direction, TcpClient sender, TcpClient receiver, byte[] toSend)
-        {
-            sender.GetStream().Write(toSend, 0, toSend.Length);
-
-            var received = new byte[toSend.Length];
-
-            int totalRead = 0;
-            while (totalRead < toSend.Length)
-            {
-                var toRead = Math.Min(1024 * 1024, received.Length - totalRead);
-                var read = receiver.GetStream().Read(received, totalRead, toRead);
-                totalRead += read;
-            }
-
-            var receivedSuccessfully = received.SequenceEqual(toSend);
-            Assert.IsTrue(receivedSuccessfully, $"[{direction}] Received buffer does not match sent buffer");
-        }
     }
 }
