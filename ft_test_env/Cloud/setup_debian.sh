@@ -46,6 +46,17 @@ service smbd restart
 
 
 
+##### Setup an SSHFS share (Linux-only file share tunnelled over SSH)
+# sshfs needs no daemon of its own — it rides the existing sshd. We only install the client package
+# (every Debian node gets it, so any node can act as an sshfs client) and create a world-writable
+# export directory that the SSH login user can read/write. Clients mount this over sshfs at test
+# time (see ft_tests SshfsClient). Kept on disk (not tmpfs) so it survives reboots.
+apt-get install -y sshfs
+mkdir -p /srv/sshfs
+chmod 777 /srv/sshfs
+
+
+
 # Mount cross-host shares. Single source of truth is mounts.sh (written to /opt/ft/mounts.sh by
 # the cloud-init seed); it is idempotent and non-fatal, and the orchestrator can re-run it over
 # SSH on demand. Keeping the mounts there avoids duplicating them between provisioning and remount.

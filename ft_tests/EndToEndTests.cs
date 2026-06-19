@@ -232,6 +232,36 @@ namespace ft_tests
             return basePath + fileName;
         }
 
+        // sshfs is Linux-only here (a FUSE filesystem over SSH). Both clients (.80, .82) mount the
+        // same export on the SSH server (.81), exactly mirroring the NFS topology: client1 - server
+        // - client2. The mount point is identical on each client, so a single path lookup serves
+        // both sides — whatever client1 writes appears to client2 through the shared server export.
+        [DataTestMethod]
+        [DataRow(Mode.Normal)]
+        [DataRow(Mode.IsolatedReads)]
+        public void Sshfs(Mode mode)
+        {
+            var sshfsServer = new SshfsServer(linux_x64_2); // .81 — hosts sshd + /srv/sshfs
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            var writePath1 = SshfsPathLookup(filename1);
+            var readPath1 = SshfsPathLookup(filename2);
+            var side1 = new SshfsClient(OS.Linux, linux_x64_1, $"-w {writePath1} -r {readPath1} --verbose"); // .80
+
+            var readPath2 = SshfsPathLookup(filename1);
+            var writePath2 = SshfsPathLookup(filename2);
+            var side2 = new SshfsClient(OS.Linux, linux_x64_3, $"-r {readPath2} -w {writePath2} --verbose"); // .82
+
+            ConductTunnelTests(mode, side1, sshfsServer, side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        private static string SshfsPathLookup(string fileName)
+        {
+            return $"{SshfsClient.MountPoint}/{fileName.TrimStart('/')}";
+        }
+
         [DataTestMethod]
         [DataRow(Mode.Normal)]
         [DataRow(Mode.IsolatedReads)]
@@ -667,6 +697,7 @@ namespace ft_tests
     {
         SMB,
         NFS,
+        Sshfs,
         FTP,
 
         RDP,
