@@ -113,6 +113,15 @@ namespace ft
                 }
             }
 
+            // A VirtualBox shared folder (vboxsf) serves a stale view to any open read handle and only
+            // refreshes on a fresh open (its cache can't be invalidated in place), so it needs the
+            // reopen-per-read that --isolated-reads provides. Detect it the same way we handle Citrix.
+            if (!o.IsolatedReads && Extensions.IsVboxsfMount(o.ReadFrom))
+            {
+                o.IsolatedReads = true;
+                Log($"The Read file is on a VirtualBox shared folder (vboxsf), whose cache cannot be refreshed in place. Enabling --isolated-reads.", ConsoleColor.Yellow);
+            }
+
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
             {
                 o.MaxFileSizeBytes = 1024 * 1024;

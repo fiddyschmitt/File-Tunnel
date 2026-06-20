@@ -468,26 +468,37 @@ namespace ft
         private const int O_RDONLY = 0;
         private const int SEEK_SET = 0;
         private const int DIRECT_ALIGN = 4096; // O_DIRECT buffer/offset/length alignment
-        private const int FUSE_SUPER_MAGIC = 0x65735546; // statfs f_type for FUSE mounts (e.g. sshfs)
+        private const int FUSE_SUPER_MAGIC = 0x65735546;   // statfs f_type for FUSE mounts (sshfs)
+        private const int VBOXSF_SUPER_MAGIC = 0x786F4256; // statfs f_type for VirtualBox shared folders
 
-        // The O_DIRECT refresh is applied ONLY on FUSE mounts (sshfs). On a low-latency FUSE mount the
-        // unbuffered round-trip is cheap and defeats the stale cache; on CIFS/NFS it adds latency that
-        // can starve the keepalive ping and tear the tunnel down (observed regressing SMB-Linux Normal),
-        // and those filesystems don't need it. Cached per path — the mount type doesn't change.
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> FuseMountCache = new();
+        // The mount's statfs f_type selects the read strategy (a mount can't change type, so cache it
+        // per path). A FUSE mount (sshfs) caches a stale SIZE that an unbuffered O_DIRECT round-trip in
+        // ForceRead refreshes (see TryDirectRefresh); vboxsf's cache invalidation is broken and can't
+        // be refreshed in place (O_DIRECT rejected; fadvise/statx don't take), so its reads go through
+        // IsolatedReadsFileStream instead (see ReusableFile.ReceivePump + IsVboxsfMount). CIFS/NFS need
+        // neither (and an O_DIRECT round-trip on CIFS starved the keepalive ping, regressing SMB-Linux).
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> MountMagicCache = new();
 
-        private static bool IsOnFuseMount(string path)
+        private static int MountMagic(string path)
         {
-            return FuseMountCache.GetOrAdd(path, p =>
+            return MountMagicCache.GetOrAdd(path, p =>
             {
                 try
                 {
+                    // The read file may not exist yet (the counterpart creates it), so fall back to its
+                    // directory — which is on the same mount and present from the start.
+                    var target = File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p);
                     var buf = new byte[256]; // struct statfs is ~120 bytes; f_type magic is at offset 0
-                    return statfs(p, buf) == 0 && BitConverter.ToInt32(buf, 0) == FUSE_SUPER_MAGIC;
+                    return statfs(target, buf) == 0 ? BitConverter.ToInt32(buf, 0) : 0;
                 }
-                catch { return false; }
+                catch { return 0; }
             });
         }
+
+        // True when the path is on a VirtualBox shared folder (vboxsf). Its broken page-cache
+        // invalidation can't be refreshed from a held handle (O_DIRECT is rejected; fadvise/statx
+        // don't take), so the reader reopens the file per read instead (see ReusableFile.ReceivePump).
+        public static bool IsVboxsfMount(string path) => MountMagic(path) == VBOXSF_SUPER_MAGIC;
 
         // O_DIRECT's numeric value is architecture-specific on Linux. Confirmed 0x4000 on x86/x86-64;
         // null on architectures we haven't validated, where ForceRead falls back to a plain read.
@@ -541,7 +552,7 @@ namespace ft
             }
 
             // Only worthwhile (and only safe) on FUSE mounts such as sshfs; CIFS/NFS fall back below.
-            if (!IsOnFuseMount(fileStream.Name))
+            if (MountMagic(fileStream.Name) != FUSE_SUPER_MAGIC)
             {
                 return false;
             }
