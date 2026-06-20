@@ -455,14 +455,69 @@ namespace ft
             }
         }
 
+        [DllImport("libc", SetLastError = true, EntryPoint = "open")]
+        private static extern int libc_open([MarshalAs(UnmanagedType.LPStr)] string pathname, int flags);
+        [DllImport("libc", SetLastError = true, EntryPoint = "read")]
+        private static extern long libc_read(int fd, IntPtr buf, ulong count);
+        [DllImport("libc", SetLastError = true, EntryPoint = "lseek")]
+        private static extern long libc_lseek(int fd, long offset, int whence);
+        [DllImport("libc", SetLastError = true, EntryPoint = "close")]
+        private static extern int libc_close(int fd);
+        [DllImport("libc", SetLastError = true, EntryPoint = "statfs")]
+        private static extern int statfs(string path, byte[] buf);
+        private const int O_RDONLY = 0;
+        private const int SEEK_SET = 0;
+        private const int DIRECT_ALIGN = 4096; // O_DIRECT buffer/offset/length alignment
+        private const int FUSE_SUPER_MAGIC = 0x65735546; // statfs f_type for FUSE mounts (e.g. sshfs)
+
+        // The O_DIRECT refresh is applied ONLY on FUSE mounts (sshfs). On a low-latency FUSE mount the
+        // unbuffered round-trip is cheap and defeats the stale cache; on CIFS/NFS it adds latency that
+        // can starve the keepalive ping and tear the tunnel down (observed regressing SMB-Linux Normal),
+        // and those filesystems don't need it. Cached per path — the mount type doesn't change.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> FuseMountCache = new();
+
+        private static bool IsOnFuseMount(string path)
+        {
+            return FuseMountCache.GetOrAdd(path, p =>
+            {
+                try
+                {
+                    var buf = new byte[256]; // struct statfs is ~120 bytes; f_type magic is at offset 0
+                    return statfs(p, buf) == 0 && BitConverter.ToInt32(buf, 0) == FUSE_SUPER_MAGIC;
+                }
+                catch { return false; }
+            });
+        }
+
+        // O_DIRECT's numeric value is architecture-specific on Linux. Confirmed 0x4000 on x86/x86-64;
+        // null on architectures we haven't validated, where ForceRead falls back to a plain read.
+        private static readonly int? LinuxODirect = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 or Architecture.X86 => 0x4000,
+            _ => null,
+        };
+
         public static void ForceRead(this Stream stream, int tunnelTimeoutMilliseconds, bool verbose)
         {
             if (stream is FileStream fileStream)
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 {
-                    using var tempFs = new FileStream(fileStream.Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                    _ = tempFs.Read(new byte[4096]);
+                    // On a caching network filesystem (e.g. sshfs) a long-lived BUFFERED read handle can
+                    // keep serving a stale, short view of a file another host is appending to. An
+                    // UNBUFFERED (O_DIRECT) read on a separate handle forces a real round-trip to the
+                    // backing store, which makes the kernel refresh the inode's cache for ALL handles, so
+                    // this buffered reader then sees the appended data. We target the page the reader is
+                    // currently waiting on. Where O_DIRECT isn't available, fall back to a plain read.
+                    if (!TryDirectRefresh(fileStream))
+                    {
+                        try
+                        {
+                            using var tempFs = new FileStream(fileStream.Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                            _ = tempFs.Read(new byte[DIRECT_ALIGN]);
+                        }
+                        catch { }
+                    }
                 }
                 else
                 {
@@ -472,6 +527,49 @@ namespace ft
             else
             {
                 stream.Flush(verbose, tunnelTimeoutMilliseconds);
+            }
+        }
+
+        // Reads the page the reader is waiting on through a separate O_DIRECT (unbuffered) handle, to
+        // force a backing-store round-trip that refreshes the inode cache. Returns false (so the caller
+        // can fall back) when O_DIRECT is unavailable for this architecture or the open fails.
+        private static bool TryDirectRefresh(FileStream fileStream)
+        {
+            if (LinuxODirect is not int oDirect)
+            {
+                return false;
+            }
+
+            // Only worthwhile (and only safe) on FUSE mounts such as sshfs; CIFS/NFS fall back below.
+            if (!IsOnFuseMount(fileStream.Name))
+            {
+                return false;
+            }
+
+            var fd = libc_open(fileStream.Name, O_RDONLY | oDirect);
+            if (fd < 0)
+            {
+                return false;
+            }
+
+            var raw = IntPtr.Zero;
+            try
+            {
+                raw = Marshal.AllocHGlobal(DIRECT_ALIGN * 2);
+                var aligned = (IntPtr)(((long)raw + (DIRECT_ALIGN - 1)) & ~((long)DIRECT_ALIGN - 1));
+                var alignedOffset = fileStream.Position & ~((long)DIRECT_ALIGN - 1);
+                libc_lseek(fd, alignedOffset, SEEK_SET);
+                _ = libc_read(fd, aligned, (ulong)DIRECT_ALIGN);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (raw != IntPtr.Zero) Marshal.FreeHGlobal(raw);
+                libc_close(fd);
             }
         }
 
