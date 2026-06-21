@@ -362,3 +362,6 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /ft/Properties/launchSettings.json
+
+# File Tunnel local test-run tooling and batch result logs (not part of the build)
+ft_test_env/verify_*
