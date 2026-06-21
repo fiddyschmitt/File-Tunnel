@@ -471,12 +471,14 @@ namespace ft
         private const int FUSE_SUPER_MAGIC = 0x65735546;   // statfs f_type for FUSE mounts (sshfs)
         private const int VBOXSF_SUPER_MAGIC = 0x786F4256; // statfs f_type for VirtualBox shared folders
 
-        // The mount's statfs f_type selects the read strategy (a mount can't change type, so cache it
-        // per path). A FUSE mount (sshfs) caches a stale SIZE that an unbuffered O_DIRECT round-trip in
-        // ForceRead refreshes (see TryDirectRefresh); vboxsf's cache invalidation is broken and can't
-        // be refreshed in place (O_DIRECT rejected; fadvise/statx don't take), so its reads go through
-        // IsolatedReadsFileStream instead (see ReusableFile.ReceivePump + IsVboxsfMount). CIFS/NFS need
-        // neither (and an O_DIRECT round-trip on CIFS starved the keepalive ping, regressing SMB-Linux).
+        // The mount's statfs f_type spots filesystems that serve a stale view to a held read handle
+        // (a mount can't change type, so cache it per path). FUSE/sshfs and vboxsf both do, and only
+        // refresh on a fresh open(), so they default to the reopen-per-read of --isolated-reads
+        // (enabled in Program.cs). The O_DIRECT refresh below (TryDirectRefresh) is a retained in-place
+        // alternative for a FUSE mount run in Normal mode - it keeps Normal-mode speed, but on sshfs
+        // under load it can occasionally fail to recover a stale read before the tunnel-offline timeout,
+        // which is why IsolatedReads is the default. CIFS/NFS need neither (an O_DIRECT round-trip on
+        // CIFS starved the keepalive ping, regressing SMB-Linux Normal).
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> MountMagicCache = new();
 
         private static int MountMagic(string path)
@@ -495,10 +497,11 @@ namespace ft
             });
         }
 
-        // True when the path is on a VirtualBox shared folder (vboxsf). Its broken page-cache
-        // invalidation can't be refreshed from a held handle (O_DIRECT is rejected; fadvise/statx
-        // don't take), so the reader reopens the file per read instead (see ReusableFile.ReceivePump).
+        // True when the path is on a VirtualBox shared folder (vboxsf) / an sshfs (FUSE) mount. Both
+        // serve a stale view to a held read handle and only refresh on a fresh open(), so they default
+        // to the reopen-per-read of --isolated-reads (enabled in Program.cs).
         public static bool IsVboxsfMount(string path) => MountMagic(path) == VBOXSF_SUPER_MAGIC;
+        public static bool IsFuseMount(string path) => MountMagic(path) == FUSE_SUPER_MAGIC;
 
         // O_DIRECT's numeric value is architecture-specific on Linux. Confirmed 0x4000 on x86/x86-64;
         // null on architectures we haven't validated, where ForceRead falls back to a plain read.

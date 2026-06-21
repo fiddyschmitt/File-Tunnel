@@ -113,13 +113,21 @@ namespace ft
                 }
             }
 
-            // A VirtualBox shared folder (vboxsf) serves a stale view to any open read handle and only
-            // refreshes on a fresh open (its cache can't be invalidated in place), so it needs the
-            // reopen-per-read that --isolated-reads provides. Detect it the same way we handle Citrix.
-            if (!o.IsolatedReads && Extensions.IsVboxsfMount(o.ReadFrom))
+            // sshfs (FUSE) and VirtualBox shared folders (vboxsf) both serve a stale view to a held read
+            // handle and only refresh on a fresh open(), so they need the reopen-per-read that
+            // --isolated-reads provides. Detect them the same way we handle Citrix.
+            if (!o.IsolatedReads)
             {
-                o.IsolatedReads = true;
-                Log($"The Read file is on a VirtualBox shared folder (vboxsf), whose cache cannot be refreshed in place. Enabling --isolated-reads.", ConsoleColor.Yellow);
+                var cachingFs =
+                    Extensions.IsVboxsfMount(o.ReadFrom) ? "a VirtualBox shared folder (vboxsf)" :
+                    Extensions.IsFuseMount(o.ReadFrom) ? "an sshfs / FUSE mount" :
+                    null;
+
+                if (cachingFs != null)
+                {
+                    o.IsolatedReads = true;
+                    Log($"The Read file is on {cachingFs}, whose cache cannot be refreshed in place by a held handle. Enabling --isolated-reads.", ConsoleColor.Yellow);
+                }
             }
 
             if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
