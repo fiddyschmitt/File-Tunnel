@@ -26,12 +26,16 @@ namespace ft.Listeners
                     string writeToFilename,
                     int tunnelTimeoutMilliseconds,
                     int maxSubfiles,
+                    long maxFileSizeBytes,
+                    bool blockingReader,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
             Options.PaceMilliseconds = Math.Max(1, Options.PaceMilliseconds);  //the pace should be at least 1 millisecond, otherwise we consume a lot of CPU cycles
 
             this.fileAccess = new PacedAccess(fileAccess, Options.PaceMilliseconds);
             this.maxSubfiles = maxSubfiles;
+            this.maxFileSizeBytes = maxFileSizeBytes;
+            this.blockingReader = blockingReader;
 
             //this class can combine multiple commands into a single file
             SendQueue = new BlockingCollection<Command>(20);
@@ -80,6 +84,8 @@ namespace ft.Listeners
         }
 
         private readonly int maxSubfiles;
+        private readonly long maxFileSizeBytes;
+        private readonly bool blockingReader;
         readonly ConcurrentDictionary<string, DateTime> filesInUse = [];
 
         public override void SendPump()
@@ -167,6 +173,8 @@ namespace ft.Listeners
 
                         if (SendQueue.TryTake(out Command? command, TunnelTimeoutMilliseconds))
                         {
+                            AssignSendSequence(command);
+
                             if (commandsSent == 0)
                             {
                                 //write the file header
@@ -195,6 +203,14 @@ namespace ft.Listeners
                         }
 
                         if (commandsToSend.HasValue && commandsSent >= commandsToSend.Value)
+                        {
+                            break;
+                        }
+
+                        //Cap the file size. With a small cap (e.g. 64 KB on 9p) each file reads back in
+                        //~one round-trip, well under the tunnel timeout, so a slow reader never ages a
+                        //subfile out and the writer never has to overwrite an unread one.
+                        if (maxFileSizeBytes > 0 && memoryStream.Length >= maxFileSizeBytes)
                         {
                             break;
                         }
@@ -297,6 +313,7 @@ namespace ft.Listeners
 
             long? currentSessionId = null;
             int? readFromIx = null;
+            var sessionCheckStopwatch = Stopwatch.StartNew();
 
             while (true)
             {
@@ -380,75 +397,110 @@ namespace ft.Listeners
 
                     byte[] fileContent = [];
 
-                    var checkForSessionChange = Stopwatch.StartNew();
+                    if (blockingReader)
+                    {
+                        //BLOCKING read (FTP, and any transport whose access layer shares one connection): retry
+                        //the current slot until it appears, regardless of subfile count. FTP serializes every op
+                        //- reads, writes, and the keep-alive pings - through a single connection, and one hung
+                        //~4s data-connection op freezes all of it. The reader idling here (instead of polling) is
+                        //what leaves that connection free for pings, keeping FTP online - its proven behaviour at
+                        //ANY subfile count. The non-blocking poll below would hammer the connection and starve
+                        //the pings into a false offline. Gated on the transport, NOT maxSubfiles.
+                        var checkForSessionChange = Stopwatch.StartNew();
 
-                    Extensions.Time(
-                        $"[{readFileShortName}] Read file",
-                        _ =>
-                        {
-                            var readSuccessful = false;
-
-                            try
+                        Extensions.Time(
+                            $"[{readFileShortName}] Read file",
+                            _ =>
                             {
-                                fileContent = fileAccess.ReadAllBytes(readFromFilename);
-
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{readFileShortName}] Read {fileContent.Length.BytesToString()}.");
-                                }
-
-                                //File.AppendAllLines(debugFilename, [readFromFilename, $"{fileContent.Length:N0} bytes", Convert.ToBase64String(fileContent)]);
-
-                                if (fileContent == null || fileContent.Length == 0)
-                                {
-                                    Program.Log($"[{readFileShortName}] 0 length read ({Path.GetFileName(readFromFilename)}). Retrying.");
-                                }
-                                else
-                                {
-                                    readSuccessful = true;
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Verbose)
-                                {
-                                    Program.Log($"[{readFileShortName}] Could not read: {ex.Message}");
-                                }
-                            }
-
-                            if (checkForSessionChange.ElapsedMilliseconds > 5000)
-                            {
-                                long? latestSessionId = null;
+                                var readSuccessful = false;
 
                                 try
                                 {
-                                    latestSessionId = ReadSessionMetadata(fileAccess, ReadFromFilename);
+                                    fileContent = fileAccess.ReadAllBytes(readFromFilename);
+                                    if (fileContent != null && fileContent.Length > 0)
+                                    {
+                                        readSuccessful = true;
+                                    }
                                 }
-                                catch { }
-
-                                if (latestSessionId.HasValue && latestSessionId != currentSessionId)
+                                catch (Exception ex)
                                 {
-                                    var exMsg = $"New session detected: {latestSessionId}";
                                     if (Verbose)
                                     {
-                                        Program.Log(exMsg);
+                                        Program.Log($"[{readFileShortName}] Could not read: {ex.Message}");
+                                    }
+                                }
+
+                                if (checkForSessionChange.ElapsedMilliseconds > 5000)
+                                {
+                                    long? latestSessionId = null;
+                                    try { latestSessionId = ReadSessionMetadata(fileAccess, ReadFromFilename); }
+                                    catch { }
+
+                                    if (latestSessionId.HasValue && latestSessionId != currentSessionId)
+                                    {
+                                        if (Verbose)
+                                        {
+                                            Program.Log($"[{readFileShortName}] New session detected: {latestSessionId}");
+                                        }
+
+                                        currentSessionId = latestSessionId;
+                                        readFromIx = 1;
+                                        readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value, maxSubfiles);
+                                    }
+
+                                    checkForSessionChange.Restart();
+                                }
+
+                                return readSuccessful;
+                            },
+                            DefaultSleepStrategy,
+                            Verbose);
+                    }
+                    else
+                    {
+                        //Multi-subfile transports (9p): NON-blocking. Periodic session-change check, decoupled
+                        //from the read so it still runs when this slot is absent.
+                        if (sessionCheckStopwatch.ElapsedMilliseconds > 5000)
+                        {
+                            try
+                            {
+                                var latestSessionId = ReadSessionMetadata(fileAccess, ReadFromFilename);
+                                if (latestSessionId != currentSessionId)
+                                {
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{readFileShortName}] New session detected: {latestSessionId}");
                                     }
 
                                     currentSessionId = latestSessionId;
-
                                     readFromIx = 1;
                                     readFromFilename = GetSubfileName(ReadFromFilename, readFromIx.Value, maxSubfiles);
-
-                                    //throw new Exception(exMsg);
                                 }
-
-                                checkForSessionChange.Restart();
                             }
+                            catch { }
 
-                            return readSuccessful;
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
+                            sessionCheckStopwatch.Restart();
+                        }
+
+                        //Read this slot ONCE - do NOT block/retry on a missing slot. Fixating on one slot made
+                        //the reader deaf to the OTHER slots (and the pings carried in them), which stalled the
+                        //tunnel into a false offline. If the slot isn't here yet we just skip it; the reorder
+                        //buffer reassembles whatever order the present slots arrive in, and we pick this one up
+                        //on a later pass once the writer has produced it.
+                        try
+                        {
+                            fileContent = fileAccess.ReadAllBytes(readFromFilename);
+
+                            if (Verbose && fileContent.Length > 0)
+                            {
+                                Program.Log($"[{readFileShortName}] Read {fileContent.Length.BytesToString()} from {Path.GetFileName(readFromFilename)}.");
+                            }
+                        }
+                        catch
+                        {
+                            //slot not present yet - skip it this pass (no blocking, no retry)
+                        }
+                    }
 
                     Delay.Wait(Options.PaceMilliseconds);
 
@@ -560,26 +612,54 @@ namespace ft.Listeners
                         }
                     }
 
-                    Extensions.Time(
-                        $"[{readFileShortName}] Delete processed file",
-                        _ =>
+                    if (blockingReader)
+                    {
+                        //Blocking-reader path (FTP): retry the delete until it succeeds - the original
+                        //behaviour. On FTP's single serialized connection a transient delete that ISN'T
+                        //retried leaves the subfile in place, and the writer then blocks waiting to reuse that
+                        //slot, stalling the transfer. fileContent is always present here (the read above blocks
+                        //until it is), so there's always exactly one slot to delete.
+                        Extensions.Time(
+                            $"[{readFileShortName}] Delete processed file",
+                            _ =>
+                            {
+                                var deleteSuccessful = false;
+
+                                try
+                                {
+                                    fileAccess.Delete(readFromFilename);
+                                    deleteSuccessful = true;
+                                }
+                                catch (Exception ex)
+                                {
+                                    if (Verbose)
+                                    {
+                                        Program.Log($"[{readFileShortName}] Could not delete {Path.GetFileName(readFromFilename)}: {ex.Message}");
+                                    }
+                                }
+
+                                return deleteSuccessful;
+                            },
+                            DefaultSleepStrategy,
+                            Verbose);
+                    }
+                    else if (fileContent.Length > 0)
+                    {
+                        //Non-blocking-reader path (9p): delete only a slot we actually read+processed.
+                        //fileContent is empty when the slot was absent and skipped - nothing to delete, and
+                        //deleting an absent slot would just race the writer creating it.
+                        try
                         {
-                            var deleteSuccessful = false;
-
-                            try
+                            fileAccess.Delete(readFromFilename);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (Verbose)
                             {
-                                fileAccess.Delete(readFromFilename);
-                                deleteSuccessful = true;
+                                Program.Log($"[{readFileShortName}] Could not delete {Path.GetFileName(readFromFilename)}: {ex.Message}");
                             }
-                            catch (Exception ex)
-                            {
-                                Program.Log($"[{readFileShortName}] Could not move: {ex.Message}");
-                            }
-
-                            return deleteSuccessful;
-                        },
-                        DefaultSleepStrategy,
-                        Verbose);
+                        }
+                    }
 
                     if (Verbose)
                     {

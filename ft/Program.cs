@@ -87,6 +87,8 @@ namespace ft
                                              o.WriteTo.Trim(),
                                              Options.TunnelTimeoutMilliseconds,
                                              1,
+                                             0,        //no batch cap for FTP: every file is a separate data-connection round-trip on one serialized connection, so fewer/larger files = far less contention (the original behaviour). The 9p cap exists only to avoid torn reads on a coherent local mount.
+                                             true,     //FTP: blocking reader - its single serialized FtpClient must stay free for the keep-alive pings (true at any subfile count)
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
@@ -178,6 +180,15 @@ namespace ft
                 }
             }
 
+            //9P delivers whole files out of order and isn't supported through the default (ReusableFile)
+            //mode, so if the Read file is on a 9P mount, switch to upload-download automatically rather
+            //than letting it fail in the wrong mode. Announced below since we're changing the mode for them.
+            if (!o.UploadDownload && Extensions.IsNinePMount(o.ReadFrom))
+            {
+                o.UploadDownload = true;
+                Log($"The Read file is on a 9P mount. Auto-enabling --upload-download (9P delivers files out of order and isn't supported through the default mode).", ConsoleColor.Yellow);
+            }
+
             var access = new LocalAccess();
 
 
@@ -185,12 +196,35 @@ namespace ft
 
             if (o.UploadDownload)
             {
+                //The small-file cap and low pace are specific to a real 9p mount, so key them off the
+                //mount's fs type (statfs) rather than the --upload-download flag: S3/Dropbox rclone-FUSE
+                //mounts also use --upload-download, and these tweaks are wrong for them (Dropbox sets its
+                //own pace above and wants large files for its 4s write-back interval).
+                if (Extensions.IsNinePMount(o.ReadFrom))
+                {
+                    //9p needs small files: with large files the reader intermittently catches one mid-write
+                    //and truncates (~2/5 runs); a 64KB cap is reliably 5/5. (Confirmed by ablation.)
+                    o.MaxFileSizeBytes = 65536;
+
+                    //9p also needs a low pace: the keep-alive ping round-trips through the same subfile
+                    //rotation, so a high pace ages it past the offline timeout (pace 100 fails; 10 is
+                    //reliable). Default to 10ms when the user hasn't set one.
+                    if (Options.PaceMilliseconds == 0)
+                    {
+                        Options.PaceMilliseconds = 10;
+                    }
+
+                    Log($"The Read file is on a 9P mount. Applying 9P tuning: 64KB file cap, {Options.PaceMilliseconds}ms pace.", ConsoleColor.Yellow);
+                }
+
                 sharedFileManager = new UploadDownload(
                                              access,
                                              o.ReadFrom.Trim(),
                                              o.WriteTo.Trim(),
                                              Options.TunnelTimeoutMilliseconds,
                                              5,    //using multiple subfiles improves latency for remote file systems such as Dropbox and S3
+                                             o.MaxFileSizeBytes,
+                                             false,   //9p: non-blocking reader - independent files, so skip an absent slot rather than head-of-line stall on it
                                              o.Verbose);
             }
             else

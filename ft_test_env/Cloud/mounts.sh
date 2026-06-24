@@ -39,6 +39,7 @@ remount cifs   "//192.168.0.81/data"     "/media/smb/192.168.0.81/data"       "p
 remount nfs    "192.168.0.81:/mnt/tmpfs" "/media/nfs/192.168.0.81/tmpfs"      ""
 remount cifs   "//192.168.0.32/Shared"   "/media/smb/192.168.0.32/shared"     "username=Smith,password=villa2001"
 remount vboxsf "C_DRIVE"                 "/media/vboxsf/192.168.0.31/c_drive" ""
+remount 9p     "192.168.0.81"           "/media/9p/192.168.0.81/export"      "trans=tcp,aname=/srv/9p"
 
 # Always succeed: per-mount status is reported above and verified by the orchestrator's checks.
 exit 0

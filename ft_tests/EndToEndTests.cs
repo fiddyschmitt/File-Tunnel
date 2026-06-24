@@ -266,6 +266,39 @@ namespace ft_tests
             return $"{SshfsClient.MountPoint}/{fileName.TrimStart('/')}";
         }
 
+        // 9P (Plan 9 protocol) served by diod over TCP - Linux-only, same client1 - server - client2
+        // topology as NFS/sshfs: both clients mount the .81 diod export at an identical mount point.
+        //
+        // 9P (diod) is cross-client INCOHERENT for the append-and-tail-read pattern: a client never sees
+        // another client's writes to a file it has open/cached (proven), so Normal and IsolatedReads
+        // both truncate. UploadDownload sidesteps that (it transfers whole files), and with ft's
+        // out-of-order reorder buffer it reassembles 9P's out-of-order file delivery correctly. So 9P is
+        // supported only via --upload-download; that is the one mode tested here.
+        [DataTestMethod]
+        [DataRow(Mode.UploadDownload)]
+        public void NineP(Mode mode)
+        {
+            var ninePServer = new NinePServer(linux_x64_2); // .81 — hosts diod + /srv/9p
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            var writePath1 = NinePPathLookup(filename1);
+            var readPath1 = NinePPathLookup(filename2);
+            var side1 = new NinePClient(OS.Linux, linux_x64_1, $"-w {writePath1} -r {readPath1} --verbose"); // .80
+
+            var readPath2 = NinePPathLookup(filename1);
+            var writePath2 = NinePPathLookup(filename2);
+            var side2 = new NinePClient(OS.Linux, linux_x64_3, $"-r {readPath2} -w {writePath2} --verbose"); // .82
+
+            ConductTunnelTests(mode, side1, ninePServer, side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        private static string NinePPathLookup(string fileName)
+        {
+            return $"{NinePClient.MountPoint}/{fileName.TrimStart('/')}";
+        }
+
         // KnownFlaky: Rdp IsolatedReads fails ~100% of the time — the per-read server round-trips
         // starve the keepalive ping over RDP's high-latency \\tsclient channel (see the SMB fix-stack
         // notes). RDP Normal is reliable, but TestCategory can't be applied per-DataRow, so the whole
@@ -414,11 +447,14 @@ namespace ft_tests
                 side2.Restart();
                 cleanupFiles();
 
+                //9P is fully auto-configured from the mount type in Program.cs: statfs detects the 9P
+                //mount, auto-enables --upload-download, and applies the 64KB cap + 10ms pace. So we pass
+                //NEITHER --upload-download NOR --pace here - this exercises that detection end-to-end.
                 ConductTest(
                         $"{name} (Upload-Download mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --upload-download --pace 100"),
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
-                        new Client(side2.OS, side2.Runner, $"{side2.Args} --upload-download --pace 100"),
+                        new Client(side2.OS, side2.Runner, side2.Args),
                         "Upload-Download");
             }
 
@@ -674,6 +710,7 @@ namespace ft_tests
         SMB,
         NFS,
         Sshfs,
+        NineP,
         FTP,
 
         RDP,

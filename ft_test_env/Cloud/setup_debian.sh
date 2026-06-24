@@ -57,6 +57,25 @@ chmod 777 /srv/sshfs
 
 
 
+##### Setup a 9P share (Plan 9 filesystem protocol, served by diod over TCP - Linux-only)
+# diod is a userspace 9P2000.L server; the client side is the in-kernel 9p driver (no package), so
+# diod is installed only on the server. Export a world-writable dir over TCP :564 with munge auth
+# disabled so the kernel client can mount with plain trans=tcp. The Debian package ships a SysV
+# init script gated by DIOD_ENABLE in /etc/default/diod, so flip that on. On disk (not tmpfs) so it
+# survives reboots. Clients mount this at test time (see ft_tests NinePClient).
+apt-get install -y diod
+mkdir -p /srv/9p
+chmod 777 /srv/9p
+cat > /etc/diod.conf <<'EOF'
+exports = { "/srv/9p" }
+auth_required = 0
+EOF
+sed -i 's/^DIOD_ENABLE=.*/DIOD_ENABLE=true/' /etc/default/diod
+systemctl enable diod
+systemctl restart diod
+
+
+
 # Mount cross-host shares. Single source of truth is mounts.sh (written to /opt/ft/mounts.sh by
 # the cloud-init seed); it is idempotent and non-fatal, and the orchestrator can re-run it over
 # SSH on demand. Keeping the mounts there avoids duplicating them between provisioning and remount.

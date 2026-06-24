@@ -152,6 +152,8 @@ namespace ft.Listeners
 
                             if (SendQueue.TryTake(out Command? command, TunnelTimeoutMilliseconds))
                             {
+                                AssignSendSequence(command);
+
                                 commandsToSend ??= SendQueue.Count + 1;
 
                                 if (Verbose)

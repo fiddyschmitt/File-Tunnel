@@ -120,6 +120,31 @@ namespace ft.Listeners
             return result;
         }
 
+        //Per-connection outgoing sequence numbers. Connection-scoped commands (Connect/Forward/TearDown)
+        //carry one in PacketNumber so the counterpart can apply them in order even if the transport
+        //delivers files out of order (e.g. 9p / upload-download). PacketNumber was otherwise an unused
+        //random value on these commands.
+        readonly ConcurrentDictionary<int, long> sendSequenceNumbers = [];
+
+        //Called by the SendPump as each command is dequeued, i.e. in actual send order, so the numbering
+        //is gapless - only commands that are really sent consume a number (a created-but-never-sent
+        //command would otherwise leave a gap and stall the counterpart's reorder buffer).
+        protected void AssignSendSequence(Command command)
+        {
+            var connectionId = command switch
+            {
+                Forward forward => (int?)forward.ConnectionId,
+                Connect connect => connect.ConnectionId,
+                TearDown teardown => teardown.ConnectionId,
+                _ => null
+            };
+
+            if (connectionId is int cid)
+            {
+                command.PacketNumber = (ulong)sendSequenceNumbers.AddOrUpdate(cid, 0L, (_, v) => v + 1);
+            }
+        }
+
         public byte[]? Read(int connectionId)
         {
             if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
@@ -161,6 +186,79 @@ namespace ft.Listeners
         {
             lastContactFromCounterpart = DateTime.Now;
 
+            // Connect/Forward/TearDown are connection-scoped and carry a per-connection sequence number
+            // (in PacketNumber); they must be applied in order. On a strictly in-order transport
+            // (Normal/IsolatedReads) ReceiveInOrder is a no-op (each is already the expected one); on an
+            // out-of-order one (9p / upload-download) it reassembles them. Ping/CreateListener aren't
+            // connection-scoped, so they bypass the reorder.
+            var connectionId = command switch
+            {
+                Forward forward => (int?)forward.ConnectionId,
+                Connect connect => connect.ConnectionId,
+                TearDown teardown => teardown.ConnectionId,
+                _ => null
+            };
+
+            if (connectionId is int cid)
+            {
+                ReceiveInOrder(cid, command);
+            }
+            else
+            {
+                ProcessCommand(command);
+            }
+        }
+
+        const int MAX_REORDER_BUFFERED_COMMANDS = 10000;
+
+        sealed class ReorderState
+        {
+            public ulong NextExpected;
+            public readonly Dictionary<ulong, Command> Buffer = [];
+        }
+
+        readonly ConcurrentDictionary<int, ReorderState> reorderStates = [];
+
+        //Delivers a connection's commands to ProcessCommand strictly in sequence order: buffers any that
+        //arrive ahead of a gap, discards any that arrive after already being delivered (e.g. a re-read
+        //file). Over 9p the bytes all arrive, just out of order, so a gap fills from a later read.
+        void ReceiveInOrder(int connectionId, Command command)
+        {
+            var state = reorderStates.GetOrAdd(connectionId, _ => new ReorderState());
+            var seq = command.PacketNumber;
+
+            if (seq < state.NextExpected)
+            {
+                return; //already delivered - discard
+            }
+
+            if (seq > state.NextExpected)
+            {
+                //arrived ahead of a gap - hold it until the gap fills
+                if (state.Buffer.Count < MAX_REORDER_BUFFERED_COMMANDS)
+                {
+                    state.Buffer[seq] = command;
+                }
+                else if (Verbose)
+                {
+                    Program.Log($"WARNING! Reorder buffer full for connection {connectionId} (awaiting seq {state.NextExpected}); dropping seq {seq}.");
+                }
+                return;
+            }
+
+            //seq == NextExpected: deliver it, then drain any now-consecutive buffered commands
+            ProcessCommand(command);
+            state.NextExpected++;
+
+            while (state.Buffer.Remove(state.NextExpected, out var buffered))
+            {
+                ProcessCommand(buffered);
+                state.NextExpected++;
+            }
+        }
+
+        void ProcessCommand(Command command)
+        {
             if (command is Forward forward && forward.Payload != null)
             {
                 if (ReceiveQueue.TryGetValue(forward.ConnectionId, out var connectionReceiveQueue))
@@ -196,6 +294,11 @@ namespace ft.Listeners
                 ReceiveQueue.Remove(teardown.ConnectionId, out _);
 
                 connectionReceiveQueue.CompleteAdding();
+
+                //connection finished - drop its reorder + sequence state (also stops a recycled
+                //connection id from inheriting stale sequencing)
+                reorderStates.TryRemove(teardown.ConnectionId, out _);
+                sendSequenceNumbers.TryRemove(teardown.ConnectionId, out _);
             }
             else if (command is Ping ping)
             {

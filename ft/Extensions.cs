@@ -470,6 +470,7 @@ namespace ft
         private const int DIRECT_ALIGN = 4096; // O_DIRECT buffer/offset/length alignment
         private const int FUSE_SUPER_MAGIC = 0x65735546;   // statfs f_type for FUSE mounts (sshfs)
         private const int VBOXSF_SUPER_MAGIC = 0x786F4256; // statfs f_type for VirtualBox shared folders
+        private const int V9FS_SUPER_MAGIC = 0x01021997;   // statfs f_type for 9P (Plan 9 / diod) mounts
 
         // The mount's statfs f_type spots filesystems that serve a stale view to a held read handle
         // (a mount can't change type, so cache it per path). FUSE/sshfs and vboxsf both do, and only
@@ -502,6 +503,11 @@ namespace ft
         // to the reopen-per-read of --isolated-reads (enabled in Program.cs).
         public static bool IsVboxsfMount(string path) => MountMagic(path) == VBOXSF_SUPER_MAGIC;
         public static bool IsFuseMount(string path) => MountMagic(path) == FUSE_SUPER_MAGIC;
+
+        // True when the path is on a 9P (Plan 9 protocol, e.g. diod) mount. 9P is cache-coherent but
+        // delivers whole files out of order and can be caught mid-write at large sizes; used to apply the
+        // upload-download small-file cap + low pace automatically, keyed off the mount rather than a flag.
+        public static bool IsNinePMount(string path) => MountMagic(path) == V9FS_SUPER_MAGIC;
 
         // O_DIRECT's numeric value is architecture-specific on Linux. Confirmed 0x4000 on x86/x86-64;
         // null on architectures we haven't validated, where ForceRead falls back to a plain read.
