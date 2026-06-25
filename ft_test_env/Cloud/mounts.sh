@@ -33,11 +33,13 @@ remount() {
 modprobe vboxguest 2>/dev/null || true
 modprobe vboxsf   2>/dev/null || true
 
-remount cifs   "//192.168.0.31/e"        "/media/smb/192.168.0.31/e"          "username=Smith,password=villa2001"
-remount cifs   "//192.168.0.31/r"        "/media/smb/192.168.0.31/r"          "username=Smith,password=villa2001"
+# The __SMB_USER__ / __SMB_PASS__ placeholders below are filled from the 'smb' user-secret (Credentials:smb)
+# by the orchestrator before this runs - real CIFS credentials are never committed in this file.
+remount cifs   "//192.168.0.31/e"        "/media/smb/192.168.0.31/e"          "username=__SMB_USER__,password=__SMB_PASS__"
+remount cifs   "//192.168.0.31/r"        "/media/smb/192.168.0.31/r"          "username=__SMB_USER__,password=__SMB_PASS__"
 remount cifs   "//192.168.0.81/data"     "/media/smb/192.168.0.81/data"       "password="
 remount nfs    "192.168.0.81:/mnt/tmpfs" "/media/nfs/192.168.0.81/tmpfs"      ""
-remount cifs   "//192.168.0.32/Shared"   "/media/smb/192.168.0.32/shared"     "username=Smith,password=villa2001"
+remount cifs   "//192.168.0.32/Shared"   "/media/smb/192.168.0.32/shared"     "username=__SMB_USER__,password=__SMB_PASS__"
 remount vboxsf "C_DRIVE"                 "/media/vboxsf/192.168.0.31/c_drive" ""
 remount 9p     "192.168.0.81"           "/media/9p/192.168.0.81/export"      "trans=tcp,aname=/srv/9p"
 

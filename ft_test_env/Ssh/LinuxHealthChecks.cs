@@ -112,7 +112,8 @@ namespace ft_test_env.Ssh
                     return StepOutcome.Fail($"mounts.sh not found at {mountsScriptPath}");
 
                 using var client = Connect(node, TimeSpan.FromSeconds(8));
-                var scriptB64 = Convert.ToBase64String(File.ReadAllBytes(mountsScriptPath));
+                // Fill the SMB credential placeholders from the 'smb' user-secret before streaming.
+                var scriptB64 = Convert.ToBase64String(config.RenderMountsScript(mountsScriptPath));
                 var command = client.RunCommand($"echo {scriptB64} | base64 -d | sudo bash 2>&1");
 
                 return command.ExitStatus == 0

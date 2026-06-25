@@ -116,8 +116,9 @@ namespace ft_test_env.VBox
         public void EnsureSataController(string name)
         {
             // Adding a controller that already exists errors; ignore that case.
+            // port 0 = immutable root, port 1 = seed ISO, port 2 = optional data disk (QEMU-host node only)
             var result = TryRun("storagectl", name, "--name", "SATA", "--add", "sata",
-                                "--controller", "IntelAhci", "--portcount", "2");
+                                "--controller", "IntelAhci", "--portcount", "3");
             if (!result.Ok && !result.Combined.Contains("already exists", StringComparison.OrdinalIgnoreCase))
             {
                 throw new Exception(result.Combined);
@@ -134,6 +135,29 @@ namespace ft_test_env.VBox
 
         public void AddSharedFolder(string name, string shareName, string hostPath) =>
             Run("sharedfolder", "add", name, "--name", shareName, "--hostpath", hostPath, "--automount");
+
+        /// <summary>Expose the host's VT-x/AMD-V to the guest so it can run nested KVM. Required by the
+        /// QEMU-host node, which runs a nested QEMU/KVM guest for the virtio-fs / virtio-9p tests.</summary>
+        public void EnableNestedVirt(string name) =>
+            Run("modifyvm", name, "--nested-hw-virt", "on");
+
+        /// <summary>Create a fixed-size data disk (if absent) and attach it to SATA port 2. Used by the
+        /// QEMU-host node to hold the (large) nested-guest images off the tiny, immutable, reset-on-reboot
+        /// root. Idempotent: skips creation if the .vdi exists and ignores an already-attached medium.</summary>
+        public void CreateAndAttachDataDisk(string name, string vdiPath, int sizeMb)
+        {
+            if (!File.Exists(vdiPath) && !MediumRegistered(vdiPath))
+            {
+                Run("createmedium", "disk", "--filename", vdiPath, "--size", sizeMb.ToString(), "--format", "VDI");
+            }
+
+            var result = TryRun("storageattach", name, "--storagectl", "SATA", "--port", "2", "--device", "0",
+                                "--type", "hdd", "--medium", vdiPath);
+            if (!result.Ok && !result.Combined.Contains("already", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new Exception(result.Combined);
+            }
+        }
 
         public void StartVmHeadless(string name) =>
             Run("startvm", name, "--type", "headless");

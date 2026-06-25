@@ -1,7 +1,9 @@
+using System.Text;
+
 namespace ft_test_env.Config
 {
     /// <summary>
-    /// Strongly-typed configuration, bound from appsettings.json with secrets (Windows
+    /// Strongly-typed configuration, bound from appsettings.json with secrets (Windows + SMB
     /// credentials) layered in from user-secrets. See appsettings.json for the defaults and
     /// the README/comments there for which keys belong in user-secrets.
     /// </summary>
@@ -25,12 +27,29 @@ namespace ft_test_env.Config
         public string ImagePath => Path.Combine(WorkingDir, Image.FileName);
         public string SeedIsoPath(NodeConfig node) => Path.Combine(WorkingDir, $"{node.Name}-seed.iso");
 
+        /// <summary>Persistent data disk for the QEMU-host node, holding the (large) nested-guest images
+        /// off the tiny immutable root. Attached to SATA port 2 by VBoxManager; mounted at /var/lib/ftq.</summary>
+        public string DataDiskPath(NodeConfig node) => Path.Combine(WorkingDir, $"{node.Name}-data.vdi");
+
         /// <summary>Nodes ordered so the server (.81) comes first — others mount its exports.</summary>
         public IEnumerable<NodeConfig> NodesServerFirst =>
             Nodes.OrderByDescending(n => n.IsServer).ThenBy(n => n.Name);
 
         public Credential? ResolveCredential(string? key) =>
             key != null && Credentials.TryGetValue(key, out var c) ? c : null;
+
+        /// <summary>Reads mounts.sh and substitutes the SMB credential placeholders (__SMB_USER__ /
+        /// __SMB_PASS__) with the 'smb' user-secret (Credentials:smb). Both the cloud-init seed and the
+        /// orchestrator's re-mount render the script through this, so the real SMB password is never
+        /// stored in the committed script. Missing secret -> empty creds (an anonymous/guest mount attempt).</summary>
+        public byte[] RenderMountsScript(string mountsScriptPath)
+        {
+            var smb = ResolveCredential("smb");
+            var text = File.ReadAllText(mountsScriptPath)
+                .Replace("__SMB_USER__", smb?.Username ?? "")
+                .Replace("__SMB_PASS__", smb?.Password ?? "");
+            return Encoding.UTF8.GetBytes(text);
+        }
     }
 
     public class ImageConfig
@@ -78,6 +97,12 @@ namespace ft_test_env.Config
 
         public int MemoryMb { get; set; } = 2048;
         public int Cpus { get; set; } = 2;
+
+        // The QEMU-host node (QemuHost=true) runs a nested KVM guest, so it gets more RAM/CPU and a
+        // dedicated data disk - the immutable 2.8 GB root cannot hold the guest images + libguestfs.
+        public int QemuHostMemoryMb { get; set; } = 3072;
+        public int QemuHostCpus { get; set; } = 4;
+        public int QemuHostDataDiskMb { get; set; } = 15360;
     }
 
     public class NodeConfig
@@ -86,6 +111,7 @@ namespace ft_test_env.Config
         public string Hostname { get; set; } = "";    // guest hostname
         public string Ip { get; set; } = "";          // static IP, e.g. 192.168.0.81
         public bool IsServer { get; set; }            // true for the NFS/SMB/FTP server (.81)
+        public bool QemuHost { get; set; }            // true for the node running the nested QEMU guest (virtio-fs/9p)
     }
 
     public class WindowsHostConfig

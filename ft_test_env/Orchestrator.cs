@@ -81,12 +81,22 @@ namespace ft_test_env
                 {
                     if (vbox.VmExists(node.Name)) return StepOutcome.Skip("already registered");
                     vbox.CreateVm(node.Name);
-                    vbox.ConfigureVm(node.Name, config.Linux.MemoryMb, config.Linux.Cpus, config.Network.BridgeAdapter);
+                    // The QEMU-host node runs a nested KVM guest, so it gets more RAM/CPU than a plain node.
+                    var memoryMb = node.QemuHost ? config.Linux.QemuHostMemoryMb : config.Linux.MemoryMb;
+                    var cpus = node.QemuHost ? config.Linux.QemuHostCpus : config.Linux.Cpus;
+                    vbox.ConfigureVm(node.Name, memoryMb, cpus, config.Network.BridgeAdapter);
                     vbox.EnsureSataController(node.Name);
                     vbox.AttachImmutableDisk(node.Name, config.BaseVdiPath);
                     vbox.AttachSeedIso(node.Name, config.SeedIsoPath(node));
                     vbox.AddSharedFolder(node.Name, "C_DRIVE", @"C:\");
-                    return StepOutcome.Ok("created");
+                    if (node.QemuHost)
+                    {
+                        // Nested virt + a persistent data disk (SATA port 2) so setup_debian.sh can build and
+                        // run the nested virtio-fs/9p guest off the tiny immutable root.
+                        vbox.EnableNestedVirt(node.Name);
+                        vbox.CreateAndAttachDataDisk(node.Name, config.DataDiskPath(node), config.Linux.QemuHostDataDiskMb);
+                    }
+                    return StepOutcome.Ok(node.QemuHost ? "created (QEMU host: nested virt + data disk)" : "created");
                 });
             }
 

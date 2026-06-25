@@ -54,7 +54,8 @@ namespace ft_test_env.Cloud
             }
 
             var scriptB64 = Convert.ToBase64String(File.ReadAllBytes(setupScriptPath));
-            var mountsB64 = Convert.ToBase64String(File.ReadAllBytes(mountsScriptPath));
+            // mounts.sh carries the SMB credential placeholders, filled from the 'smb' user-secret here.
+            var mountsB64 = Convert.ToBase64String(config.RenderMountsScript(mountsScriptPath));
 
             var sb = new StringBuilder();
             sb.Append("#cloud-config\n");
