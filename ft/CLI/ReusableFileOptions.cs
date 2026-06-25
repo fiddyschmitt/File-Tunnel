@@ -19,5 +19,8 @@ namespace ft.CLI
 
         [Option("upload-download", Required = false, HelpText = @"In this mode, the program will write to a file then wait for it to be deleted by the counterpart (signaling it was processed).")]
         public bool UploadDownload { get; set; } = false;
+
+        [Option("normal", Required = false, HelpText = @"Force Normal (held-handle) mode, overriding the filesystem auto-detection. Highest performance, but requires a filesystem that refreshes a held read handle (most do; sshfs/vboxsf/virtio-fs may not, or may be slower).")]
+        public bool Normal { get; set; } = false;
     }
 }

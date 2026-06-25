@@ -472,6 +472,20 @@ namespace ft
         private const int VBOXSF_SUPER_MAGIC = 0x786F4256; // statfs f_type for VirtualBox shared folders
         private const int V9FS_SUPER_MAGIC = 0x01021997;   // statfs f_type for 9P (Plan 9 / diod) mounts
 
+        // The kind of filesystem a mount is, derived purely from its statfs f_type magic. Pure and
+        // side-effect-free so it is unit-testable without a real mount. The same magic covers a whole
+        // transport family: V9FS is BOTH 9P-over-TCP (diod) AND virtio-9p; FUSE is BOTH sshfs AND
+        // virtio-fs - so ft's auto-detection covers the virtio variants with no extra magic.
+        public enum MountKind { Other, NineP, Fuse, Vboxsf }
+
+        public static MountKind ClassifyMountMagic(int magic) => magic switch
+        {
+            V9FS_SUPER_MAGIC => MountKind.NineP,
+            FUSE_SUPER_MAGIC => MountKind.Fuse,
+            VBOXSF_SUPER_MAGIC => MountKind.Vboxsf,
+            _ => MountKind.Other,
+        };
+
         // The mount's statfs f_type spots filesystems that serve a stale view to a held read handle
         // (a mount can't change type, so cache it per path). FUSE/sshfs and vboxsf both do, and only
         // refresh on a fresh open(), so they default to the reopen-per-read of --isolated-reads
@@ -501,13 +515,93 @@ namespace ft
         // True when the path is on a VirtualBox shared folder (vboxsf) / an sshfs (FUSE) mount. Both
         // serve a stale view to a held read handle and only refresh on a fresh open(), so they default
         // to the reopen-per-read of --isolated-reads (enabled in Program.cs).
-        public static bool IsVboxsfMount(string path) => MountMagic(path) == VBOXSF_SUPER_MAGIC;
-        public static bool IsFuseMount(string path) => MountMagic(path) == FUSE_SUPER_MAGIC;
+        public static bool IsVboxsfMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.Vboxsf;
+        public static bool IsFuseMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.Fuse;
 
         // True when the path is on a 9P (Plan 9 protocol, e.g. diod) mount. 9P is cache-coherent but
         // delivers whole files out of order and can be caught mid-write at large sizes; used to apply the
         // upload-download small-file cap + low pace automatically, keyed off the mount rather than a flag.
-        public static bool IsNinePMount(string path) => MountMagic(path) == V9FS_SUPER_MAGIC;
+        public static bool IsNinePMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.NineP;
+
+        // statfs reports plain FUSE for ALL fuse mounts, so it can't separate sshfs (held handle stays
+        // stale / Normal is unreliable -> IsolatedReads) from virtio-fs (held handle refreshes on an fstat,
+        // measured ~2.4x faster than reopen -> Normal). The mount's fstype string does: "virtiofs" vs
+        // "fuse.sshfs". Read it from /proc/self/mountinfo (the longest mountpoint that prefixes the path).
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MountFsTypeCache = new();
+
+        private static string MountFsType(string path)
+        {
+            return MountFsTypeCache.GetOrAdd(path, p =>
+            {
+                try
+                {
+                    var full = Path.GetFullPath(File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p));
+                    var bestMount = ""; var bestFs = "";
+                    foreach (var line in File.ReadAllLines("/proc/self/mountinfo"))
+                    {
+                        // <id> <parent> <maj:min> <root> <mountpoint> <opts> [tags] - <fstype> <source> <superopts>
+                        var dash = line.IndexOf(" - ", StringComparison.Ordinal);
+                        if (dash < 0) continue;
+                        var left = line[..dash].Split(' ');
+                        if (left.Length < 5) continue;
+                        var mountpoint = left[4];
+                        var fstype = line[(dash + 3)..].Split(' ')[0];
+                        var isMatch = full == mountpoint || full.StartsWith(mountpoint.TrimEnd('/') + "/", StringComparison.Ordinal);
+                        if (isMatch && mountpoint.Length > bestMount.Length)
+                        {
+                            bestMount = mountpoint; bestFs = fstype;
+                        }
+                    }
+                    return bestFs;
+                }
+                catch { return ""; }
+            });
+        }
+
+        // True when the path is on a virtio-fs mount (a FUSE subtype). Unlike sshfs, its held read handle
+        // refreshes via fstat (ForceRead does this), so it runs Normal mode - the fastest working mode here.
+        public static bool IsVirtioFsMount(string path) =>
+            IsFuseMount(path) && string.Equals(MountFsType(path), "virtiofs", StringComparison.Ordinal);
+
+        // The read strategies a tunnel can use, fastest first.
+        public enum TunnelMode { Normal, IsolatedReads, UploadDownload }
+
+        public static string ModeFlag(this TunnelMode mode) => mode switch
+        {
+            TunnelMode.IsolatedReads => "--isolated-reads",
+            TunnelMode.UploadDownload => "--upload-download",
+            _ => "--normal",
+        };
+
+        // Which tunnel read modes are known to work on a filesystem, and which ft prefers (the fastest that
+        // works). Supports() reports whether a user-requested mode is one of the known-good ones.
+        public readonly record struct FileSystemModes(string Description, TunnelMode Preferred, TunnelMode[] KnownGood)
+        {
+            public bool Supports(TunnelMode mode) => Array.IndexOf(KnownGood, mode) >= 0;
+        }
+
+        private static readonly TunnelMode[] AllModes = [TunnelMode.Normal, TunnelMode.IsolatedReads, TunnelMode.UploadDownload];
+        private static readonly TunnelMode[] ReopenOnly = [TunnelMode.IsolatedReads, TunnelMode.UploadDownload];
+        private static readonly TunnelMode[] UploadOnly = [TunnelMode.UploadDownload];
+
+        // THE single source of truth for ft's per-filesystem read-mode knowledge: which modes work on the
+        // filesystem the Read file is on, and which ft prefers (fastest that works). The auto-selector applies
+        // Preferred when the user gives no mode; the conflict warning checks Preferred/Supports(). Detection is
+        // by statfs magic, refined by mountinfo fstype where the magic is ambiguous (virtio-fs vs sshfs).
+        // Description is empty for ordinary coherent filesystems, which need no announcement.
+        public static FileSystemModes ModesForReadFile(string path) =>
+            // virtio-fs: a held handle refreshes via fstat (ForceRead does it) -> Normal works, ~2.4x faster
+            // than reopen-per-read. All three modes work.
+            IsVirtioFsMount(path) ? new("a virtio-fs mount", TunnelMode.Normal, AllModes) :
+            // vboxsf: a held handle stays stale even after dropping caches; only a fresh open() sees new data.
+            IsVboxsfMount(path) ? new("a VirtualBox shared folder (vboxsf)", TunnelMode.IsolatedReads, ReopenOnly) :
+            // sshfs / other FUSE: a held handle is stale and an in-place refresh is unreliable under load.
+            IsFuseMount(path) ? new("an sshfs / FUSE mount", TunnelMode.IsolatedReads, ReopenOnly) :
+            // 9P (diod over TCP): cache-coherent but delivers whole files out of order -> whole-file transfer only.
+            IsNinePMount(path) ? new("a 9P mount", TunnelMode.UploadDownload, UploadOnly) :
+            // Coherent local/network filesystems (ext4, NFS, CIFS, and QEMU virtio-9p, which reports its ext
+            // backing magic): a held handle sees appends -> all modes work, Normal is fastest.
+            new("", TunnelMode.Normal, AllModes);
 
         // O_DIRECT's numeric value is architecture-specific on Linux. Confirmed 0x4000 on x86/x86-64;
         // null on architectures we haven't validated, where ForceRead falls back to a plain read.
@@ -523,12 +617,17 @@ namespace ft
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 {
-                    // On a caching network filesystem (e.g. sshfs) a long-lived BUFFERED read handle can
-                    // keep serving a stale, short view of a file another host is appending to. An
-                    // UNBUFFERED (O_DIRECT) read on a separate handle forces a real round-trip to the
-                    // backing store, which makes the kernel refresh the inode's cache for ALL handles, so
-                    // this buffered reader then sees the appended data. We target the page the reader is
-                    // currently waiting on. Where O_DIRECT isn't available, fall back to a plain read.
+                    // A FUSE mount can keep serving a stale, short view of a file another host is appending
+                    // to, through a long-lived held read handle. Two complementary refreshes, both gated to
+                    // FUSE inside the helpers (CIFS/NFS revalidate on read, and an extra round-trip there can
+                    // starve the keepalive ping):
+                    //  - fstat the HELD handle: re-fetches its cached inode size. virtio-fs needs this - a
+                    //    plain read at EOF trusts the stale size, but an explicit fstat refreshes it, after
+                    //    which the buffered reader reads past the old EOF.
+                    //  - O_DIRECT read on a SEPARATE handle: forces a backing-store round-trip that refreshes
+                    //    sshfs's inode cache for all handles. Falls back to a plain buffered read where
+                    //    O_DIRECT is unavailable.
+                    TryFstatRefresh(fileStream);
                     if (!TryDirectRefresh(fileStream))
                     {
                         try
@@ -548,6 +647,24 @@ namespace ft
             {
                 stream.Flush(verbose, tunnelTimeoutMilliseconds);
             }
+        }
+
+        // Re-fetches the held handle's inode size with a single fstat, gated to FUSE mounts. virtio-fs
+        // (and potentially other FUSE servers) keep a long-lived read handle's cached size stale - a plain
+        // read at EOF returns 0 - until something explicitly stats the fd; this refreshes it without
+        // reopening. CIFS/NFS are skipped (they revalidate on read; an extra round-trip can starve the ping).
+        private static void TryFstatRefresh(FileStream fileStream)
+        {
+            if (MountMagic(fileStream.Name) != FUSE_SUPER_MAGIC)
+            {
+                return;
+            }
+
+            try
+            {
+                _ = RandomAccess.GetLength(fileStream.SafeFileHandle);
+            }
+            catch { }
         }
 
         // Reads the page the reader is waiting on through a separate O_DIRECT (unbuffered) handle, to

@@ -115,29 +115,6 @@ namespace ft
                 }
             }
 
-            // sshfs (FUSE) and VirtualBox shared folders (vboxsf) both serve a stale view to a held read
-            // handle and only refresh on a fresh open(), so they need the reopen-per-read that
-            // --isolated-reads provides. Detect them the same way we handle Citrix.
-            if (!o.IsolatedReads)
-            {
-                var cachingFs =
-                    Extensions.IsVboxsfMount(o.ReadFrom) ? "a VirtualBox shared folder (vboxsf)" :
-                    Extensions.IsFuseMount(o.ReadFrom) ? "an sshfs / FUSE mount" :
-                    null;
-
-                if (cachingFs != null)
-                {
-                    o.IsolatedReads = true;
-                    Log($"The Read file is on {cachingFs}, whose cache cannot be refreshed in place by a held handle. Enabling --isolated-reads.", ConsoleColor.Yellow);
-                }
-            }
-
-            if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
-            {
-                o.MaxFileSizeBytes = 1024 * 1024;
-                Log($"Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
-            }
-
             if (Options.S3)
             {
                 o.UploadDownload = true;
@@ -180,13 +157,41 @@ namespace ft
                 }
             }
 
-            //9P delivers whole files out of order and isn't supported through the default (ReusableFile)
-            //mode, so if the Read file is on a 9P mount, switch to upload-download automatically rather
-            //than letting it fail in the wrong mode. Announced below since we're changing the mode for them.
-            if (!o.UploadDownload && Extensions.IsNinePMount(o.ReadFrom))
+            // Auto-select the read mode from the filesystem when the user hasn't requested one, and warn
+            // (but honour their choice) if they requested a mode the fs doesn't suit. The per-filesystem
+            // knowledge lives in one place: Extensions.ModesForReadFile. Skipped for the rclone-FUSE
+            // transports (S3/Dropbox), which set --upload-download above as part of their own setup.
+            if (!Options.S3 && !Options.Dropbox)
             {
-                o.UploadDownload = true;
-                Log($"The Read file is on a 9P mount. Auto-enabling --upload-download (9P delivers files out of order and isn't supported through the default mode).", ConsoleColor.Yellow);
+                var fs = Extensions.ModesForReadFile(o.ReadFrom);
+                Extensions.TunnelMode? requested =
+                    o.Normal ? Extensions.TunnelMode.Normal :
+                    o.IsolatedReads ? Extensions.TunnelMode.IsolatedReads :
+                    o.UploadDownload ? Extensions.TunnelMode.UploadDownload :
+                    null;
+
+                if (requested is null)
+                {
+                    o.IsolatedReads = fs.Preferred == Extensions.TunnelMode.IsolatedReads;
+                    o.UploadDownload = fs.Preferred == Extensions.TunnelMode.UploadDownload;
+                    if (fs.Description.Length > 0)
+                    {
+                        Log($"The Read file is on {fs.Description}. Auto-selecting {fs.Preferred.ModeFlag()}.", ConsoleColor.Yellow);
+                    }
+                }
+                else if (fs.Description.Length > 0 && requested.Value != fs.Preferred)
+                {
+                    var why = fs.Supports(requested.Value)
+                        ? $"works there, but {fs.Preferred.ModeFlag()} is recommended (faster)"
+                        : $"is not supported there - {fs.Preferred.ModeFlag()} is recommended";
+                    Log($"Warning: you specified {requested.Value.ModeFlag()}, but the Read file is on {fs.Description}, which {why}. Continuing with {requested.Value.ModeFlag()}.", ConsoleColor.Yellow);
+                }
+            }
+
+            if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
+            {
+                o.MaxFileSizeBytes = 1024 * 1024;
+                Log($"Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
             }
 
             var access = new LocalAccess();
