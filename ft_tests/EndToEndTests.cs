@@ -299,6 +299,54 @@ namespace ft_tests
             return $"{NinePClient.MountPoint}/{fileName.TrimStart('/')}";
         }
 
+        // The nested QEMU guest on .82 is reached over the host's SSH port-forward (.82:2222). Lazily
+        // created so ONLY the virtio tests depend on the nested guest being up - other tests are
+        // unaffected if it isn't. ft writes to a guest-local log path (the guest has no //.31/r mount).
+        private static LinuxProcessRunner? _linuxGuest;
+        private static LinuxProcessRunner LinuxGuest => _linuxGuest ??=
+            new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, "/tmp/ft-guest.log", 2222);
+
+        // virtio-fs (host <-> nested guest): host side is the native /srv/ftvfs (ext4); guest side is the
+        // virtio-fs mount. ft auto-detects virtio-fs (mountinfo fstype) and runs Normal - its held handle
+        // refreshes via ForceRead's fstat, ~2.4x faster than IsolatedReads' reopen. (sshfs, the other FUSE
+        // family member, still gets IsolatedReads.) Confirmed on a real QEMU virtio-fs mount.
+        [TestMethod]
+        public void VirtioFs()
+        {
+            var server = new VirtioFsServer(linux_x64_3); // .82 host - virtiofsd + the nested guest
+
+            var f1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var f2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            // both sides run Normal: host on native ext4 (coherent), guest on virtio-fs (auto-detected -> Normal)
+            var side1 = new Client(OS.Linux, linux_x64_3, $"-w {VirtioFsServer.HostExportDir}/{f1} -r {VirtioFsServer.HostExportDir}/{f2} --verbose");
+            var side2 = VirtioGuestClient.VirtioFs(LinuxGuest, $"-r {VirtioGuestClient.VirtioFsMountPoint}/{f1} -w {VirtioGuestClient.VirtioFsMountPoint}/{f2} --verbose");
+
+            ConductTunnelTests(Mode.Normal, side1, server, side2,
+                $"{VirtioFsServer.HostExportDir}/{f2}", $"{VirtioFsServer.HostExportDir}/{f1}",
+                $"{VirtioGuestClient.VirtioFsMountPoint}/{f1}", $"{VirtioGuestClient.VirtioFsMountPoint}/{f2}");
+        }
+
+        // virtio-9p (host <-> nested guest): host side is the native /srv/ft9p (ext4); guest side is the
+        // virtio-9p mount. QEMU's -virtfs reports the BACKING fs's statfs magic (not V9FS), so ft sees ext4
+        // and runs Normal - which is correct, since QEMU virtio-9p (cache=none) is coherent (unlike diod's
+        // TCP-9p, which is V9FS + incoherent -> upload-download). Confirmed working in Normal on a real mount.
+        [TestMethod]
+        public void Virtio9p()
+        {
+            var server = new Virtio9pServer(linux_x64_3);
+
+            var f1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var f2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            var side1 = new Client(OS.Linux, linux_x64_3, $"-w {Virtio9pServer.HostExportDir}/{f1} -r {Virtio9pServer.HostExportDir}/{f2} --verbose");
+            var side2 = VirtioGuestClient.Virtio9p(LinuxGuest, $"-r {VirtioGuestClient.Virtio9pMountPoint}/{f1} -w {VirtioGuestClient.Virtio9pMountPoint}/{f2} --verbose");
+
+            ConductTunnelTests(Mode.Normal, side1, server, side2,
+                $"{Virtio9pServer.HostExportDir}/{f2}", $"{Virtio9pServer.HostExportDir}/{f1}",
+                $"{VirtioGuestClient.Virtio9pMountPoint}/{f1}", $"{VirtioGuestClient.Virtio9pMountPoint}/{f2}");
+        }
+
         // KnownFlaky: Rdp IsolatedReads fails ~100% of the time — the per-read server round-trips
         // starve the keepalive ping over RDP's high-latency \\tsclient channel (see the SMB fix-stack
         // notes). RDP Normal is reliable, but TestCategory can't be applied per-DataRow, so the whole
@@ -715,7 +763,10 @@ namespace ft_tests
 
         RDP,
 
-        VirtualBoxSharedFolder
+        VirtualBoxSharedFolder,
+
+        VirtioFs,
+        Virtio9p
     }
 
     public enum Mode

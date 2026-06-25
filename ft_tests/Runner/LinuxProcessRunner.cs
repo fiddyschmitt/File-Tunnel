@@ -9,19 +9,20 @@ namespace ft_tests.Runner
         private readonly string remoteExecutablePath;
         private readonly string outputFilename;
 
-        public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string outputFilename) : base(host)
+        // port defaults to 22; the nested QEMU guest is reached via the host's SSH port-forward (.82:2222).
+        public LinuxProcessRunner(string host, string username, string password, string localExecutablePath, string outputFilename, int port = 22) : base(host)
         {
             var remoteFolder = "/tmp/ft/";
             this.remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);
 
-            sshClient = new SshClient(host, username, password);
+            sshClient = new SshClient(host, port, username, password);
             sshClient.Connect();
 
             sshClient.CreateCommand($"mkdir -p \"{remoteFolder}\"").Execute();
 
             Stop();
 
-            var scpClient = new ScpClient(host, username, password);
+            var scpClient = new ScpClient(host, port, username, password);
             scpClient.Connect();
 
             Stop();
