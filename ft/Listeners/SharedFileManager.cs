@@ -456,9 +456,12 @@ namespace ft.Listeners
 
         private void MonitorOnlineStatus()
         {
-            try
+            // The try/catch is INSIDE the loop: an OnlineStatusChanged subscriber that throws (e.g. a
+            // listener failing to bind an already-used -L port) must not kill this thread - otherwise
+            // IsOnline freezes forever and outages never tear connections down / listeners never restart.
+            while (true)
             {
-                while (true)
+                try
                 {
                     if (lastContactFromCounterpart != null && lastSuccessfulPing != null)
                     {
@@ -474,13 +477,13 @@ namespace ft.Listeners
                             OnlineStatusChanged?.Invoke(this, new OnlineStatusEventArgs(IsOnline));
                         }
                     }
-
-                    Delay.Wait(100);
                 }
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"{nameof(MonitorOnlineStatus)}: {ex.Message}");
+                catch (Exception ex)
+                {
+                    Program.Log($"{nameof(MonitorOnlineStatus)}: {ex.Message}");
+                }
+
+                Delay.Wait(100);
             }
         }
 
