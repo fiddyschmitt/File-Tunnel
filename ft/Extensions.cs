@@ -498,6 +498,16 @@ namespace ft
 
         private static int MountMagic(string path)
         {
+            // statfs is meaningful (and safe) only on Linux here. The magics we look for are Linux fs types,
+            // and the 256-byte buffer below is sized for Linux's ~120-byte struct statfs. On macOS struct
+            // statfs is ~2KB (it embeds two 1024-byte path fields), so calling it there would overflow the
+            // managed buffer and corrupt the heap. Non-Linux platforms have coherent local filesystems, so
+            // returning 0 (-> MountKind.Other) correctly selects Normal mode.
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return 0;
+            }
+
             return MountMagicCache.GetOrAdd(path, p =>
             {
                 try
@@ -505,7 +515,7 @@ namespace ft
                     // The read file may not exist yet (the counterpart creates it), so fall back to its
                     // directory — which is on the same mount and present from the start.
                     var target = File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p);
-                    var buf = new byte[256]; // struct statfs is ~120 bytes; f_type magic is at offset 0
+                    var buf = new byte[256]; // Linux struct statfs is ~120 bytes; f_type magic is at offset 0
                     return statfs(target, buf) == 0 ? BitConverter.ToInt32(buf, 0) : 0;
                 }
                 catch { return 0; }
