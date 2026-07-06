@@ -17,7 +17,18 @@ namespace ft
         {
             var thread = new Thread(() =>
             {
-                action();
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    // A fire-and-forget worker throwing must not take down the whole process. The pumps do
+                    // their own restart-on-error; this is the safety net for event handlers (e.g. the
+                    // ConnectionAccepted handler) that run on these threads - one malformed frame or a DNS
+                    // hiccup should drop that connection, not crash ft.
+                    Program.Log($"Thread '{threadName}' terminated with an unhandled exception: {ex.Message}");
+                }
             })
             {
                 Name = $"[FT] {threadName}",

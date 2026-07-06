@@ -42,15 +42,24 @@ namespace ft.Tunnels
 
             sharedFileManager.ConnectionAccepted += (sender, connectionDetails) =>
             {
-                var connectToTokens = connectionDetails.DestinationEndpointString.Split(["://"], StringSplitOptions.None);
-                var protocol = connectToTokens[0];
-                var destinationEndpointStr = connectToTokens[1];
-
-                var destinationEndpoint = destinationEndpointStr.AsEndpoint();
-
-                if (protocol.Equals("tcp"))
+                // The whole handler is wrapped: parsing the peer-supplied endpoint (Split/AsEndpoint) and the
+                // UDP setup (Bind) can throw on a malformed/unresolvable value or an occupied --udp-send-from
+                // port. This runs on a Threads.StartNew worker, so an escape would (before its safety net) kill
+                // the process; here we log and tell the counterpart to tear the connection down instead.
+                try
                 {
-                    try
+                    var connectToTokens = connectionDetails.DestinationEndpointString.Split(["://"], StringSplitOptions.None);
+                    if (connectToTokens.Length < 2)
+                    {
+                        throw new Exception($"Malformed destination endpoint '{connectionDetails.DestinationEndpointString}' (expected proto://host:port).");
+                    }
+
+                    var protocol = connectToTokens[0];
+                    var destinationEndpointStr = connectToTokens[1];
+
+                    var destinationEndpoint = destinationEndpointStr.AsEndpoint();
+
+                    if (protocol.Equals("tcp"))
                     {
                         var connectStopwatch = Stopwatch.StartNew();
 
@@ -96,43 +105,42 @@ namespace ft.Tunnels
                             Program.Log($"Could not connect to: {destinationEndpointStr}");
                         }
                     }
-                    catch (Exception ex)
+                    else if (protocol.Equals("udp"))
                     {
-                        Program.Log($"Error during connection to {destinationEndpointStr}. {ex.Message}");
+                        var sendFromEndpoint = udpSendFrom.AsEndpoint();
 
-                        if (connectionDetails.Stream is SharedFileStream sharedFileStream)
+                        var udpClient = new UdpClient()
                         {
-                            Program.Log($"Instructing counterpart to tear down connection {sharedFileStream.ConnectionId}");
-                            sharedFileStream.Close();
+                            EnableBroadcast = true
+                        };
+
+                        udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                        udpClient.Client.Bind(sendFromEndpoint);
+
+                        var udpStream = new UdpStream(udpClient, destinationEndpoint);
+
+                        var relay1 = new Relay(udpStream, connectionDetails.Stream, maxFileSizeBytes, readDurationMillis);
+                        var relay2 = new Relay(connectionDetails.Stream, udpStream, maxFileSizeBytes, readDurationMillis);
+
+                        void TearDown()
+                        {
+                            relay1.Stop();
+                            relay2.Stop();
                         }
+
+                        relay1.RelayFinished += (s, a) => TearDown();
+                        relay2.RelayFinished += (s, a) => TearDown();
                     }
                 }
-
-                if (protocol.Equals("udp"))
+                catch (Exception ex)
                 {
-                    var sendFromEndpoint = udpSendFrom.AsEndpoint();
+                    Program.Log($"Error establishing connection to '{connectionDetails.DestinationEndpointString}': {ex.Message}");
 
-                    var udpClient = new UdpClient()
+                    if (connectionDetails.Stream is SharedFileStream sharedFileStream)
                     {
-                        EnableBroadcast = true
-                    };
-
-                    udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                    udpClient.Client.Bind(sendFromEndpoint);
-
-                    var udpStream = new UdpStream(udpClient, destinationEndpoint);
-
-                    var relay1 = new Relay(udpStream, connectionDetails.Stream, maxFileSizeBytes, readDurationMillis);
-                    var relay2 = new Relay(connectionDetails.Stream, udpStream, maxFileSizeBytes, readDurationMillis);
-
-                    void TearDown()
-                    {
-                        relay1.Stop();
-                        relay2.Stop();
+                        Program.Log($"Instructing counterpart to tear down connection {sharedFileStream.ConnectionId}");
+                        sharedFileStream.Close();
                     }
-
-                    relay1.RelayFinished += (s, a) => TearDown();
-                    relay2.RelayFinished += (s, a) => TearDown();
                 }
             };
 
