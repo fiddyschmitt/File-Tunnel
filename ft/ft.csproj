@@ -6,6 +6,11 @@
 	<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 	<Nullable>enable</Nullable>
 	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	<!-- .NET 9+ marks the Windows host CET-compatible (shadow stacks), which fast-fails at launch on
+	     Windows builds that lack the CET servicing fix (dotnet/runtime#110920) - exactly the locked-down,
+	     un-updated machines ft is most used on (issue #39). ft gains little from shadow-stack hardening,
+	     so trade it for the ability to start everywhere, matching the net8.0-era releases. -->
+	<!--<CetCompat>false</CetCompat>-->
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
 	<PlatformTarget>x64</PlatformTarget>
