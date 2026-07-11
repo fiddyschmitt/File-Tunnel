@@ -29,6 +29,7 @@ namespace ft
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(ReusableFileOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(FtpOptions))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WebDavOptions))]
         public static void Main(string[] args)
         {
             if (args.Contains("--version"))
@@ -54,6 +55,13 @@ namespace ft
                 parser
                     .ParseArguments<FtpOptions>(args)
                     .WithParsed(RunFtpSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else if (args.Contains("--webdav"))
+            {
+                parser
+                    .ParseArguments<WebDavOptions>(args)
+                    .WithParsed(RunWebDavSession)
                     .WithNotParsed(err => Environment.Exit(1));
             }
             else
@@ -89,6 +97,21 @@ namespace ft
                                              1,
                                              0,        //no batch cap for FTP: every file is a separate data-connection round-trip on one serialized connection, so fewer/larger files = far less contention (the original behaviour). The 9p cap exists only to avoid torn reads on a coherent local mount.
                                              true,     //FTP: blocking reader - its single serialized FtpClient must stay free for the keep-alive pings (true at any subfile count)
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
+        }
+
+        private static void RunWebDavSession(WebDavOptions o)
+        {
+            var access = new WebDav(o.WebDavUrl, o.WebDavUsername, o.WebDavPassword);
+
+            var sharedFileManager = new UploadDownload(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             Options.TunnelTimeoutMilliseconds,
+                                             1,
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
