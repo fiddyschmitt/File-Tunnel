@@ -30,6 +30,7 @@ namespace ft
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(ReusableFileOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(FtpOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WebDavOptions))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(S3Options))]
         public static void Main(string[] args)
         {
             if (args.Contains("--version"))
@@ -62,6 +63,13 @@ namespace ft
                 parser
                     .ParseArguments<WebDavOptions>(args)
                     .WithParsed(RunWebDavSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else if (args.Contains("--s3-native"))
+            {
+                parser
+                    .ParseArguments<S3Options>(args)
+                    .WithParsed(RunS3Session)
                     .WithNotParsed(err => Environment.Exit(1));
             }
             else
@@ -105,6 +113,21 @@ namespace ft
         private static void RunWebDavSession(WebDavOptions o)
         {
             var access = new WebDav(o.WebDavUrl, o.WebDavUsername, o.WebDavPassword);
+
+            var sharedFileManager = new UploadDownload(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             Options.TunnelTimeoutMilliseconds,
+                                             1,
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
+        }
+
+        private static void RunS3Session(S3Options o)
+        {
+            var access = new S3(o.Endpoint, o.Region, o.Bucket, o.AccessKey, o.SecretKey);
 
             var sharedFileManager = new UploadDownload(
                                              access,
