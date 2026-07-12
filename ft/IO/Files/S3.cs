@@ -23,7 +23,7 @@ namespace ft.IO.Files
         readonly string accessKey;
         readonly string secretKey;
 
-        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey)
+        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, int maxConnections = 20)
         {
             this.region = string.IsNullOrWhiteSpace(region) ? "us-east-1" : region;
             this.bucket = bucket;
@@ -44,8 +44,8 @@ namespace ft.IO.Files
                 PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
 
                 //Allow reads, writes and control (ping) traffic to use separate connections concurrently,
-                //so a slow data GET/PUT cannot head-of-line block the others.
-                MaxConnectionsPerServer = 20,
+                //so a slow data GET/PUT cannot head-of-line block the others. Configurable via --max-connections.
+                MaxConnectionsPerServer = maxConnections < 1 ? 1 : maxConnections,
 
                 ConnectTimeout = TimeSpan.FromMilliseconds(Program.UNIVERSAL_TIMEOUT_MS),
             };

@@ -112,7 +112,7 @@ namespace ft
 
         private static void RunWebDavSession(WebDavOptions o)
         {
-            var access = new WebDav(o.WebDavUrl, o.WebDavUsername, o.WebDavPassword);
+            var access = new WebDav(o.WebDavUrl, o.ResolveUsername(), o.ResolvePassword());
 
             var sharedFileManager = new UploadDownload(
                                              access,
@@ -127,7 +127,17 @@ namespace ft
 
         private static void RunS3Session(S3Options o)
         {
-            var access = new S3(o.Endpoint, o.Region, o.Bucket, o.AccessKey, o.SecretKey);
+            var accessKey = o.ResolveAccessKey();
+            var secretKey = o.ResolveSecretKey();
+
+            if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
+            {
+                Log("An S3 access key and secret key are required. Provide them via --access-key / --secret-key, or via the FT_S3_ACCESS_KEY / FT_S3_SECRET_KEY environment variables.", ConsoleColor.Red);
+                Environment.Exit(1);
+                return;
+            }
+
+            var access = new S3(o.Endpoint, o.Region, o.Bucket, accessKey, secretKey, o.MaxConnections);
 
             var sharedFileManager = new UploadDownload(
                                              access,

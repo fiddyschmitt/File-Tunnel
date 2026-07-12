@@ -20,13 +20,20 @@ namespace ft.CLI
         [Option("endpoint", Required = false, HelpText = @"The S3 endpoint URL. Omit for AWS S3 (derived from --region), or specify for S3-compatible services. Example: --endpoint https://minio.example.com")]
         public string Endpoint { get; set; } = "";
 
-        [Option("access-key", Required = true, HelpText = @"The S3 access key ID.")]
+        [Option("access-key", Required = false, HelpText = @"The S3 access key ID. Alternatively set the FT_S3_ACCESS_KEY environment variable to keep it out of the command line and process list.")]
         public string AccessKey { get; set; } = "";
 
-        [Option("secret-key", Required = true, HelpText = @"The S3 secret access key.")]
+        [Option("secret-key", Required = false, HelpText = @"The S3 secret access key. Alternatively set the FT_S3_SECRET_KEY environment variable to keep it out of the command line and process list.")]
         public string SecretKey { get; set; } = "";
+
+        [Option("max-connections", Required = false, HelpText = @"The maximum number of concurrent HTTP connections to the S3 endpoint. Default 20")]
+        public int MaxConnections { get; set; } = 20;
 
         [Option('m', "max-size", Required = false, HelpText = @"The maximum size (in bytes) the file can be before uploading. Default 102400 (100 KB)")]
         public int MaxFileSizeBytes { get; set; } = 100 * 1024;
+
+        public string ResolveAccessKey() => ResolveWithEnv(AccessKey, "FT_S3_ACCESS_KEY");
+
+        public string ResolveSecretKey() => ResolveWithEnv(SecretKey, "FT_S3_SECRET_KEY");
     }
 }
