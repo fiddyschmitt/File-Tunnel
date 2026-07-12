@@ -120,6 +120,8 @@ namespace ft
                                              o.WriteTo.Trim(),
                                              Options.TunnelTimeoutMilliseconds,
                                              1,
+                                             0,        //remote HTTP transport: no batch cap (like FTP) - whole-object PUT/GET has no torn-read risk, so fewer/larger files = fewer round-trips
+                                             true,     //blocking reader: strict ping-pong over one shared HttpClient (locked), so idle on the read slot to keep the tunnel online without a poll-storm
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
@@ -145,6 +147,8 @@ namespace ft
                                              o.WriteTo.Trim(),
                                              Options.TunnelTimeoutMilliseconds,
                                              1,
+                                             0,        //remote HTTP transport: no batch cap (like FTP) - whole-object PUT/GET has no torn-read risk, so fewer/larger files = fewer round-trips
+                                             true,     //blocking reader: strict ping-pong keeps the tunnel online without hammering the endpoint with 404 polls
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
