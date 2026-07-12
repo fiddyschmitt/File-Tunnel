@@ -72,5 +72,27 @@ namespace ft.CLI
 
         [Option("dropbox", Required = false, HelpText = @"Optimize the tunnel for Dropbox")]
         public static bool Dropbox { get; set; } = false;
+
+        //Returns the supplied value if it is non-empty, otherwise the first non-empty environment
+        //variable from the supplied names. Lets secrets be passed via the environment instead of the
+        //command line, so they don't appear in the process list.
+        protected static string ResolveWithEnv(string value, params string[] environmentVariableNames)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+
+            foreach (var environmentVariableName in environmentVariableNames)
+            {
+                var fromEnvironment = Environment.GetEnvironmentVariable(environmentVariableName);
+                if (!string.IsNullOrEmpty(fromEnvironment))
+                {
+                    return fromEnvironment;
+                }
+            }
+
+            return value;
+        }
     }
 }

@@ -29,6 +29,8 @@ namespace ft
 
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(ReusableFileOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(FtpOptions))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WebDavOptions))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(S3Options))]
         public static void Main(string[] args)
         {
             if (args.Contains("--version"))
@@ -54,6 +56,20 @@ namespace ft
                 parser
                     .ParseArguments<FtpOptions>(args)
                     .WithParsed(RunFtpSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else if (args.Contains("--webdav"))
+            {
+                parser
+                    .ParseArguments<WebDavOptions>(args)
+                    .WithParsed(RunWebDavSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else if (args.Contains("--s3-native"))
+            {
+                parser
+                    .ParseArguments<S3Options>(args)
+                    .WithParsed(RunS3Session)
                     .WithNotParsed(err => Environment.Exit(1));
             }
             else
@@ -89,6 +105,50 @@ namespace ft
                                              1,
                                              0,        //no batch cap for FTP: every file is a separate data-connection round-trip on one serialized connection, so fewer/larger files = far less contention (the original behaviour). The 9p cap exists only to avoid torn reads on a coherent local mount.
                                              true,     //FTP: blocking reader - its single serialized FtpClient must stay free for the keep-alive pings (true at any subfile count)
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
+        }
+
+        private static void RunWebDavSession(WebDavOptions o)
+        {
+            var access = new WebDav(o.WebDavUrl, o.ResolveUsername(), o.ResolvePassword());
+
+            var sharedFileManager = new UploadDownload(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             Options.TunnelTimeoutMilliseconds,
+                                             1,
+                                             0,        //remote HTTP transport: no batch cap (like FTP) - whole-object PUT/GET has no torn-read risk, so fewer/larger files = fewer round-trips
+                                             true,     //blocking reader: strict ping-pong over one shared HttpClient (locked), so idle on the read slot to keep the tunnel online without a poll-storm
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
+        }
+
+        private static void RunS3Session(S3Options o)
+        {
+            var accessKey = o.ResolveAccessKey();
+            var secretKey = o.ResolveSecretKey();
+
+            if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
+            {
+                Log("An S3 access key and secret key are required. Provide them via --access-key / --secret-key, or via the FT_S3_ACCESS_KEY / FT_S3_SECRET_KEY environment variables.", ConsoleColor.Red);
+                Environment.Exit(1);
+                return;
+            }
+
+            var access = new S3(o.Endpoint, o.Region, o.Bucket, accessKey, secretKey, o.MaxConnections);
+
+            var sharedFileManager = new UploadDownload(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             Options.TunnelTimeoutMilliseconds,
+                                             1,
+                                             0,        //remote HTTP transport: no batch cap (like FTP) - whole-object PUT/GET has no torn-read risk, so fewer/larger files = fewer round-trips
+                                             true,     //blocking reader: strict ping-pong keeps the tunnel online without hammering the endpoint with 404 polls
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
