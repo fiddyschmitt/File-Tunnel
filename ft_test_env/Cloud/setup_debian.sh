@@ -19,6 +19,15 @@ mount -o size=3G -t tmpfs none /mnt/tmpfs
 # Add export entry for NFS
 echo "/mnt/tmpfs *(rw,sync,no_root_squash,no_subtree_check)" | tee -a /etc/exports
 
+# The e2e suite restarts nfs-server before every NFS test (NfsServer.Restart). A burst of
+# fast-failing tests can restart it >5 times in 10s, tripping systemd's default start limit:
+# nfs-mountd dies with 'start-limit-hit' and nfs-server (a oneshot unit) still REPORTS active
+# while nothing listens on 2049 - observed 2026-07-12. Disable the rate limit for both units.
+mkdir -p /etc/systemd/system/nfs-mountd.service.d /etc/systemd/system/nfs-server.service.d
+printf '[Unit]\nStartLimitIntervalSec=0\n' > /etc/systemd/system/nfs-mountd.service.d/ft-no-start-limit.conf
+printf '[Unit]\nStartLimitIntervalSec=0\n' > /etc/systemd/system/nfs-server.service.d/ft-no-start-limit.conf
+systemctl daemon-reload
+
 # Apply export changes and restart NFS service
 exportfs -a
 systemctl restart nfs-kernel-server
@@ -40,6 +49,12 @@ bash -c 'cat >> /etc/samba/smb.conf <<EOF
    path = /media/smbserver/data
    guest ok = yes
 EOF'
+
+# Enroll the node's login user as a Samba user too (same throwaway password). The share is
+# guest-accessible, but modern Windows blocks unauthenticated guest SMB by default
+# (AllowInsecureGuestAuth), so interactive access from Windows needs a real credential: user/live.
+printf 'live\nlive\n' | smbpasswd -a -s user
+smbpasswd -e user
 
 # Restart Samba service
 service smbd restart
@@ -157,6 +172,81 @@ systemctl restart tinyproxy
 systemctl enable tinyproxy
 
 echo "HTTP proxy (tinyproxy) listening on 0.0.0.0:8888"
+
+
+
+##### Setup a WebDAV server (nginx) on 0.0.0.0:8080 for ft's --webdav backend
+# nginx's core dav module covers everything ft's WebDav client uses (GET/PUT/HEAD/DELETE; MOVE is
+# interface-completeness only). No auth - ft sends no Authorization header when no username is given,
+# which exercises that path. Config layout: root /srv/webdav + location /dav/ means URLs are
+# http://host:8080/dav/<file> backed by /srv/webdav/dav/<file>.
+apt-get install -y nginx
+
+mkdir -p /srv/webdav/dav
+chown -R www-data:www-data /srv/webdav
+
+cat > /etc/nginx/conf.d/ft-webdav.conf <<'EOF'
+server {
+    listen 8080;
+    location /dav/ {
+        root /srv/webdav;
+        dav_methods PUT DELETE MKCOL COPY MOVE;
+        create_full_put_path on;
+        client_max_body_size 50m;
+    }
+}
+EOF
+
+systemctl restart nginx
+systemctl enable nginx
+
+echo "WebDAV (nginx) listening on 0.0.0.0:8080 at /dav/"
+
+
+
+##### Setup an S3-compatible server (MinIO) on 0.0.0.0:9000 for ft's --s3-native backend
+# MinIO validates SigV4 exactly like AWS (the whole point - it exercises ft's hand-rolled signer) and,
+# unlike `rclone serve s3`, is strongly consistent with no VFS directory cache. That matters: ft's
+# single-slot UploadDownload does rapid write/delete/overwrite on ONE object and relies on immediate
+# read-after-write / read-after-delete (as real AWS S3 has been since Dec 2020). rclone's VFS caches
+# object presence for minutes, which deadlocks the writer<->reader handoff mid-transfer and times the
+# S3 e2e test out at 180s even though ft's client is correct. MinIO has no such layer.
+# The root creds become the S3 access-key/secret-key; throwaway lab-only values like the other creds.
+# NOTE: S3 bucket names must be >= 3 chars (MinIO enforces this; rclone did not), so the bucket is
+# 'fttest', not 'ft' - the S3Native test passes the same name.
+curl -sfL -o /tmp/minio https://dl.min.io/server/minio/release/linux-amd64/minio
+curl -sfL -o /tmp/mc    https://dl.min.io/client/mc/release/linux-amd64/mc
+install -m 755 /tmp/minio /usr/local/bin/minio
+install -m 755 /tmp/mc    /usr/local/bin/mc
+rm -f /tmp/minio /tmp/mc
+mkdir -p /srv/minio
+
+cat > /etc/systemd/system/ft-s3.service <<'EOF'
+[Unit]
+Description=S3-compatible server (MinIO) for ft tests
+After=network.target
+
+[Service]
+Environment=MINIO_ROOT_USER=ftaccess
+Environment=MINIO_ROOT_PASSWORD=ftsecret
+ExecStart=/usr/local/bin/minio server /srv/minio --address :9000 --console-address :9001
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable ft-s3
+systemctl start ft-s3
+
+# Wait for the API to answer, then create the 'fttest' bucket (idempotent).
+for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:9000/minio/health/live && break; sleep 1; done
+mc alias set ftlocal http://localhost:9000 ftaccess ftsecret >/dev/null 2>&1
+mc mb --ignore-existing ftlocal/fttest
+
+echo "S3-compatible server (MinIO) listening on 0.0.0.0:9000, bucket 'fttest'"
 
 
 # Mark the node ready as soon as the STANDARD services are up. The nested QEMU guest section below (with
