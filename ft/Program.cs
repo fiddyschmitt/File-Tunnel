@@ -110,8 +110,43 @@ namespace ft
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
         }
 
+        //Every read poll against an HTTP backend is a billable and/or rate-limited API request, and the
+        //blocking reader retries an absent slot as fast as the pace allows - at the 1ms floor that's
+        //~270 req/s per side while idle against a low-latency endpoint (measured against nginx WebDAV
+        //on a LAN). Internet RTT self-limits the loop, which is why this doesn't show up in WAN use.
+        //Default to a gentler cadence when the user hasn't chosen one; an explicit --pace still wins.
+        //
+        //The tunnel timeout also needs headroom on high-RTT services: it bounds the whole
+        //write->notice->read->delete slot cycle (an unacknowledged slot blocks the single send pump
+        //for up to the full timeout, and DefaultSleepStrategy cancels any file operation that exceeds
+        //it), so the 10s default tears the tunnel down on slow S3/WebDAV endpoints. 60s is the
+        //compromise, matching the Dropbox tuning: much higher and a stalled pump starves the
+        //keep-alive pings for that much longer, so the tunnel never comes online. Confirmed reliable
+        //by user testing against a slow S3-compatible server.
+        private static void ApplyHttpBackendTuning(string backendName)
+        {
+            if (Options.PaceMilliseconds == 0)
+            {
+                Options.PaceMilliseconds = 50;
+                Log($"Applying {backendName} tuning: {Options.PaceMilliseconds}ms pace between requests. Override with --pace.", ConsoleColor.Yellow);
+            }
+
+            const int recommendedTunnelTimeoutMillis = 60000;
+            if (Options.TunnelTimeoutMilliseconds == Options.DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS)
+            {
+                Options.TunnelTimeoutMilliseconds = recommendedTunnelTimeoutMillis;
+                Log($"Applying {backendName} tuning: {Options.TunnelTimeoutMilliseconds:N0}ms tunnel timeout (high-RTT services need headroom for each upload/download cycle). Override with --tunnel-timeout.", ConsoleColor.Yellow);
+            }
+            else if (Options.TunnelTimeoutMilliseconds < recommendedTunnelTimeoutMillis)
+            {
+                Log($"Warning: {backendName} endpoints can be slow. If the tunnel drops out, try --tunnel-timeout {recommendedTunnelTimeoutMillis} or higher.", ConsoleColor.Yellow);
+            }
+        }
+
         private static void RunWebDavSession(WebDavOptions o)
         {
+            ApplyHttpBackendTuning("WebDAV");
+
             var access = new WebDav(o.WebDavUrl, o.ResolveUsername(), o.ResolvePassword());
 
             var sharedFileManager = new UploadDownload(
@@ -138,6 +173,8 @@ namespace ft
                 Environment.Exit(1);
                 return;
             }
+
+            ApplyHttpBackendTuning("S3");
 
             var access = new S3(o.Endpoint, o.Region, o.Bucket, accessKey, secretKey, o.MaxConnections);
 

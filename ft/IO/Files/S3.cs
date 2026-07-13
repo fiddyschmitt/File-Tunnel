@@ -71,6 +71,19 @@ namespace ft.IO.Files
             return result;
         }
 
+        bool warnedHeadForbidden = false;
+
+        //S3 responds 403 (not 404) to HEAD on a missing key when the credentials lack s3:ListBucket,
+        //which makes existence checks throw instead of returning false. A bare "403 Forbidden" reads
+        //as a credential problem, so surface the likely fix once. (Benign race: at worst it logs twice.)
+        void WarnIfHeadForbidden(HttpStatusCode statusCode, string path)
+        {
+            if (statusCode != HttpStatusCode.Forbidden || warnedHeadForbidden) return;
+            warnedHeadForbidden = true;
+
+            Program.Log($"S3 returned 403 (Forbidden) for HEAD {path}. Note: S3 returns 403 instead of 404 for a MISSING key when the credentials lack the s3:ListBucket permission, so this may just mean the file isn't there yet. Grant s3:ListBucket on the bucket so existence checks can distinguish missing objects (or check the credentials/clock skew).", ConsoleColor.Yellow);
+        }
+
         public bool Exists(string path)
         {
             using var request = new HttpRequestMessage(HttpMethod.Head, BuildUri(path));
@@ -83,6 +96,7 @@ namespace ft.IO.Files
                 return false;
             }
 
+            WarnIfHeadForbidden(response.StatusCode, path);
             response.EnsureSuccessStatusCode();
             return true;
         }
@@ -177,6 +191,7 @@ namespace ft.IO.Files
 
             Sign(request, CanonicalUri(path), [], null);
             using var response = client.Send(request);
+            WarnIfHeadForbidden(response.StatusCode, path);
             response.EnsureSuccessStatusCode();
 
             var result = response.Content.Headers.ContentLength ?? 0L;
