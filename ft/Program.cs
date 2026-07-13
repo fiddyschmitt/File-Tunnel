@@ -65,7 +65,7 @@ namespace ft
                     .WithParsed(RunWebDavSession)
                     .WithNotParsed(err => Environment.Exit(1));
             }
-            else if (args.Contains("--s3-native"))
+            else if (args.Contains("--s3"))
             {
                 parser
                     .ParseArguments<S3Options>(args)
@@ -212,11 +212,6 @@ namespace ft
                 }
             }
 
-            if (Options.S3)
-            {
-                o.UploadDownload = true;
-            }
-
             if (Options.Dropbox)
             {
                 o.UploadDownload = true;
@@ -257,8 +252,9 @@ namespace ft
             // Auto-select the read mode from the filesystem when the user hasn't requested one, and warn
             // (but honour their choice) if they requested a mode the fs doesn't suit. The per-filesystem
             // knowledge lives in one place: Extensions.ModesForReadFile. Skipped for the rclone-FUSE
-            // transports (S3/Dropbox), which set --upload-download above as part of their own setup.
-            if (!Options.S3 && !Options.Dropbox)
+            // Dropbox transport, which sets --upload-download above as part of its own setup. (S3 no
+            // longer comes through here at all: --s3 is now the native client, handled in Main.)
+            if (!Options.Dropbox)
             {
                 var fs = Extensions.ModesForReadFile(o.ReadFrom);
                 Extensions.TunnelMode? requested =

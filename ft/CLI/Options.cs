@@ -67,8 +67,9 @@ namespace ft.CLI
         [Option("citrix", Required = false, HelpText = @"Optimize the tunnel for Citrix file shares such as \\client\c$")]
         public static bool Citrix { get; set; } = false;
 
-        [Option("s3", Required = false, HelpText = @"Optimize the tunnel for S3 file shares")]
-        public static bool S3 { get; set; } = false;
+        //The old "--s3" here (Optimize the tunnel for a MOUNTED S3 file share, via rclone) was replaced
+        //by the native S3 client: --s3 now selects S3Options/RunS3Session in Main and talks to the
+        //bucket directly. A mounted rclone share can still be tuned manually (--upload-download etc).
 
         [Option("dropbox", Required = false, HelpText = @"Optimize the tunnel for Dropbox")]
         public static bool Dropbox { get; set; } = false;

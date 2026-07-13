@@ -9,8 +9,8 @@ namespace ft.CLI
 {
     public class S3Options : Options
     {
-        [Option("s3-native", Required = false, HelpText = @"Use a native S3 (or S3-compatible) client for the file tunnel. Unlike --s3, this connects directly to the bucket and does not require a mounted file share.")]
-        public bool S3Native { get; set; } = false;
+        [Option("s3", Required = false, HelpText = @"Use an S3 (or S3-compatible) bucket for the file tunnel. Connects directly to the bucket - no mounted file share required.")]
+        public bool S3 { get; set; } = false;
 
         [Option("bucket", Required = true, HelpText = @"The S3 bucket name.")]
         public string Bucket { get; set; } = "";
