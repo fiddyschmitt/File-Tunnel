@@ -433,6 +433,57 @@ namespace ft_tests
             ConductTunnelTests(Mode.FTP, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
+        // WebDAV (nginx on .81:8080) - an HTTP-API backend like FTP: ft talks to the server directly,
+        // so the clients need no mounts. Rides UploadDownload with the blocking ping-pong reader;
+        // Program.cs applies a 50ms pace floor so idle absent-slot polling doesn't hammer
+        // billable/rate-limited endpoints (~270 req/s unpaced on a LAN; ~7 req/s with the floor).
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Windows)]
+        [DataRow(OS.Windows, OS.Linux)]
+        [DataRow(OS.Linux, OS.Linux)]
+        public void WebDav(OS client1OS, OS client2OS)
+        {
+            const string url = "http://192.168.0.81:8080/dav/";
+
+            var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"--webdav --url {url} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
+
+            var readPath2 = writePath1;
+            var writePath2 = readPath1;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"--webdav --url {url} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
+
+            ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.WebDav), side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        // S3 (MinIO on .81:9000, bucket 'fttest') - exercises ft's native SigV4 signer end-to-end
+        // against a strictly-validating server. MinIO specifically: it is strongly consistent like real
+        // AWS S3; `rclone serve s3` is NOT (its VFS caches object presence for minutes, deadlocking
+        // ft's single-slot rapid write/delete handoff mid-transfer). Bucket names must be >= 3 chars,
+        // hence 'fttest'. Throwaway lab-only keys, same convention as the other lab credentials.
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Windows)]
+        [DataRow(OS.Windows, OS.Linux)]
+        [DataRow(OS.Linux, OS.Linux)]
+        public void S3(OS client1OS, OS client2OS)
+        {
+            const string s3Args = "--s3 --bucket fttest --endpoint http://192.168.0.81:9000 --access-key ftaccess --secret-key ftsecret";
+
+            var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"{s3Args} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
+
+            var readPath2 = writePath1;
+            var writePath2 = readPath1;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"{s3Args} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
+
+            ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.S3), side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
 
         public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
         {
@@ -519,6 +570,23 @@ namespace ft_tests
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
                         "FTP");
+            }
+
+            //WebDAV / S3-native: the backend flag is already in the client Args (like --ftp), and the
+            //transport tuning (pace floor) is applied by Program.cs, so no extra args here.
+            if (mode == Mode.HttpApi)
+            {
+                server.Restart();
+                side1.Restart();
+                side2.Restart();
+                cleanupFiles();
+
+                ConductTest(
+                        $"{name} (HTTP API mode)",
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        server,
+                        new Client(side2.OS, side2.Runner, $"{side2.Args}"),
+                        "HTTP API");
             }
         }
 
@@ -760,6 +828,8 @@ namespace ft_tests
         Sshfs,
         NineP,
         FTP,
+        WebDav,
+        S3,
 
         RDP,
 
@@ -774,6 +844,7 @@ namespace ft_tests
         Normal,
         IsolatedReads,
         UploadDownload,
-        FTP
+        FTP,
+        HttpApi
     }
 }
