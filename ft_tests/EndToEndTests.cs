@@ -34,6 +34,12 @@ namespace ft_tests
         static ProcessRunner linux_x64_2;
         static ProcessRunner linux_x64_3;
 
+        // Dropbox credentials (user-secrets). When absent, the Dropbox test skips (Assert.Inconclusive)
+        // rather than failing - it hits real Dropbox (no local emulator), so it is opt-in.
+        static string? dropboxAppKey;
+        static string? dropboxAppSecret;
+        static string? dropboxRefreshToken;
+
         static CsvWriter csvWriter;
 
         static int testNumber = 0;
@@ -47,6 +53,10 @@ namespace ft_tests
             var config = new ConfigurationBuilder()
                                 .AddUserSecrets<EndToEndTests>()
                                 .Build();
+
+            dropboxAppKey = config["dropbox_app_key"];
+            dropboxAppSecret = config["dropbox_app_secret"];
+            dropboxRefreshToken = config["dropbox_refresh_token"];
 
 
             var testResultsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_results");
@@ -484,8 +494,38 @@ namespace ft_tests
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.S3), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
+        // Dropbox (native --dropbox client) against a REAL Dropbox account. There is no local Dropbox
+        // emulator, so this test is opt-in: it self-skips (Assert.Inconclusive) unless dropbox_app_key /
+        // dropbox_app_secret / dropbox_refresh_token are set in user-secrets, so it never breaks a normal
+        // run. Linux-Linux only (no Windows-remote runner needed); both ends share one Dropbox app folder.
+        // A small payload is used because Dropbox's per-request latency makes the default 5 MB transfer far
+        // too slow for the 180s per-test budget (a 2 MB round-trip measured ~25s). ft auto-applies its
+        // Dropbox tuning. NOTE: the credentials appear on the ft command line here (fine for a throwaway,
+        // app-folder-scoped, revocable test token).
+        [TestMethod]
+        public void Dropbox()
+        {
+            if (string.IsNullOrEmpty(dropboxAppKey) || string.IsNullOrEmpty(dropboxAppSecret) || string.IsNullOrEmpty(dropboxRefreshToken))
+            {
+                Assert.Inconclusive("Dropbox credentials not configured (set dropbox_app_key / dropbox_app_secret / dropbox_refresh_token in user-secrets). Skipping the Dropbox end-to-end test.");
+                return;
+            }
 
-        public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2)
+            var dbArgs = $"--dropbox --app-key {dropboxAppKey} --app-secret {dropboxAppSecret} --refresh-token {dropboxRefreshToken}";
+
+            var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var side1 = new Client(OS.Linux, linux_x64_1, $"{dbArgs} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
+
+            var readPath2 = writePath1;
+            var writePath2 = readPath1;
+            var side2 = new Client(OS.Linux, linux_x64_3, $"{dbArgs} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
+
+            ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.Dropbox), side2, readPath1, writePath1, readPath2, writePath2, bytesToSend: 128 * 1024);
+        }
+
+
+        public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2, int bytesToSend = 5 * 1024 * 1024)
         {
             var cleanupFiles = new Action(() =>
             {
@@ -517,7 +557,7 @@ namespace ft_tests
                         new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                        "Normal");
+                        "Normal", bytesToSend);
             }
 
 
@@ -534,7 +574,7 @@ namespace ft_tests
                         new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
-                        "Isolated Reads");
+                        "Isolated Reads", bytesToSend);
             }
 
 
@@ -554,7 +594,7 @@ namespace ft_tests
                         new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, side2.Args),
-                        "Upload-Download");
+                        "Upload-Download", bytesToSend);
             }
 
             if (mode == Mode.FTP)
@@ -569,7 +609,7 @@ namespace ft_tests
                         new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                        "FTP");
+                        "FTP", bytesToSend);
             }
 
             //WebDAV / S3-native: the backend flag is already in the client Args (like --ftp), and the
@@ -586,11 +626,11 @@ namespace ft_tests
                         new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                        "HTTP API");
+                        "HTTP API", bytesToSend);
             }
         }
 
-        public static void ConductTest(string name, Client side1, Server server, Client side2, string mode)
+        public static void ConductTest(string name, Client side1, Server server, Client side2, string mode, int bytesToSend = 5 * 1024 * 1024)
         {
 
             var testNumberStr = $"Test {testNumber++}";
@@ -611,7 +651,7 @@ namespace ft_tests
             {
                 try
                 {
-                    TestTransfer(5 * 1024 * 1024, true, 2, side1.Runner.RunOnIP, stop.Token);
+                    TestTransfer(bytesToSend, true, 2, side1.Runner.RunOnIP, stop.Token);
                     results.Add((true, ""));
                 }
                 catch (Exception ex)
@@ -830,6 +870,7 @@ namespace ft_tests
         FTP,
         WebDav,
         S3,
+        Dropbox,
 
         RDP,
 
