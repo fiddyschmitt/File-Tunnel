@@ -31,6 +31,7 @@ namespace ft
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(FtpOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WebDavOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(S3Options))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(DropboxOptions))]
         public static void Main(string[] args)
         {
             if (args.Contains("--version"))
@@ -70,6 +71,13 @@ namespace ft
                 parser
                     .ParseArguments<S3Options>(args)
                     .WithParsed(RunS3Session)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else if (args.Contains("--dropbox"))
+            {
+                parser
+                    .ParseArguments<DropboxOptions>(args)
+                    .WithParsed(RunDropboxSession)
                     .WithNotParsed(err => Environment.Exit(1));
             }
             else
@@ -191,6 +199,86 @@ namespace ft
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
         }
 
+        private static void RunDropboxSession(DropboxOptions o)
+        {
+            var appKey = o.ResolveAppKey();
+            var appSecret = o.ResolveAppSecret();
+            var refreshToken = o.ResolveRefreshToken();
+
+            if (string.IsNullOrEmpty(appKey) || string.IsNullOrEmpty(appSecret) || string.IsNullOrEmpty(refreshToken))
+            {
+                Log("Dropbox requires an app key, app secret and refresh token. Provide them via --app-key / --app-secret / --refresh-token, or via the FT_DROPBOX_APP_KEY / FT_DROPBOX_APP_SECRET / FT_DROPBOX_REFRESH_TOKEN environment variables. See the wiki for how to obtain a refresh token.", ConsoleColor.Red);
+                Environment.Exit(1);
+                return;
+            }
+
+            //Tune before constructing the client - it reads the (raised) tunnel timeout as its HTTP timeout.
+            ApplyDropboxTuning();
+
+            //The Dropbox client authenticates on construction, so bad credentials surface here. Report
+            //them cleanly rather than as an unhandled exception.
+            Dropbox access;
+            try
+            {
+                access = new Dropbox(appKey, appSecret, refreshToken);
+            }
+            catch (Exception ex)
+            {
+                Log($"Could not authenticate with Dropbox: {ex.Message}", ConsoleColor.Red);
+                Environment.Exit(1);
+                return;
+            }
+
+            var sharedFileManager = new UploadDownload(
+                                             access,
+                                             o.ReadFrom.Trim(),
+                                             o.WriteTo.Trim(),
+                                             Options.TunnelTimeoutMilliseconds,
+                                             1,
+                                             0,        //remote HTTP transport: no batch cap (like FTP/S3) - whole-object PUT/GET has no torn-read risk
+                                             true,     //blocking reader: strict ping-pong over one shared HttpClient, so idle on the read slot rather than poll-storm
+                                             o.Verbose);
+
+            RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
+        }
+
+        //Empirically tuned against real Dropbox (joint pace x write-interval sweeps, 2026-07). The two
+        //interact, so they were optimised together rather than one-at-a-time:
+        //  - pace 30ms: how often the reader polls for the counterpart's upload. Lower finds new data
+        //    sooner (interactive round-trips ~3.7s at 30ms vs ~4.5s at 100ms); below ~30ms hits Dropbox's
+        //    per-request latency floor with no further gain, and Dropbox does not rate-limit even ~100/s.
+        //  - write-interval 1000ms: lets commands batch into fewer, larger uploads. At this fast pace the
+        //    reader keeps up, so a LOW write-interval wins on both latency and bandwidth (~97 KB/s for a
+        //    2MB round-trip); high values (4000+) make the writer wait to batch, which the slow-pace
+        //    default used to want but which now just adds latency and also lags rapid interactive input.
+        //  - tunnel-timeout 60000ms: Dropbox's per-op latency needs headroom or the tunnel tears down.
+        //Explicit --pace / --write-interval / --tunnel-timeout still win.
+        private static void ApplyDropboxTuning()
+        {
+            if (Options.PaceMilliseconds == 0)
+            {
+                Options.PaceMilliseconds = 30;
+                Log($"Applying Dropbox tuning: {Options.PaceMilliseconds}ms pace between requests. Override with --pace.", ConsoleColor.Yellow);
+            }
+
+            if (Options.WriteIntervalMilliseconds == 0)
+            {
+                Options.WriteIntervalMilliseconds = 1000;
+                Log($"Applying Dropbox tuning: {Options.WriteIntervalMilliseconds:N0}ms write interval (batches commands into fewer uploads). Override with --write-interval.", ConsoleColor.Yellow);
+            }
+
+            const int recommendedTunnelTimeoutMillis = 60000;
+            if (Options.TunnelTimeoutMilliseconds == Options.DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS)
+            {
+                Options.TunnelTimeoutMilliseconds = recommendedTunnelTimeoutMillis;
+                Log($"Applying Dropbox tuning: {Options.TunnelTimeoutMilliseconds:N0}ms tunnel timeout (Dropbox latency needs headroom). Override with --tunnel-timeout.", ConsoleColor.Yellow);
+            }
+            else if (Options.TunnelTimeoutMilliseconds < recommendedTunnelTimeoutMillis)
+            {
+                Log($"Warning: Dropbox has high latency. If the tunnel drops out, try --tunnel-timeout {recommendedTunnelTimeoutMillis} or higher.", ConsoleColor.Yellow);
+            }
+        }
+
         private static void RunReusableFileSession(ReusableFileOptions o)
         {
             if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !o.IsolatedReads)
@@ -212,49 +300,10 @@ namespace ft
                 }
             }
 
-            if (Options.Dropbox)
-            {
-                o.UploadDownload = true;
-
-                Options.PaceMilliseconds = Math.Max(100, Options.PaceMilliseconds);
-
-                var recommendedWriteIntervalMillis = 4000;
-                if (Options.WriteIntervalMilliseconds == 0)
-                {
-                    //If we write too often, Rclone waits a long time until until it start uploading.
-                    //Rclone only starts uploading 1 second after the file is no longer in use. This is controlled by the arg given to rclone (--vfs-write-back 1s).
-                    //Also, rclone takes about 3 seconds to upload the file so we have to include that also.
-                    Options.WriteIntervalMilliseconds = recommendedWriteIntervalMillis;
-                }
-                else
-                {
-                    if (Options.WriteIntervalMilliseconds < recommendedWriteIntervalMillis)
-                    {
-                        Log($"Warning: Dropbox only supports writing every 4 seconds or longer. Recommend using --write-interval {recommendedWriteIntervalMillis} or higher.", ConsoleColor.Yellow);
-                    }
-                }
-
-                var recommendedTunnelTimeoutMillis = 60000;
-                if (Options.TunnelTimeoutMilliseconds == Options.DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS)
-                {
-                    //Dropbox latency is anywhere between 12-30 seconds. Let's increase the tunnel timeout
-                    Options.TunnelTimeoutMilliseconds = recommendedTunnelTimeoutMillis;
-                }
-                else
-                {
-                    if (Options.TunnelTimeoutMilliseconds < recommendedTunnelTimeoutMillis)
-                    {
-                        Log($"Warning: Dropbox has high latency. Recommend using --tunnel-timeout {recommendedTunnelTimeoutMillis} or higher.", ConsoleColor.Yellow);
-                    }
-                }
-            }
-
             // Auto-select the read mode from the filesystem when the user hasn't requested one, and warn
             // (but honour their choice) if they requested a mode the fs doesn't suit. The per-filesystem
-            // knowledge lives in one place: Extensions.ModesForReadFile. Skipped for the rclone-FUSE
-            // Dropbox transport, which sets --upload-download above as part of its own setup. (S3 no
-            // longer comes through here at all: --s3 is now the native client, handled in Main.)
-            if (!Options.Dropbox)
+            // knowledge lives in one place: Extensions.ModesForReadFile. (The remote transports - FTP,
+            // WebDAV, S3, Dropbox - never reach here; they are dispatched to their own sessions in Main.)
             {
                 var fs = Extensions.ModesForReadFile(o.ReadFrom);
                 Extensions.TunnelMode? requested =
@@ -295,9 +344,8 @@ namespace ft
             if (o.UploadDownload)
             {
                 //The small-file cap and low pace are specific to a real 9p mount, so key them off the
-                //mount's fs type (statfs) rather than the --upload-download flag: S3/Dropbox rclone-FUSE
-                //mounts also use --upload-download, and these tweaks are wrong for them (Dropbox sets its
-                //own pace above and wants large files for its 4s write-back interval).
+                //mount's fs type (statfs) rather than the --upload-download flag - a user could pass
+                //--upload-download for some other file share where these 9p-specific tweaks are wrong.
                 if (Extensions.IsNinePMount(o.ReadFrom))
                 {
                     //9p needs small files: with large files the reader intermittently catches one mid-write
