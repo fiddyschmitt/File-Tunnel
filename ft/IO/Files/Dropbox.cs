@@ -67,11 +67,41 @@ namespace ft.IO.Files
             return "/" + key;
         }
 
+        //The request JSON is built by hand rather than with JsonSerializer, whose reflection-based
+        //serialization is not trim-safe (the release build is trimmed, which would strip the anonymous
+        //types' properties and emit "{}"). JsonDocument on the read side is a DOM parser and is fine.
+        static string J(string s)
+        {
+            var sb = new StringBuilder(s.Length + 2);
+            sb.Append('"');
+            foreach (var c in s)
+            {
+                switch (c)
+                {
+                    case '"': sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+                        else sb.Append(c);
+                        break;
+                }
+            }
+            sb.Append('"');
+            return sb.ToString();
+        }
+
+        static string PathJson(string path) => "{\"path\":" + J(BuildPath(path)) + "}";
+
         public bool Exists(string path)
         {
             using var response = Send(() => new HttpRequestMessage(HttpMethod.Post, $"{ApiHost}/2/files/get_metadata")
             {
-                Content = JsonBody(new { path = BuildPath(path) })
+                Content = JsonBody(PathJson(path))
             });
 
             if (response.StatusCode == HttpStatusCode.Conflict && IsNotFound(response))
@@ -87,7 +117,7 @@ namespace ft.IO.Files
         {
             using var response = Send(() => new HttpRequestMessage(HttpMethod.Post, $"{ApiHost}/2/files/delete_v2")
             {
-                Content = JsonBody(new { path = BuildPath(path) })
+                Content = JsonBody(PathJson(path))
             });
 
             //Deleting an absent file is a no-op, as for the other backends.
@@ -107,7 +137,7 @@ namespace ft.IO.Files
             using var response = Send(() =>
             {
                 var request = new HttpRequestMessage(HttpMethod.Post, $"{ContentHost}/2/files/download");
-                request.Headers.TryAddWithoutValidation("Dropbox-API-Arg", JsonSerializer.Serialize(new { path = BuildPath(path) }));
+                request.Headers.TryAddWithoutValidation("Dropbox-API-Arg", PathJson(path));
                 return request;
             });
 
@@ -123,14 +153,10 @@ namespace ft.IO.Files
         {
             using var response = Send(() =>
             {
-                var arg = JsonSerializer.Serialize(new
-                {
-                    path = BuildPath(path),
-                    mode = overwrite ? "overwrite" : "add",
-                    autorename = false,
-                    mute = true,             //suppress the desktop/notification churn from rapid overwrites
-                    strict_conflict = false
-                });
+                //mute suppresses the desktop/notification churn from rapid overwrites.
+                var arg = "{\"path\":" + J(BuildPath(path))
+                        + ",\"mode\":\"" + (overwrite ? "overwrite" : "add") + "\""
+                        + ",\"autorename\":false,\"mute\":true,\"strict_conflict\":false}";
 
                 var request = new HttpRequestMessage(HttpMethod.Post, $"{ContentHost}/2/files/upload")
                 {
@@ -160,12 +186,8 @@ namespace ft.IO.Files
 
             using var response = Send(() => new HttpRequestMessage(HttpMethod.Post, $"{ApiHost}/2/files/move_v2")
             {
-                Content = JsonBody(new
-                {
-                    from_path = BuildPath(sourceFileName),
-                    to_path = BuildPath(destFileName),
-                    autorename = false
-                })
+                Content = JsonBody("{\"from_path\":" + J(BuildPath(sourceFileName))
+                        + ",\"to_path\":" + J(BuildPath(destFileName)) + ",\"autorename\":false}")
             });
 
             if (!overwrite && response.StatusCode == HttpStatusCode.Conflict && !IsNotFound(response))
@@ -180,7 +202,7 @@ namespace ft.IO.Files
         {
             using var response = Send(() => new HttpRequestMessage(HttpMethod.Post, $"{ApiHost}/2/files/get_metadata")
             {
-                Content = JsonBody(new { path = BuildPath(path) })
+                Content = JsonBody(PathJson(path))
             });
 
             EnsureSuccess(response);
@@ -279,8 +301,8 @@ namespace ft.IO.Files
             }
         }
 
-        static StringContent JsonBody(object body) =>
-            new(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        static StringContent JsonBody(string json) =>
+            new(json, Encoding.UTF8, "application/json");
 
         //A 409 from Dropbox carries a JSON body with an "error_summary" like "path/not_found/..." (or
         //"path_lookup/not_found/..." for delete/move). ReadAsString buffers, so a later EnsureSuccess
