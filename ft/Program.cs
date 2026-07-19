@@ -23,7 +23,7 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "3.2.0";
+        const string VERSION = "3.3.0";
 
         public const int UNIVERSAL_TIMEOUT_MS = 4000;
 
