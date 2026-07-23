@@ -1,5 +1,9 @@
 using ft.Socks;
 using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 
@@ -15,6 +19,10 @@ namespace ft.Listeners
         TcpListener? listener;
         Thread? listenerTask;
         bool stopRequested = false;
+
+        //Live SOCKS5 UDP associations (each owns a relay socket + its udp:// sub-connections). Tracked so
+        //Stop() can reclaim them; the primary teardown is the control-connection close in HandleUdpAssociate.
+        readonly ConcurrentDictionary<SocksUdpAssociation, byte> associations = new();
 
         public SocksServer(string listenOnEndpointStr)
         {
@@ -69,6 +77,12 @@ namespace ft.Listeners
 
                 var request = SocksNegotiator.Read(stream);
 
+                if (request.Command == SocksCommand.UdpAssociate)
+                {
+                    HandleUdpAssociate(client, stream, request);
+                    return;
+                }
+
                 // The reply is written by this callback AFTER the far side reports its dial result (see
                 // LocalToRemoteTunnel), so it carries an accurate SOCKS code and is guaranteed to reach the
                 // client before any relayed bytes.
@@ -79,6 +93,57 @@ namespace ft.Listeners
             catch (Exception ex)
             {
                 Program.Log($"SOCKS handshake failed: {ex.Message}");
+                try { client.Close(); } catch { }
+            }
+        }
+
+        // SOCKS5 UDP ASSOCIATE: bind a relay UDP socket, tell the client where to send its datagrams, and
+        // keep this control connection open for the association's lifetime (RFC 1928). The association
+        // demuxes datagrams by destination and rides the normal udp:// tunnel path, one sub-connection each.
+        void HandleUdpAssociate(TcpClient client, Stream controlStream, SocksRequest request)
+        {
+            // Bind the relay to the concrete address the client reached us on (an accepted socket's
+            // LocalEndPoint is never the wildcard), so the BND.ADDR we advertise is actually reachable.
+            var controlLocalAddr = ((IPEndPoint)client.Client.LocalEndPoint!).Address;
+
+            UdpClient relay;
+            try
+            {
+                relay = new UdpClient(new IPEndPoint(controlLocalAddr, 0));
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"SOCKS UDP associate: could not bind relay socket: {ex.Message}");
+                try { SocksNegotiator.WriteSocks5UdpReply(controlStream, 0x01, new IPEndPoint(controlLocalAddr, 0)); } catch { }
+                try { client.Close(); } catch { }
+                return;
+            }
+
+            var relayPort = ((IPEndPoint)relay.Client.LocalEndPoint!).Port;
+            SocksNegotiator.WriteSocks5UdpReply(controlStream, 0x00, new IPEndPoint(controlLocalAddr, relayPort));
+
+            var association = new SocksUdpAssociation(
+                relay,
+                request.UdpClientDeclaredEndpoint,
+                (subStream, dest) => ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(subStream, dest)));   // no onConnectResult → udp subs relay immediately
+
+            associations.TryAdd(association, 0);
+            association.Start();
+
+            Program.Log($"Started SOCKS UDP relay on {controlLocalAddr}:{relayPort}");
+
+            try
+            {
+                // The association lives as long as the control TCP connection. Drain (ignore) anything the
+                // client sends and block until it closes the connection (EOF) or it errors.
+                var buffer = new byte[512];
+                while (controlStream.Read(buffer, 0, buffer.Length) > 0) { }
+            }
+            catch { }
+            finally
+            {
+                associations.TryRemove(association, out _);
+                association.Dispose();
                 try { client.Close(); } catch { }
             }
         }
@@ -94,6 +159,12 @@ namespace ft.Listeners
 
             try { listenerTask?.Join(); }
             catch (Exception ex) { Program.Log($"Stop(): {ex}"); }
+
+            foreach (var association in associations.Keys.ToArray())
+            {
+                try { association.Dispose(); } catch { }
+                associations.TryRemove(association, out _);
+            }
 
             stopRequested = false;
         }
