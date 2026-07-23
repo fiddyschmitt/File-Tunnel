@@ -1,5 +1,6 @@
 ﻿using ft.Bandwidth;
 using ft.Commands;
+using ft.Socks;
 using ft.Streams;
 using ft.Utilities;
 using System;
@@ -24,6 +25,11 @@ namespace ft.Listeners
         public string WriteToFilename { get; }
 
         protected readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
+
+        //Per-connection waiters for a ConnectResult from the dialing side. Only dynamic (SOCKS) connections
+        //register one (so the host can send an accurate SOCKS reply); every other connection's ConnectResult
+        //is discarded on arrival.
+        readonly ConcurrentDictionary<int, BlockingCollection<byte>> connectResultWaiters = [];
 
         //If left unlimited, this can fill up faster than we can send them through the file tunnel.
         //FPS 22/08/2025: When this is set to 20, RDP latency is worse than when it is set to 1.
@@ -61,6 +67,46 @@ namespace ft.Listeners
                     ReceiveQueue.TryAdd(connectionId, []);
                 }
             }
+        }
+
+        //--- SOCKS connect-result signalling --------------------------------------------------------------
+        //A dynamic (SOCKS) host registers a waiter BEFORE sending its Connect, then blocks in
+        //AwaitConnectResult until the dialing side reports the outcome via a ConnectResult command.
+
+        public void RegisterConnectResultWaiter(int connectionId)
+        {
+            connectResultWaiters[connectionId] = new BlockingCollection<byte>(1);
+        }
+
+        public void SendConnectResult(int connectionId, byte status)
+        {
+            EnqueueToSend(new ConnectResult(connectionId, status));
+        }
+
+        //Blocks until the dialing side reports the connect result, or the timeout elapses (→ treated as a
+        //failure, so a stuck or SOCKS-unaware counterpart yields a failure reply rather than a hang).
+        public byte AwaitConnectResult(int connectionId, int timeoutMilliseconds)
+        {
+            var status = (byte)ConnectStatus.GeneralFailure;
+
+            if (connectResultWaiters.TryGetValue(connectionId, out var waiter))
+            {
+                try
+                {
+                    if (!waiter.TryTake(out status, timeoutMilliseconds))
+                    {
+                        status = (byte)ConnectStatus.GeneralFailure;
+                    }
+                }
+                catch
+                {
+                    status = (byte)ConnectStatus.GeneralFailure;
+                }
+
+                connectResultWaiters.TryRemove(connectionId, out _);
+            }
+
+            return status;
         }
 
         public override void Start()
@@ -287,6 +333,14 @@ namespace ft.Listeners
                 var createLocalListenerEventArgs = new CreateLocalListenerEventArgs(createListener.Protocol, createListener.ForwardString);
                 CreateLocalListenerRequested?.Invoke(this, createLocalListenerEventArgs);
             }
+            else if (command is ConnectResult connectResult)
+            {
+                //Deliver the dial outcome to a waiting SOCKS host; discard if nobody is waiting (non-SOCKS).
+                if (connectResultWaiters.TryGetValue(connectResult.ConnectionId, out var waiter))
+                {
+                    try { waiter.TryAdd(connectResult.Status); } catch { }
+                }
+            }
             else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out var connectionReceiveQueue))
             {
                 Program.Log($"Counterpart asked to tear down connection {teardown.ConnectionId}");
@@ -299,6 +353,7 @@ namespace ft.Listeners
                 //connection id from inheriting stale sequencing)
                 reorderStates.TryRemove(teardown.ConnectionId, out _);
                 sendSequenceNumbers.TryRemove(teardown.ConnectionId, out _);
+                connectResultWaiters.TryRemove(teardown.ConnectionId, out _);
             }
             else if (command is Ping ping)
             {
@@ -346,6 +401,8 @@ namespace ft.Listeners
                 receiveQueue.CompleteAdding();
                 ReceiveQueue.TryRemove(connectionId, out _);
             }
+
+            connectResultWaiters.TryRemove(connectionId, out _);
         }
 
         public void TearDownAllConnections()

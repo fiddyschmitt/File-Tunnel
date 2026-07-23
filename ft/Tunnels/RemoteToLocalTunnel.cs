@@ -1,5 +1,6 @@
 ﻿using ft.Commands;
 using ft.Listeners;
+using ft.Socks;
 using ft.Streams;
 using ft.Utilities;
 using System;
@@ -64,6 +65,7 @@ namespace ft.Tunnels
                         var connectStopwatch = Stopwatch.StartNew();
 
                         var tcpClient = new TcpClient();
+                        SocketException? lastError = null;
 
                         //We try to connect in a loop, because sometimes the counterpart considers the tunnel to be online before this side does (leading it to try to setup the connection before this side is quite ready).
                         while (true)
@@ -73,13 +75,15 @@ namespace ft.Tunnels
                                 tcpClient.Connect(destinationEndpoint);
                                 break;
                             }
+                            catch (SocketException se)
+                            {
+                                lastError = se;
+                                if (connectStopwatch.ElapsedMilliseconds > tunnelTimeoutMilliseconds) break;
+                                Delay.Wait(1000);
+                            }
                             catch
                             {
-                                if (connectStopwatch.ElapsedMilliseconds > tunnelTimeoutMilliseconds)
-                                {
-                                    throw new Exception($"Timed out while connecting to {destinationEndpointStr}");
-                                }
-
+                                if (connectStopwatch.ElapsedMilliseconds > tunnelTimeoutMilliseconds) break;
                                 Delay.Wait(1000);
                             }
                         }
@@ -87,6 +91,10 @@ namespace ft.Tunnels
                         if (tcpClient.Connected)
                         {
                             Program.Log($"Connected to {destinationEndpointStr}");
+
+                            //Report success so a SOCKS host can send an accurate reply. Sent before any
+                            //relayed bytes; harmlessly discarded by non-SOCKS connections (no waiter).
+                            SendConnectResultIfPossible(connectionDetails.Stream, ConnectStatus.Success);
 
                             var relay1 = new Relay(tcpClient.GetStream(), connectionDetails.Stream, maxFileSizeBytes, readDurationMillis);
                             var relay2 = new Relay(connectionDetails.Stream, tcpClient.GetStream(), maxFileSizeBytes, readDurationMillis);
@@ -102,7 +110,15 @@ namespace ft.Tunnels
                         }
                         else
                         {
-                            Program.Log($"Could not connect to: {destinationEndpointStr}");
+                            Program.Log($"Could not connect to {destinationEndpointStr}: {lastError?.SocketErrorCode.ToString() ?? "timed out"}");
+
+                            //Report the accurate failure reason to a waiting SOCKS host, then tear down.
+                            SendConnectResultIfPossible(connectionDetails.Stream, MapSocketError(lastError));
+
+                            if (connectionDetails.Stream is SharedFileStream sfs)
+                            {
+                                sfs.Close();
+                            }
                         }
                     }
                     else if (protocol.Equals("udp"))
@@ -136,6 +152,9 @@ namespace ft.Tunnels
                 {
                     Program.Log($"Error establishing connection to '{connectionDetails.DestinationEndpointString}': {ex.Message}");
 
+                    //Make sure a waiting SOCKS host doesn't hang for the full timeout on an unexpected error.
+                    SendConnectResultIfPossible(connectionDetails.Stream, ConnectStatus.GeneralFailure);
+
                     if (connectionDetails.Stream is SharedFileStream sharedFileStream)
                     {
                         Program.Log($"Instructing counterpart to tear down connection {sharedFileStream.ConnectionId}");
@@ -159,7 +178,9 @@ namespace ft.Tunnels
             //Tell the remote side to start the Remote Forwards
 
             RemoteTcpForwards
-                 .Select(remoteForwardStr => new CreateListener("tcp", remoteForwardStr))
+                 .Select(remoteForwardStr => NetworkUtilities.IsDynamicForwardSpec(remoteForwardStr)
+                                                ? new CreateListener("socks", remoteForwardStr)   //bare [bind:]port → remote SOCKS proxy
+                                                : new CreateListener("tcp", remoteForwardStr))
                  .ToList()
                  .ForEach(remoteForwardCommand => SharedFileManager.EnqueueToSend(remoteForwardCommand));
 
@@ -168,5 +189,25 @@ namespace ft.Tunnels
                  .ToList()
                  .ForEach(remoteForwardCommand => SharedFileManager.EnqueueToSend(remoteForwardCommand));
         }
+
+        //Reports a dial outcome back to a SOCKS host (a no-op for non-SharedFileStream / non-SOCKS peers).
+        void SendConnectResultIfPossible(System.IO.Stream stream, ConnectStatus status)
+        {
+            if (stream is SharedFileStream sfs)
+            {
+                SharedFileManager.SendConnectResult(sfs.ConnectionId, (byte)status);
+            }
+        }
+
+        static ConnectStatus MapSocketError(SocketException? socketException) => socketException?.SocketErrorCode switch
+        {
+            null => ConnectStatus.TtlExpired,   //no socket error captured → we timed out retrying
+            SocketError.ConnectionRefused => ConnectStatus.ConnectionRefused,
+            SocketError.HostUnreachable => ConnectStatus.HostUnreachable,
+            SocketError.NetworkUnreachable => ConnectStatus.HostUnreachable,
+            SocketError.HostNotFound => ConnectStatus.HostUnreachable,
+            SocketError.TimedOut => ConnectStatus.TtlExpired,
+            _ => ConnectStatus.GeneralFailure
+        };
     }
 }

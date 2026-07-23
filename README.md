@@ -67,6 +67,8 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 * To enable other computers to use the tunnel, specify a binding address of `0.0.0.0`. For example: `-L 0.0.0.0:5000:192.168.1.50:3389` allows any computer on the network to connect to the tunnel and onto 192.168.1.50:3389
 	
 * Use `-R` for remote forwarding. For example: `-R 5000:10.0.0.50:6000` instructs the _remote_ side to listen on port 5000, and when a connection is received forward it through the tunnel and onto 10.0.0.50:6000 via the local machine. This allows you to share a server running on your local machine, with other computers.
+
+* Use `-D` for dynamic (SOCKS) forwarding, just like SSH. For example: `-D 1080` starts a SOCKS4/4a/5 proxy on port 1080; each connection is dialed from the _remote_ side, so applications can reach whatever the remote machine can. A bare `-R 1080` (no destination) is the reverse: it hosts the SOCKS proxy on the _remote_ side, dialing out via your local machine. CONNECT only, no authentication.
 	
 * You can use another computer's internet connection by following [these](https://github.com/fiddyschmitt/File-Tunnel/wiki/Use-a-remote-internet-connection) instructions.
 

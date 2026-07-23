@@ -38,5 +38,38 @@ namespace ft_tests
             Assert.AreEqual(expectedListen, l);
             Assert.AreEqual(expectedDest, d);
         }
+
+        // Listen-only parsing for dynamic (SOCKS) forwards. Unlike ParseForwardString this throws on bad
+        // input rather than Environment.Exit, so both the valid and invalid paths are testable here.
+        [DataTestMethod]
+        [DataRow("1080",           "127.0.0.1:1080")]
+        [DataRow("0.0.0.0:1080",   "0.0.0.0:1080")]
+        [DataRow("127.0.0.1:1080", "127.0.0.1:1080")]
+        [DataRow("::1/1080",       "[::1]:1080")]
+        public void ParseListenOnlyString(string input, string expected)
+        {
+            Assert.AreEqual(expected, NetworkUtilities.ParseListenOnlyString(input));
+        }
+
+        [DataTestMethod]
+        [DataRow("1080:host:22")]
+        [DataRow("0.0.0.0:1080:host:22")]
+        public void ParseListenOnlyString_Malformed_Throws(string input)
+        {
+            Assert.ThrowsExactly<System.Exception>(() => NetworkUtilities.ParseListenOnlyString(input));
+        }
+
+        // A bare [bind:]port is a dynamic (SOCKS) forward; a full [bind:]port:host:hostport is not.
+        [DataTestMethod]
+        [DataRow("1080",                 true)]
+        [DataRow("0.0.0.0:1080",         true)]
+        [DataRow("::1/1080",             true)]
+        [DataRow("1080:host:22",         false)]
+        [DataRow("0.0.0.0:1080:host:22", false)]
+        [DataRow("::1/1080/host/22",     false)]
+        public void IsDynamicForwardSpec_Classifies(string spec, bool expected)
+        {
+            Assert.AreEqual(expected, NetworkUtilities.IsDynamicForwardSpec(spec));
+        }
     }
 }

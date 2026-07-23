@@ -79,5 +79,34 @@ namespace ft.Utilities
 
             return (listenEndpoint, destinationEndpoint);
         }
+
+        // True when a forward spec is listen-only ("[bind:]port", <=2 tokens) rather than a full
+        // "[bind:]port:host:hostport" (3-4 tokens) - i.e. a dynamic (SOCKS) forward. IPv6 uses '/'
+        // separators, IPv4 uses ':', matching ParseForwardString.
+        public static bool IsDynamicForwardSpec(string spec)
+        {
+            var tokens = spec.Contains('/') ? spec.Split('/') : spec.Split(':');
+            return tokens.Length <= 2;
+        }
+
+        // Parses a listen-only spec "[bind_address:]port" to "ip:port" (IPv6 bracketed). Unlike
+        // ParseForwardString this throws on bad input rather than Environment.Exit, so it stays testable.
+        public static string ParseListenOnlyString(string listenSpec)
+        {
+            if (listenSpec.Contains('/'))
+            {
+                var tokens = listenSpec.Split('/');
+                if (tokens.Length == 1) return $"[::1]:{tokens[0]}";
+                if (tokens.Length == 2) return $"{tokens[0].WrapIfIPV6()}:{tokens[1]}";
+            }
+            else
+            {
+                var tokens = listenSpec.Split(':');
+                if (tokens.Length == 1) return $"127.0.0.1:{tokens[0]}";
+                if (tokens.Length == 2) return $"{tokens[0]}:{tokens[1]}";
+            }
+
+            throw new Exception($"Invalid dynamic-forward listen spec '{listenSpec}'. Expected [bind_address:]port.");
+        }
     }
 }

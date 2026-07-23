@@ -392,6 +392,7 @@ namespace ft
             var localListeners = new MultiServer();
             localListeners.Add("tcp", o.LocalTcpForwards, false);
             localListeners.Add("udp", o.LocalUdpForwards, false);
+            localListeners.Add("socks", o.LocalDynamicForwards, false);
 
             var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, maxFileSizeBytes, o.ReadDurationMillis);
             _ = new RemoteToLocalTunnel(

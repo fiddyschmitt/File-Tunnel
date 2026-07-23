@@ -53,6 +53,7 @@ namespace ft.Commands
             Command? result = commandId switch
             {
                 Connect.COMMAND_ID => new Connect(),
+                ConnectResult.COMMAND_ID => new ConnectResult(),
                 CreateListener.COMMAND_ID => new CreateListener(),
                 Forward.COMMAND_ID => new Forward(),
                 Purge.COMMAND_ID => new Purge(),

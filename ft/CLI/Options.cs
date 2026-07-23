@@ -16,9 +16,12 @@ namespace ft.CLI
         [Option('U', Required = false, HelpText = @"UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the local host is to be forwarded to the given host and port on the remote side. Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> LocalUdpForwards { get; set; } = [];
 
+        [Option('D', "dynamic-fwd", Required = false, HelpText = @"Dynamic (SOCKS) forwarding. Syntax: [bind_address:]port. Opens a local SOCKS4/4a/5 proxy on the given port; the remote side connects out to whatever each client requests (CONNECT only, no authentication). Use forward slashes as separators when using IPV6.")]
+        public IEnumerable<string> LocalDynamicForwards { get; set; } = [];
 
 
-        [Option('R', Required = false, HelpText = @"Remote TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. Use forward slashes as separators when using IPV6.")]
+
+        [Option('R', Required = false, HelpText = @"Remote TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. A bare [bind_address:]port (no destination) instead opens a SOCKS4/4a/5 proxy on the remote side (dynamic forwarding). Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> RemoteTcpForwards { get; set; } = [];
 
         [Option("remote-udp-fwd", Required = false, HelpText = @"Remote UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. Use forward slashes as separators when using IPV6.")]

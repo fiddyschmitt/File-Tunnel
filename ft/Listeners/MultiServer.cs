@@ -20,6 +20,12 @@ namespace ft.Listeners
 
         public void Add(string protocol, string forwardStr, bool originatedFromRemote)
         {
+            if (protocol == "socks")
+            {
+                AddSocks(forwardStr, originatedFromRemote);
+                return;
+            }
+
             (var listenEndpoint, var destinationEndpoint) = NetworkUtilities.ParseForwardString(forwardStr);
 
             var fullLocalEndpoint = $"{protocol}://{listenEndpoint}";
@@ -57,6 +63,37 @@ namespace ft.Listeners
             if (started)
             {
                 listener.Start();
+            }
+        }
+
+        // Dynamic (SOCKS) listener: no fixed destination, so it can't go through ParseForwardString.
+        // The remote endpoint is a constant sentinel so the (local,remote) dedupe stays idempotent across
+        // the repeated CreateListener re-ships on reconnect / session change.
+        void AddSocks(string listenSpec, bool originatedFromRemote)
+        {
+            var listenEndpoint = NetworkUtilities.ParseListenOnlyString(listenSpec);
+
+            var fullLocalEndpoint = $"socks://{listenEndpoint}";
+            var fullRemoteEndpoint = "socks://dynamic";
+
+            var alreadyExists = servers
+                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
+            if (alreadyExists) return;
+
+            var socksListener = new SocksServer(listenEndpoint);
+
+            Program.Log($"Initialised SOCKS proxy on {listenEndpoint}");
+
+            socksListener.ConnectionAccepted += (sender, args) =>
+            {
+                ConnectionAccepted?.Invoke(this, args);
+            };
+
+            servers.Add((socksListener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
+
+            if (started)
+            {
+                socksListener.Start();
             }
         }
 
