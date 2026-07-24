@@ -101,5 +101,26 @@ namespace ft_tests.Runner
             var process = Process.Start(psi);
             process?.WaitForExit();
         }
+
+        public override (int ExitCode, string Output) RunCommand(string command)
+        {
+            Debug.WriteLine(command);
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c " + command,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi)!;
+            // Drain both streams asynchronously so a full pipe buffer can't deadlock WaitForExit.
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            process.WaitForExit();
+            return (process.ExitCode, stdout.Result + stderr.Result);
+        }
     }
 }

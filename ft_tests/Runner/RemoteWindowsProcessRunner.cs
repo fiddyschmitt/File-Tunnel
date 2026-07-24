@@ -80,5 +80,17 @@ namespace ft_tests.Runner
 
             Thread.Sleep(5000);
         }
+
+        // A console command (e.g. curl) runs fine over the existing SSH channel and its output is captured -
+        // unlike ft's launch, which needs the interactive-session runremote path. Loopback (127.0.0.1) is
+        // not session-isolated, so curl here can reach ft's SOCKS port regardless of which session ft runs in.
+        public override (int ExitCode, string Output) RunCommand(string command)
+        {
+            if (sshClient == null) throw new InvalidOperationException("RunCommand requires the SSH client (constructed with a non-null executable path).");
+            Debug.WriteLine(command);
+            using var sshCommand = sshClient.CreateCommand(command);
+            var stdout = sshCommand.Execute();
+            return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
+        }
     }
 }

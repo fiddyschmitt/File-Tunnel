@@ -72,5 +72,13 @@ namespace ft_tests.Runner
             Debug.WriteLine($"{command}");
             sshClient.CreateCommand(command).Execute();
         }
+
+        public override (int ExitCode, string Output) RunCommand(string command)
+        {
+            Debug.WriteLine(command);
+            using var sshCommand = sshClient.CreateCommand(command);
+            var stdout = sshCommand.Execute();
+            return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
+        }
     }
 }

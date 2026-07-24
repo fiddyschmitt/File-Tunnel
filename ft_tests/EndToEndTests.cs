@@ -12,6 +12,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 
 namespace ft_tests
 {
@@ -23,6 +24,20 @@ namespace ft_tests
     {
         const string WIN_X64_EXE = @"R:\Temp\ft release\win-x64\ft.exe";
         const string LINUX_X64_EXE = @"R:\Temp\ft release\linux-x64\ft";
+
+        // SOCKS end-to-end test: the dev box (this test process) is 192.168.0.31 and hosts the controlled
+        // destinations the SOCKS exit dials; side1 hosts the SOCKS proxy on :5005.
+        const string DEV_BOX_IP = "192.168.0.31";
+        const int SOCKS_PROXY_PORT = 5005;
+        const int SOCKS_HTTP_PORT = 5007;
+        const int SOCKS_UDP_PORT = 5008;
+
+        // Cross-machine SOCKS stress: side1 runs -D STRESS_A_LOCAL + -R STRESS_A_REMOTE; side2 runs
+        // -D STRESS_B_LOCAL + -R STRESS_B_REMOTE → four proxies (two hosted per side). curl on each host node
+        // downloads STRESS_PAYLOAD_BYTES from the dev-box server (STRESS_HTTP_PORT) through its local proxies.
+        const int STRESS_A_LOCAL = 5301, STRESS_A_REMOTE = 5302, STRESS_B_LOCAL = 5303, STRESS_B_REMOTE = 5304, STRESS_HTTP_PORT = 5305;
+        const int STRESS_PAYLOAD_BYTES = 32 * 1024 * 1024;
+
         static string localWindowsOutputFilename = "";
 
         static ProcessRunner win10_x64_1;
@@ -525,6 +540,310 @@ namespace ft_tests
         }
 
 
+        // Cross-OS SOCKS dynamic-forwarding over SMB (the most reliable backend). side1 hosts the SOCKS
+        // proxy (-D 0.0.0.0:5005); side2 is the exit. A REAL curl on side1's node drives the TCP leg (to the
+        // internet AND to a controlled dev-box responder); the harness drives the UDP leg, since no common
+        // CLI implements SOCKS5 UDP. (Windows,Linux) = Windows proxy -> Linux exit; (Linux,Windows) = the
+        // reverse; plus same-OS baselines.
+        //
+        // Lab assumptions (check these first if it fails): curl is on PATH on every node (built into Win10+
+        // and the Debian nodes); the nodes have internet + working DNS (example.com / 8.8.8.8); side2 can
+        // reach the dev box (192.168.0.31) inbound on 5007/5008; and the R:\Temp release binaries include
+        // the SOCKS commits.
+        [DataTestMethod]
+        [DataRow(OS.Windows, OS.Linux)]
+        [DataRow(OS.Linux, OS.Windows)]
+        [DataRow(OS.Windows, OS.Windows)]
+        [DataRow(OS.Linux, OS.Linux)]
+        public void Socks(OS client1OS, OS client2OS)
+        {
+            var server = new SmbServer(OS.Linux, linux_x64_2);   // SMB transport, server on .81
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            var writePath1 = SmbPathLookup(client1OS, OS.Linux, filename1);
+            var readPath1 = SmbPathLookup(client1OS, OS.Linux, filename2);
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1}");
+
+            var readPath2 = SmbPathLookup(client2OS, OS.Linux, filename1);
+            var writePath2 = SmbPathLookup(client2OS, OS.Linux, filename2);
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2}");
+
+            server.Restart();
+            side1.Restart();
+            side2.Restart();
+
+            // best-effort cleanup of stale tunnel files
+            foreach (var (runner, path) in new[] { (side1.Runner, readPath1), (side1.Runner, writePath1), (side2.Runner, readPath2), (side2.Runner, writePath2) })
+            {
+                try { runner.DeleteFile(path); } catch { }
+            }
+
+            ConductTest(
+                $"SOCKS {side1.OS}-{server.OS}-{side2.OS}",
+                new Client(side1.OS, side1.Runner, $"{side1.Args} -D 0.0.0.0:{SOCKS_PROXY_PORT}"),
+                server,
+                new Client(side2.OS, side2.Runner, side2.Args),
+                "SOCKS",
+                transferOverride: ct => RunSocksChecks(side1, side2, ct));
+        }
+
+        static void RunSocksChecks(Client side1, Client side2, CancellationToken ct)
+        {
+            // side1 hosts -D 0.0.0.0:5005. curl runs ON side1's node against localhost:5005; the harness UDP
+            // client (this process) reaches the same proxy at side1's IP:5005 (hence the 0.0.0.0 bind).
+            var side1IP = side1.Runner.RunOnIP;
+            var udpProxy = new IPEndPoint(IPAddress.Parse(side1IP), SOCKS_PROXY_PORT);
+
+            // 1) TCP via real curl -> the internet (also exercises far-side DNS resolution on the exit).
+            //    Longer deadline: this is where we wait for the tunnel + SOCKS listener to come online.
+            Retry("curl -> internet (example.com)", 90, ct, () =>
+            {
+                var (code, output) = side1.Runner.RunCommand($"curl -s --max-time 30 --socks5-hostname 127.0.0.1:{SOCKS_PROXY_PORT} http://example.com/");
+                return code == 0 && output.Contains("Example Domain");
+            });
+
+            // 2) TCP via real curl -> a controlled dev-box responder (deterministic; a unique marker proves
+            //    the exact content traversed the cross-OS tunnel).
+            var marker = $"SOCKS-E2E-{Guid.NewGuid():N}";
+            using (StartHttpResponder(SOCKS_HTTP_PORT, marker, ct))
+            {
+                Retry("curl -> controlled dev-box responder", 25, ct, () =>
+                {
+                    var (code, output) = side1.Runner.RunCommand($"curl -s --max-time 20 --socks5 127.0.0.1:{SOCKS_PROXY_PORT} http://{DEV_BOX_IP}:{SOCKS_HTTP_PORT}/");
+                    return code == 0 && output.Contains(marker);
+                });
+            }
+
+            // 3) UDP via the harness -> the internet (DNS query to 8.8.8.8).
+            Retry("socks-udp -> internet DNS (8.8.8.8)", 25, ct, () =>
+            {
+                SocksTestClient.AssertUdpDnsResolves(udpProxy, "8.8.8.8", "example.com");
+                return true;
+            });
+
+            // 4) UDP via the harness -> a controlled dev-box echo (byte integrity).
+            using (StartUdpEcho(SOCKS_UDP_PORT, ct))
+            {
+                var payload = new byte[512];
+                Random.Shared.NextBytes(payload);
+                Retry("socks-udp -> controlled dev-box echo", 25, ct, () =>
+                {
+                    SocksTestClient.AssertUdpEcho(udpProxy, DEV_BOX_IP, SOCKS_UDP_PORT, payload);
+                    return true;
+                });
+            }
+        }
+
+        static void Retry(string what, int deadlineSeconds, CancellationToken ct, Func<bool> check)
+        {
+            var start = DateTime.Now;
+            Exception? last = null;
+            while ((DateTime.Now - start).TotalSeconds < deadlineSeconds && !ct.IsCancellationRequested)
+            {
+                try { if (check()) return; }
+                catch (Exception ex) { last = ex; }
+                Thread.Sleep(2000);
+            }
+            throw new Exception($"SOCKS check failed: {what}{(last != null ? $" ({last.Message})" : "")}", last);
+        }
+
+        // A raw TCP listener on the dev box that answers any HTTP request with a fixed body carrying `marker`.
+        // The SOCKS exit (side2) dials this; curl (through the proxy) then sees the marker. Deliberately raw
+        // (not HttpListener) to avoid Windows URL-ACL/admin requirements.
+        static IDisposable StartHttpResponder(int port, string marker, CancellationToken ct)
+        {
+            var listener = new TcpListener(IPAddress.Any, port);
+            listener.Start();
+
+            var body = $"marker={marker}\n";
+            var response = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n{body}");
+
+            new Thread(() =>
+            {
+                try
+                {
+                    while (!ct.IsCancellationRequested)
+                    {
+                        using var client = listener.AcceptTcpClient();
+                        var stream = client.GetStream();
+                        try { stream.ReadTimeout = 5000; stream.Read(new byte[4096], 0, 4096); } catch { }   // consume (ignore) the request
+                        stream.Write(response, 0, response.Length);
+                        stream.Flush();
+                    }
+                }
+                catch { }
+            })
+            { IsBackground = true }.Start();
+
+            return new Stopper(() => { try { listener.Stop(); } catch { } });
+        }
+
+        // A UDP echo server on the dev box (the controlled UDP destination the SOCKS exit dials).
+        static IDisposable StartUdpEcho(int port, CancellationToken ct)
+        {
+            var socket = new UdpClient(new IPEndPoint(IPAddress.Any, port));
+
+            new Thread(() =>
+            {
+                try
+                {
+                    while (!ct.IsCancellationRequested)
+                    {
+                        var from = new IPEndPoint(IPAddress.Any, 0);
+                        var data = socket.Receive(ref from);
+                        socket.Send(data, data.Length, from);
+                    }
+                }
+                catch { }
+            })
+            { IsBackground = true }.Start();
+
+            return new Stopper(() => { try { socket.Close(); } catch { } });
+        }
+
+        sealed class Stopper(Action onDispose) : IDisposable
+        {
+            public void Dispose() => onDispose();
+        }
+
+        // Cross-machine SOCKS STRESS: the same four-proxy topology as the hermetic SocksStress unit test, but
+        // the two ft instances run on DIFFERENT lab machines over the real SMB tunnel. Both sides run -D + -R
+        // (four proxies, two hosted per side).
+        //
+        // Each proxy is driven by curl running ON ITS HOST NODE, connecting over loopback (127.0.0.1) - the
+        // way a SOCKS proxy is actually used. So nothing connects INBOUND across the network to a proxy port
+        // (only the exit dials OUT to the dev-box server), which sidesteps the Windows-node inbound firewall
+        // entirely and lets a Windows node host proxies too. curl downloads a large payload through every
+        // local proxy at once; --fail makes a short/failed transfer a non-zero exit, so exit 0 == it all
+        // arrived. (Windows,Linux) and (Linux,Windows) put the proxy hosts on different OSes both ways.
+        [DataTestMethod]
+        [Timeout(700000)]
+        [DataRow(OS.Windows, OS.Linux)]
+        [DataRow(OS.Linux, OS.Windows)]
+        public void SocksStress(OS client1OS, OS client2OS)
+        {
+            var server = new SmbServer(OS.Linux, linux_x64_2);
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            var writePath1 = SmbPathLookup(client1OS, OS.Linux, filename1);
+            var readPath1 = SmbPathLookup(client1OS, OS.Linux, filename2);
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1}");
+
+            var readPath2 = SmbPathLookup(client2OS, OS.Linux, filename1);
+            var writePath2 = SmbPathLookup(client2OS, OS.Linux, filename2);
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2}");
+
+            server.Restart();
+            side1.Restart();
+            side2.Restart();
+
+            foreach (var (runner, path) in new[] { (side1.Runner, readPath1), (side1.Runner, writePath1), (side2.Runner, readPath2), (side2.Runner, writePath2) })
+            {
+                try { runner.DeleteFile(path); } catch { }
+            }
+
+            ConductTest(
+                $"SOCKS-STRESS {side1.OS}-{server.OS}-{side2.OS}",
+                new Client(side1.OS, side1.Runner, $"{side1.Args} -D 0.0.0.0:{STRESS_A_LOCAL} -R 0.0.0.0:{STRESS_A_REMOTE}"),
+                server,
+                new Client(side2.OS, side2.Runner, $"{side2.Args} -D 0.0.0.0:{STRESS_B_LOCAL} -R 0.0.0.0:{STRESS_B_REMOTE}"),
+                "SOCKS-STRESS",
+                transferOverride: ct => RunSocksStress(side1, side2, ct),
+                timeoutSeconds: 600);
+        }
+
+        static void RunSocksStress(Client side1, Client side2, CancellationToken ct)
+        {
+            // Each proxy is exercised by curl running ON ITS HOST NODE against 127.0.0.1 (loopback) - so no
+            // inbound cross-network connection to a proxy port is ever made. The only cross-network traffic is
+            // the exit dialing OUT to the dev-box HTTP server, which every node can do.
+            var proxies = new (ProcessRunner Runner, OS OS, int Port)[]
+            {
+                (side1.Runner, side1.OS, STRESS_A_LOCAL),    // side1's -D  (hosted on side1)
+                (side1.Runner, side1.OS, STRESS_B_REMOTE),   // side2's -R  (hosted on side1)
+                (side2.Runner, side2.OS, STRESS_A_REMOTE),   // side1's -R  (hosted on side2)
+                (side2.Runner, side2.OS, STRESS_B_LOCAL),    // side2's -D  (hosted on side2)
+            };
+
+            using var httpServer = StartLargePayloadHttpServer(STRESS_HTTP_PORT, STRESS_PAYLOAD_BYTES, ct);
+
+            // Fire all four downloads at once, so a large transfer is in flight through every proxy over the
+            // one tunnel simultaneously. Each retries until the proxy/tunnel is online (curl fails fast on a
+            // refused local port), then a single full download proves the payload got through end to end.
+            var checks = proxies.Select(proxy => Task.Run(() =>
+            {
+                var nullDevice = proxy.OS == OS.Windows ? "NUL" : "/dev/null";
+                var curl = $"curl -s --fail --max-time 200 -o {nullDevice} --socks5 127.0.0.1:{proxy.Port} http://{DEV_BOX_IP}:{STRESS_HTTP_PORT}/";
+
+                var start = DateTime.Now;
+                (int Code, string Output) last = (-1, "");
+                while ((DateTime.Now - start).TotalSeconds < 240 && !ct.IsCancellationRequested)
+                {
+                    last = proxy.Runner.RunCommand(curl);
+                    if (last.Code == 0) return;
+                    Thread.Sleep(3000);
+                }
+                throw new Exception($"SOCKS download via local proxy 127.0.0.1:{proxy.Port} on {proxy.OS} did not succeed: exit={last.Code} {Truncate(last.Output)}");
+            })).ToArray();
+
+            try { Task.WaitAll(checks); }
+            catch (AggregateException agg) { throw agg.Flatten().InnerExceptions.FirstOrDefault() ?? agg; }
+        }
+
+        // Serves one large fixed payload (with Content-Length) to every connection, each on its own thread so
+        // the four concurrent downloads aren't serialized. The SOCKS exits dial this. curl --fail turns any
+        // short read into a non-zero exit, so a completed download proves the whole payload traversed the tunnel.
+        static IDisposable StartLargePayloadHttpServer(int port, int payloadBytes, CancellationToken ct)
+        {
+            var listener = new TcpListener(IPAddress.Any, port);
+            listener.Start();
+
+            var payload = new byte[payloadBytes];
+            Random.Shared.NextBytes(payload);
+            var header = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {payloadBytes}\r\nConnection: close\r\n\r\n");
+
+            new Thread(() =>
+            {
+                try
+                {
+                    while (!ct.IsCancellationRequested)
+                    {
+                        var client = listener.AcceptTcpClient();
+                        new Thread(() =>
+                        {
+                            try
+                            {
+                                using (client)
+                                {
+                                    var stream = client.GetStream();
+                                    try { stream.ReadTimeout = 5000; stream.Read(new byte[4096], 0, 4096); } catch { }   // consume the request
+                                    stream.Write(header, 0, header.Length);
+                                    stream.Write(payload, 0, payload.Length);
+                                    stream.Flush();
+                                }
+                            }
+                            catch { }
+                        })
+                        { IsBackground = true }.Start();
+                    }
+                }
+                catch { }
+            })
+            { IsBackground = true }.Start();
+
+            return new Stopper(() => { try { listener.Stop(); } catch { } });
+        }
+
+        static string Truncate(string s) => string.IsNullOrEmpty(s) ? "" : (s.Length <= 300 ? s : s[..300]);
+
         public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2, int bytesToSend = 5 * 1024 * 1024)
         {
             var cleanupFiles = new Action(() =>
@@ -630,7 +949,7 @@ namespace ft_tests
             }
         }
 
-        public static void ConductTest(string name, Client side1, Server server, Client side2, string mode, int bytesToSend = 5 * 1024 * 1024)
+        public static void ConductTest(string name, Client side1, Server server, Client side2, string mode, int bytesToSend = 5 * 1024 * 1024, Action<CancellationToken>? transferOverride = null, int timeoutSeconds = 180)
         {
 
             var testNumberStr = $"Test {testNumber++}";
@@ -651,7 +970,10 @@ namespace ft_tests
             {
                 try
                 {
-                    TestTransfer(bytesToSend, true, 2, side1.Runner.RunOnIP, stop.Token);
+                    if (transferOverride != null)
+                        transferOverride(stop.Token);
+                    else
+                        TestTransfer(bytesToSend, true, 2, side1.Runner.RunOnIP, stop.Token);
                     results.Add((true, ""));
                 }
                 catch (Exception ex)
@@ -661,7 +983,7 @@ namespace ft_tests
             }, TaskCreationOptions.LongRunning);
 
 
-            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+            var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
 
             (bool Success, string Errror) result;
             try

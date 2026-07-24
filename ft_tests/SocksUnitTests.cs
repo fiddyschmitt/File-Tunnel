@@ -8,6 +8,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace ft_tests
 {
@@ -78,6 +79,107 @@ namespace ft_tests
             {
                 Teardown(null, null, listenThread, forwardThread, readFilename, writeFilename);
             }
+        }
+
+        // Stress: BOTH ft instances run a local (-D) AND a remote (-R) SOCKS proxy, so four proxies share one
+        // file tunnel - two hosted on each side (its own -D plus the other side's -R). A large payload is
+        // pushed full-duplex through several connections on EVERY proxy at once and every byte is verified,
+        // so a multiplexing/ordering/teardown bug under concurrent SOCKS load would corrupt or truncate a
+        // stream and fail the test.
+        [TestMethod]
+        [Timeout(300000)]
+        public void SocksStress_FourProxies_LargeConcurrentTransfers()
+        {
+            const int aLocal = 55210, aRemote = 55211, bLocal = 55212, bRemote = 55213, dest = 55214;
+            const int connectionsPerProxy = 4;
+            const int bytesPerTransfer = 16 * 1024 * 1024;
+
+            var writeFilename = Path.GetTempFileName();
+            var readFilename = Path.GetTempFileName();
+
+            // A hosts -D aLocal (exit = B) and -R aRemote (proxy on B, exit = A);
+            // B hosts -D bLocal (exit = A) and -R bRemote (proxy on A, exit = B).  → 4 proxies, 2 per side.
+            var (threadA, threadB) = StartDualDynamicTunnel(
+                $"-D 0.0.0.0:{aLocal} -R 0.0.0.0:{aRemote}",
+                $"-D 0.0.0.0:{bLocal} -R 0.0.0.0:{bRemote}",
+                writeFilename, readFilename);
+
+            // The single ultimate destination every SOCKS connection is pointed at (both ft instances dial it).
+            var ultimateDestination = new TcpListener(IPAddress.Loopback, dest);
+            ultimateDestination.Start();
+            var accepted = new BlockingCollection<TcpClient>();
+            var acceptCts = new CancellationTokenSource();
+            var acceptThread = new Thread(() =>
+            {
+                while (!acceptCts.IsCancellationRequested)
+                {
+                    try { accepted.Add(ultimateDestination.AcceptTcpClient()); }
+                    catch { break; }
+                }
+            })
+            { IsBackground = true };
+            acceptThread.Start();
+
+            var proxyPorts = new[] { aLocal, aRemote, bLocal, bRemote };
+            var pairs = new List<(TcpClient Origin, TcpClient Dest)>();
+
+            try
+            {
+                // Establish every connection sequentially so each SOCKS CONNECT pairs with the next accept
+                // (accurate replies guarantee the exit has already dialed by the time the handshake returns).
+                foreach (var proxyPort in proxyPorts)
+                {
+                    for (var i = 0; i < connectionsPerProxy; i++)
+                    {
+                        var origin = ConnectSocks(5, proxyPort, "127.0.0.1", dest);
+                        Assert.IsTrue(accepted.TryTake(out var destClient, 60000),
+                            $"proxy {proxyPort} connection {i}: the exit side never dialed the destination");
+                        pairs.Add((origin, destClient!));
+                    }
+                }
+
+                Assert.AreEqual(proxyPorts.Length * connectionsPerProxy, pairs.Count);
+
+                // Push the payload full-duplex through every connection at once, then verify every byte.
+                var payload = new byte[bytesPerTransfer];
+                Random.Shared.NextBytes(payload);
+
+                var transfers = new List<Task>();
+                foreach (var (origin, destClient) in pairs)
+                {
+                    transfers.Add(Task.Factory.StartNew(() => TransferVerification.TestDirection("Forward", origin, destClient, payload), TaskCreationOptions.LongRunning));
+                    transfers.Add(Task.Factory.StartNew(() => TransferVerification.TestDirection("Reverse", destClient, origin, payload), TaskCreationOptions.LongRunning));
+                }
+
+                Task.WaitAll(transfers.ToArray());
+            }
+            finally
+            {
+                acceptCts.Cancel();
+                try { ultimateDestination.Stop(); } catch { }
+                foreach (var (origin, destClient) in pairs)
+                {
+                    try { origin.Close(); } catch { }
+                    try { destClient.Close(); } catch { }
+                }
+                threadA.Interrupt(); threadA.Join();
+                threadB.Interrupt(); threadB.Join();
+                try { File.Delete(readFilename); } catch { }
+                try { File.Delete(writeFilename); } catch { }
+            }
+        }
+
+        static (Thread A, Thread B) StartDualDynamicTunnel(string aDynamicArgs, string bDynamicArgs, string writeFilename, string readFilename)
+        {
+            var threadA = new Thread(() =>
+                ft.Program.Main(StringUtility.CommandLineToArgs($@"{aDynamicArgs} --write ""{writeFilename}"" --read ""{readFilename}""")));
+            threadA.Start();
+
+            var threadB = new Thread(() =>
+                ft.Program.Main(StringUtility.CommandLineToArgs($@"{bDynamicArgs} --read ""{writeFilename}"" --write ""{readFilename}""")));
+            threadB.Start();
+
+            return (threadA, threadB);
         }
 
         // ---- harness ---------------------------------------------------------------------------------
