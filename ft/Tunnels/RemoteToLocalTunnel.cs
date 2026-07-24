@@ -17,10 +17,11 @@ namespace ft.Tunnels
     {
         private readonly int tunnelTimeoutMilliseconds;
 
-        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom, long maxFileSizeBytes, int readDurationMillis, int tunnelTimeoutMilliseconds)
+        public RemoteToLocalTunnel(List<string> remoteTcpForwards, List<string> remoteUdpForwards, List<string> remoteHttpProxy, SharedFileManager sharedFileManager, LocalToRemoteTunnel localToRemoteTunnel, string udpSendFrom, long maxFileSizeBytes, int readDurationMillis, int tunnelTimeoutMilliseconds)
         {
             RemoteTcpForwards = remoteTcpForwards;
             RemoteUdpForwards = remoteUdpForwards;
+            RemoteHttpProxy = remoteHttpProxy;
             SharedFileManager = sharedFileManager;
             this.tunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
 
@@ -171,6 +172,7 @@ namespace ft.Tunnels
 
         public List<string> RemoteTcpForwards { get; }
         public List<string> RemoteUdpForwards { get; }
+        public List<string> RemoteHttpProxy { get; }
         public SharedFileManager SharedFileManager { get; }
 
         void ProvideRemoteForwardsToCounterpart()
@@ -186,6 +188,11 @@ namespace ft.Tunnels
 
             RemoteUdpForwards
                  .Select(remoteForwardStr => new CreateListener("udp", remoteForwardStr))
+                 .ToList()
+                 .ForEach(remoteForwardCommand => SharedFileManager.EnqueueToSend(remoteForwardCommand));
+
+            RemoteHttpProxy
+                 .Select(remoteForwardStr => new CreateListener("http", remoteForwardStr))
                  .ToList()
                  .ForEach(remoteForwardCommand => SharedFileManager.EnqueueToSend(remoteForwardCommand));
         }

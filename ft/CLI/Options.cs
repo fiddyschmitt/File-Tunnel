@@ -19,6 +19,9 @@ namespace ft.CLI
         [Option('D', "dynamic-fwd", Required = false, HelpText = @"Dynamic (SOCKS) forwarding. Syntax: [bind_address:]port. Opens a local SOCKS4/4a/5 proxy on the given port; the remote side connects out to whatever each client requests (CONNECT only, no authentication). Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> LocalDynamicForwards { get; set; } = [];
 
+        [Option("http-proxy", Required = false, HelpText = @"HTTP proxy. Syntax: [bind_address:]port. Opens a local HTTP CONNECT proxy on the given port; the remote side connects out to whatever each client CONNECTs to (CONNECT method only, no authentication). Use forward slashes as separators when using IPV6.")]
+        public IEnumerable<string> LocalHttpProxy { get; set; } = [];
+
 
 
         [Option('R', Required = false, HelpText = @"Remote TCP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. A bare [bind_address:]port (no destination) instead opens a SOCKS4/4a/5 proxy on the remote side (dynamic forwarding). Use forward slashes as separators when using IPV6.")]
@@ -26,6 +29,9 @@ namespace ft.CLI
 
         [Option("remote-udp-fwd", Required = false, HelpText = @"Remote UDP forwarding. Syntax: [bind_address:]port:host:hostport. Specifies that the given port on the remote host is to be forwarded to the given host and port on the local side. Use forward slashes as separators when using IPV6.")]
         public IEnumerable<string> RemoteUdpForwards { get; set; } = [];
+
+        [Option("remote-http-proxy", Required = false, HelpText = @"Remote HTTP proxy. Syntax: [bind_address:]port. Opens an HTTP CONNECT proxy on the remote side; the local side connects out. Use forward slashes as separators when using IPV6.")]
+        public IEnumerable<string> RemoteHttpProxy { get; set; } = [];
 
 
 

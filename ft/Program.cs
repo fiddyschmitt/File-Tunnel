@@ -393,11 +393,13 @@ namespace ft
             localListeners.Add("tcp", o.LocalTcpForwards, false);
             localListeners.Add("udp", o.LocalUdpForwards, false);
             localListeners.Add("socks", o.LocalDynamicForwards, false);
+            localListeners.Add("http", o.LocalHttpProxy, false);
 
             var localToRemoteTunnel = new LocalToRemoteTunnel(localListeners, sharedFileManager, maxFileSizeBytes, o.ReadDurationMillis);
             _ = new RemoteToLocalTunnel(
                                              o.RemoteTcpForwards.ToList(),
                                              o.RemoteUdpForwards.ToList(),
+                                             o.RemoteHttpProxy.ToList(),
                                              sharedFileManager,
                                              localToRemoteTunnel,
                                              o.UdpSendFrom,

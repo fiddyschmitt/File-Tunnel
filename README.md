@@ -70,6 +70,8 @@ Now on Host A, you can connect to `127.0.0.1:5000` and it will be forwarded to `
 
 * Use `-D` for dynamic (SOCKS) forwarding, just like SSH. For example: `-D 1080` starts a SOCKS4/4a/5 proxy on port 1080; each connection is dialed from the _remote_ side, so applications can reach whatever the remote machine can. A bare `-R 1080` (no destination) is the reverse: it hosts the SOCKS proxy on the _remote_ side, dialing out via your local machine. Handles both TCP (CONNECT) and SOCKS5 UDP (ASSOCIATE); no authentication.
 	
+* Use `--http-proxy` for an HTTP proxy. For example: `--http-proxy 8080` starts an HTTP CONNECT proxy on port 8080, dialed from the _remote_ side (point a browser or `curl -x http://127.0.0.1:8080 https://example.com` at it). Use `--remote-http-proxy 8080` to instead host the proxy on the _remote_ side, dialing out via your local machine. CONNECT method only (HTTPS and any TCP tunnel); no authentication.
+	
 * You can use another computer's internet connection by following [these](https://github.com/fiddyschmitt/File-Tunnel/wiki/Use-a-remote-internet-connection) instructions.
 
 <br />

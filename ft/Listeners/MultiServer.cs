@@ -26,6 +26,12 @@ namespace ft.Listeners
                 return;
             }
 
+            if (protocol == "http")
+            {
+                AddHttpProxy(forwardStr, originatedFromRemote);
+                return;
+            }
+
             (var listenEndpoint, var destinationEndpoint) = NetworkUtilities.ParseForwardString(forwardStr);
 
             var fullLocalEndpoint = $"{protocol}://{listenEndpoint}";
@@ -94,6 +100,35 @@ namespace ft.Listeners
             if (started)
             {
                 socksListener.Start();
+            }
+        }
+
+        // HTTP CONNECT proxy listener - same dynamic (no fixed destination) shape as AddSocks.
+        void AddHttpProxy(string listenSpec, bool originatedFromRemote)
+        {
+            var listenEndpoint = NetworkUtilities.ParseListenOnlyString(listenSpec);
+
+            var fullLocalEndpoint = $"http://{listenEndpoint}";
+            var fullRemoteEndpoint = "http://dynamic";
+
+            var alreadyExists = servers
+                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
+            if (alreadyExists) return;
+
+            var httpListener = new HttpProxyServer(listenEndpoint);
+
+            Program.Log($"Initialised HTTP proxy on {listenEndpoint}");
+
+            httpListener.ConnectionAccepted += (sender, args) =>
+            {
+                ConnectionAccepted?.Invoke(this, args);
+            };
+
+            servers.Add((httpListener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
+
+            if (started)
+            {
+                httpListener.Start();
             }
         }
 
