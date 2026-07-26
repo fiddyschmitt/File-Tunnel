@@ -91,6 +91,28 @@ systemctl restart diod
 
 
 
+##### Setup the RDP client stack (lets a LINUX node drive an RDP redirected drive - \\tsclient)
+# Windows RDP drive redirection is normally driven by mstsc on a Windows client, which is why the
+# existing Rdp test needs a hand-made RDP session. With FreeRDP a Linux node can be the RDP *client*
+# instead, sharing a local directory into the Windows session as \\tsclient\ftshare, so ft can run
+# over it and the whole thing can be automated (see ft_tests RdpLinuxServer / EndToEndTests.RdpLinux).
+#
+# xfreerdp3 is the same engine Remmina wraps, minus the GTK front-end - and it needs NO desktop
+# environment: Xvfb (a virtual framebuffer) satisfies its X dependency, since only the RDPDR channel
+# matters here. Remmina itself would drag in several hundred MB more of GTK for no functional gain.
+#
+# Installed on ONE node only: the X stack is ~354MB and the immutable root is 2.8GB (~1.1GB free), so
+# putting it on every node would eat most of the remaining headroom. apt-get clean afterwards.
+FT_RDP_CLIENT_HOST="ft-node-80"
+if [ "$(hostname)" = "$FT_RDP_CLIENT_HOST" ]; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb freerdp3-x11
+  apt-get clean
+  mkdir -p /srv/ftrdp
+  chmod 777 /srv/ftrdp
+fi
+
+
+
 # Mount cross-host shares. Single source of truth is mounts.sh (written to /opt/ft/mounts.sh by
 # the cloud-init seed); it is idempotent and non-fatal, and the orchestrator can re-run it over
 # SSH on demand. Keeping the mounts there avoids duplicating them between provisioning and remount.

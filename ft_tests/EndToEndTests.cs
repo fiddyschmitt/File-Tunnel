@@ -55,6 +55,11 @@ namespace ft_tests
         static string? dropboxAppSecret;
         static string? dropboxRefreshToken;
 
+        // Needed by RdpLinux: the Linux node authenticates an RDP session to the win10 VM, so the test
+        // needs that box's credentials directly (not just via its ProcessRunner).
+        static string? win10Username;
+        static string? win10Password;
+
         static CsvWriter csvWriter;
 
         static int testNumber = 0;
@@ -72,6 +77,9 @@ namespace ft_tests
             dropboxAppKey = config["dropbox_app_key"];
             dropboxAppSecret = config["dropbox_app_secret"];
             dropboxRefreshToken = config["dropbox_refresh_token"];
+
+            win10Username = config["win10_vm_username"];
+            win10Password = config["win10_vm_password"];
 
 
             var testResultsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_results");
@@ -394,6 +402,38 @@ namespace ft_tests
             var readPath2 = $@"\\tsclient\c\Temp\{filename1}";
             var writePath2 = $@"\\tsclient\c\Temp\{filename2}";
             var side2 = new Client(OS.Windows, win10_x64_3, $"-r {readPath2} -w {writePath2}");
+
+            ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        // ft over an RDP redirected drive, driven from a LINUX RDP client (xfreerdp3 under Xvfb) instead
+        // of mstsc - see RdpLinuxServer for the session mechanics. Unlike Rdp above, no hand-made RDP
+        // session is required: the test establishes it, which is the whole point of this row.
+        //
+        // Pointed at the win10 VM (.32) on purpose: Rdp above uses the elitedesk (.20), and the two
+        // cannot share a Windows box because each needs a different drive redirected into the one
+        // interactive session that user is allowed.
+        //
+        // Normal mode only. IsolatedReads does work over FreeRDP redirection (unlike mstsc's, where it
+        // fails ~100%), but at ~0.12 MB/s vs ~8 MB/s - measured 8 MB in 67s - so it would dominate the
+        // suite's runtime and sit uncomfortably close to ConductTest's 180s budget.
+        [DataTestMethod]
+        [DataRow(Mode.Normal)]
+        public void RdpLinux(Mode mode)
+        {
+            var server = new RdpLinuxServer(linux_x64_1, win10_x64_2.RunOnIP, win10Username ?? "", win10Password ?? "");
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            // side1 (.80) sees the directory natively; side2 (.32) sees the same bytes through RDPDR.
+            var writePath1 = $"{RdpLinuxServer.ExportDir}/{filename1}";
+            var readPath1 = $"{RdpLinuxServer.ExportDir}/{filename2}";
+            var side1 = new Client(OS.Linux, linux_x64_1, $"-w {writePath1} -r {readPath1}");
+
+            var readPath2 = RdpLinuxServer.RedirectedPath(filename1);
+            var writePath2 = RdpLinuxServer.RedirectedPath(filename2);
+            var side2 = new Client(OS.Windows, win10_x64_2, $"-r {readPath2} -w {writePath2}");
 
             ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
         }
@@ -1195,6 +1235,7 @@ namespace ft_tests
         Dropbox,
 
         RDP,
+        RdpLinux,
 
         VirtualBoxSharedFolder,
 
