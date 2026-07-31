@@ -1,68 +1,54 @@
-﻿using ft.Utilities;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading;
+﻿using System;
+using System.IO;
 using System.Threading.Tasks;
 
-namespace ft.IO.Files
+namespace ft.IO.Files;
+
+public class PacedAccess : IFileAccess
 {
-    public class PacedAccess : IFileAccess
+    private readonly int paceMilliseconds;
+
+    public PacedAccess(IFileAccess baseAccess, int paceMilliseconds)
     {
-        private readonly int paceMilliseconds;
+        BaseAccess = baseAccess;
+        this.paceMilliseconds = paceMilliseconds;
+    }
 
-        public PacedAccess(IFileAccess baseAccess, int paceMilliseconds)
-        {
-            BaseAccess = baseAccess;
-            this.paceMilliseconds = paceMilliseconds;
-        }
+    private IFileAccess BaseAccess { get; }
 
-        public IFileAccess BaseAccess { get; }
+    public async Task<bool> ExistsAsync(string path)
+    {
+        await Task.Delay(paceMilliseconds);
+        return await BaseAccess.ExistsAsync(path);
+    }
 
-        public void Delete(string path)
-        {
-            Delay.Wait(paceMilliseconds);
+    public async Task DeleteAsync(string path)
+    {
+        await Task.Delay(paceMilliseconds);
+        await BaseAccess.DeleteAsync(path);
+    }
 
-            BaseAccess.Delete(path);
-        }
+    public async Task WriteAllBytesAsync(string path, ReadOnlyMemory<byte> buffer, bool overwrite = true)
+    {
+        await Task.Delay(paceMilliseconds);
+        await BaseAccess.WriteAllBytesAsync(path, buffer, overwrite);
+    }
 
-        public bool Exists(string path)
-        {
-            Delay.Wait(paceMilliseconds);
+    public async Task MoveAsync(string sourceFileName, string destFileName, bool overwrite)
+    {
+        await Task.Delay(paceMilliseconds);
+        await BaseAccess.MoveAsync(sourceFileName, destFileName, overwrite);
+    }
 
-            var result = BaseAccess.Exists(path);
-            return result;
-        }
+    public async Task<Stream> GetStreamAsync(string path)
+    {
+        await Task.Delay(paceMilliseconds);
+        return await BaseAccess.GetStreamAsync(path);
+    }
 
-        public long GetFileSize(string path)
-        {
-            Delay.Wait(paceMilliseconds);
-
-            var result = BaseAccess.GetFileSize(path);
-            return result;
-        }
-
-        public void Move(string sourceFileName, string destFileName, bool overwrite)
-        {
-            Delay.Wait(paceMilliseconds);
-
-            BaseAccess.Move(sourceFileName, destFileName, overwrite);
-        }
-
-        public byte[] ReadAllBytes(string path)
-        {
-            Delay.Wait(paceMilliseconds);
-
-            var result = BaseAccess.ReadAllBytes(path);
-            return result;
-        }
-
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
-        {
-            Delay.Wait(paceMilliseconds);
-
-            BaseAccess.WriteAllBytes(path, bytes, overwrite);
-        }
+    public async Task<long> GetFileSizeAsync(string path)
+    {
+        await Task.Delay(paceMilliseconds);
+        return await BaseAccess.GetFileSizeAsync(path);
     }
 }

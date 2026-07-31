@@ -1,30 +1,24 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.IO;
 
-namespace ft.Commands
+namespace ft.Commands;
+
+public class Purge : Command
 {
-    public class Purge : Command
+    public const byte COMMAND_ID = 40;
+    public override byte CommandId => COMMAND_ID;
+
+    public Purge()
     {
-        public const byte COMMAND_ID = 40;
-        public override byte CommandId => COMMAND_ID;
 
-        public Purge()
-        {
+    }
 
-        }
+    protected override void Serialize(BinaryWriter writer)
+    {
 
-        protected override void Serialize(BinaryWriter writer)
-        {
+    }
 
-        }
+    protected override void Deserialize(BinaryReader reader)
+    {
 
-        protected override void Deserialize(BinaryReader reader)
-        {
-
-        }
     }
 }

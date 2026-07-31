@@ -1,51 +1,48 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.Sockets;
 using System.Net;
-using System.Text;
-using System.Threading.Tasks;
 using ft.Streams;
 using System.Threading;
 
-namespace ft.Listeners
+namespace ft.Listeners;
+
+public class UdpServer : StreamEstablisher
 {
-    public class UdpServer : StreamEstablisher
+    private UdpClient? listener;
+    private Thread? listenerTask;
+
+    public UdpServer(string listenOnEndpointStr, string forwardToEndpointStr)
     {
-        UdpClient? listener;
-        Thread? listenerTask;
+        ListenOnEndpointStr = listenOnEndpointStr;
+        ForwardToEndpointStr = forwardToEndpointStr;
 
-        public UdpServer(string listenOnEndpointStr, string forwardToEndpointStr)
+        if (!listenOnEndpointStr.IsValidEndpoint())
         {
-            ListenOnEndpointStr = listenOnEndpointStr;
-            ForwardToEndpointStr = forwardToEndpointStr;
-
-            if (!listenOnEndpointStr.IsValidEndpoint())
-            {
-                Program.Log($"Invalid endpoint specified: {listenOnEndpointStr}");
-                Program.Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
-                Environment.Exit(1);
-            }
+            Program.Log($"Invalid endpoint specified: {listenOnEndpointStr}");
+            Program.Log($"Please specify IP:Port or Hostname:Port or [IPV6]:Port");
+            Environment.Exit(1);
         }
+    }
 
-        public string ListenOnEndpointStr { get; }
-        public string ForwardToEndpointStr { get; }
+    public string ListenOnEndpointStr { get; }
+    public string ForwardToEndpointStr { get; }
 
-        public override void Start()
+    public override void Start()
+    {
+        var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
+
+        listener = new UdpClient()
         {
-            var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
+            EnableBroadcast = true
+        };
 
-            listener = new UdpClient()
-            {
-                EnableBroadcast = true
-            };
+        listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        listener.Client.Bind(listenEndpoint);
 
-            listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            listener.Client.Bind(listenEndpoint);
+        var connections = new Dictionary<IPEndPoint, UdpStream>();
 
-            var connections = new Dictionary<IPEndPoint, UdpStream>();
-
-            listenerTask = Threads.StartNew(() =>
+        listenerTask = Threads.StartNew(() =>
             {
                 try
                 {
@@ -77,35 +74,34 @@ namespace ft.Listeners
                 }
 
             }, $"UDP listener {listenEndpoint}");
-        }
+    }
 
-        bool stopRequested = false;
+    private bool stopRequested = false;
 
-        public override void Stop(string reason)
+    public override void Stop(string reason)
+    {
+        Program.Log($"{nameof(UdpServer)} ({ListenOnEndpointStr}): Stopping. Reason: {reason}");
+
+        stopRequested = true;
+
+        try
         {
-            Program.Log($"{nameof(UdpServer)} ({ListenOnEndpointStr}): Stopping. Reason: {reason}");
-
-            stopRequested = true;
-
-            try
-            {
-                listener?.Close();
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"Stop(): {ex}");
-            }
-
-            try
-            {
-                listenerTask?.Join();
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"Stop(): {ex}");
-            }
-
-            stopRequested = false;
+            listener?.Close();
         }
+        catch (Exception ex)
+        {
+            Program.Log($"Stop(): {ex}");
+        }
+
+        try
+        {
+            listenerTask?.Join();
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"Stop(): {ex}");
+        }
+
+        stopRequested = false;
     }
 }

@@ -3,40 +3,40 @@ using System;
 using System.Net.Sockets;
 using System.Threading;
 
-namespace ft.Listeners
+namespace ft.Listeners;
+
+// HTTP CONNECT proxy listener - the HTTP analogue of SocksServer. Per connection it reads an HTTP
+// CONNECT handshake to learn the destination, then fires ConnectionAccepted with "tcp://host:port" plus
+// a reply callback the tunnel invokes once the far side reports the dial result (200 / 502 / 504).
+public class HttpProxyServer : StreamEstablisher
 {
-    // HTTP CONNECT proxy listener - the HTTP analogue of SocksServer. Per connection it reads an HTTP
-    // CONNECT handshake to learn the destination, then fires ConnectionAccepted with "tcp://host:port" plus
-    // a reply callback the tunnel invokes once the far side reports the dial result (200 / 502 / 504).
-    public class HttpProxyServer : StreamEstablisher
+    private TcpListener? listener;
+    private Thread? listenerTask;
+    private bool stopRequested = false;
+
+    public HttpProxyServer(string listenOnEndpointStr)
     {
-        TcpListener? listener;
-        Thread? listenerTask;
-        bool stopRequested = false;
+        ListenOnEndpointStr = listenOnEndpointStr;
 
-        public HttpProxyServer(string listenOnEndpointStr)
+        if (!listenOnEndpointStr.IsValidEndpoint())
         {
-            ListenOnEndpointStr = listenOnEndpointStr;
-
-            if (!listenOnEndpointStr.IsValidEndpoint())
-            {
-                Program.Log($"Invalid endpoint specified: {listenOnEndpointStr}");
-                Program.Log($"Please specify IP:Port or [IPV6]:Port");
-                Environment.Exit(1);
-            }
+            Program.Log($"Invalid endpoint specified: {listenOnEndpointStr}");
+            Program.Log($"Please specify IP:Port or [IPV6]:Port");
+            Environment.Exit(1);
         }
+    }
 
-        public string ListenOnEndpointStr { get; }
+    public string ListenOnEndpointStr { get; }
 
-        public override void Start()
-        {
-            var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
+    public override void Start()
+    {
+        var listenEndpoint = ListenOnEndpointStr.AsEndpoint();
 
-            listener = new TcpListener(listenEndpoint);
-            listener.Start();
-            Program.Log($"Started HTTP proxy on {ListenOnEndpointStr}");
+        listener = new TcpListener(listenEndpoint);
+        listener.Start();
+        Program.Log($"Started HTTP proxy on {ListenOnEndpointStr}");
 
-            listenerTask = Threads.StartNew(() =>
+        listenerTask = Threads.StartNew(() =>
             {
                 try
                 {
@@ -57,42 +57,41 @@ namespace ft.Listeners
                     }
                 }
             }, $"HTTP proxy listener {ListenOnEndpointStr}");
-        }
+    }
 
-        void Negotiate(TcpClient client)
+    private void Negotiate(TcpClient client)
+    {
+        try
         {
-            try
-            {
-                var stream = client.GetStream();
+            var stream = client.GetStream();
 
-                var request = HttpProxyNegotiator.Read(stream);
+            var request = HttpProxyNegotiator.Read(stream);
 
-                // Written by this callback AFTER the far side reports its dial result (see LocalToRemoteTunnel),
-                // so the 200/502 is accurate and is guaranteed to reach the client before any relayed bytes.
-                void WriteReply(byte status) => HttpProxyNegotiator.WriteReply(stream, status);
+            // Written by this callback AFTER the far side reports its dial result (see LocalToRemoteTunnel),
+            // so the 200/502 is accurate and is guaranteed to reach the client before any relayed bytes.
+            void WriteReply(byte status) => HttpProxyNegotiator.WriteReply(stream, status);
 
-                ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(stream, request.Destination, WriteReply));
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"HTTP CONNECT handshake failed: {ex.Message}");
-                try { client.Close(); } catch { }
-            }
+            ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(stream, request.Destination, WriteReply));
         }
-
-        public override void Stop(string reason)
+        catch (Exception ex)
         {
-            Program.Log($"{nameof(HttpProxyServer)} ({ListenOnEndpointStr}): Stopping. Reason: {reason}");
-
-            stopRequested = true;
-
-            try { listener?.Stop(); }
-            catch (Exception ex) { Program.Log($"Stop(): {ex}"); }
-
-            try { listenerTask?.Join(); }
-            catch (Exception ex) { Program.Log($"Stop(): {ex}"); }
-
-            stopRequested = false;
+            Program.Log($"HTTP CONNECT handshake failed: {ex.Message}");
+            try { client.Close(); } catch { }
         }
+    }
+
+    public override void Stop(string reason)
+    {
+        Program.Log($"{nameof(HttpProxyServer)} ({ListenOnEndpointStr}): Stopping. Reason: {reason}");
+
+        stopRequested = true;
+
+        try { listener?.Stop(); }
+        catch (Exception ex) { Program.Log($"Stop(): {ex}"); }
+
+        try { listenerTask?.Join(); }
+        catch (Exception ex) { Program.Log($"Stop(): {ex}"); }
+
+        stopRequested = false;
     }
 }

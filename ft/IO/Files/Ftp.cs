@@ -1,102 +1,85 @@
 ﻿using FluentFTP;
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Text;
-using System.Threading;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
-namespace ft.IO.Files
+namespace ft.IO.Files;
+
+public class Ftp : IFileAccess
 {
-    public class Ftp : IFileAccess
+    private readonly FtpClient client;
+
+    public Ftp(string host, int port, string username, string password)
     {
-        readonly FtpClient client;
-
-        public Ftp(string host, int port, string username, string password)
+        var config = new FtpConfig
         {
-            var config = new FtpConfig()
-            {
-                ConnectTimeout = Program.UNIVERSAL_TIMEOUT_MS,
-                DataConnectionConnectTimeout = Program.UNIVERSAL_TIMEOUT_MS,
-                DataConnectionReadTimeout = Program.UNIVERSAL_TIMEOUT_MS,
-                ReadTimeout = Program.UNIVERSAL_TIMEOUT_MS,
-            };
+            ConnectTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+            DataConnectionConnectTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+            DataConnectionReadTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+            ReadTimeout = Program.UNIVERSAL_TIMEOUT_MS,
+        };
 
-            client = new FtpClient(host, username, password, port, config);
+        client = new FtpClient(host, username, password, port, config);
+    }
+
+    private void EnsureConnected()
+    {
+        lock (client)
+        {
+            if (!client.IsStillConnected(1000)) client.Connect();
+        }
+    }
+
+    public Task<bool> ExistsAsync(string path)
+    {
+        EnsureConnected();
+
+        bool result;
+
+        lock (client)
+        {
+            result = client.FileExists(path);
         }
 
-        void Reconnect()
+        return Task.FromResult(result);
+    }
+
+    public Task DeleteAsync(string path)
+    {
+        EnsureConnected();
+
+        lock (client)
         {
-            lock (client)
-            {
-                if (!client.IsStillConnected(1000)) client.Connect();
-            }
+            client.DeleteFile(path);
         }
 
-        public void Delete(string path)
-        {
-            Reconnect();
+        return Task.CompletedTask;
+    }
 
-            lock (client)
-            {
-                client.DeleteFile(path);
-            }
+    public Task WriteAllBytesAsync(string path, ReadOnlyMemory<byte> buffer, bool overwrite = true)
+    {
+        EnsureConnected();
+
+        MemoryStream ms;
+        if (MemoryMarshal.TryGetArray(buffer, out var arraySegment) && arraySegment.Array != null)
+        {
+            ms = new MemoryStream(arraySegment.Array, arraySegment.Offset, arraySegment.Count, false);
+        }
+        else
+        {
+            ms = new MemoryStream();
+            ms.Write(buffer.Span);
+            ms.Seek(0, SeekOrigin.Begin);
         }
 
-        public bool Exists(string path)
+        using (ms)
         {
-            Reconnect();
-
-            var result = false;
-
-            lock (client)
-            {
-                result = client.FileExists(path);
-            }
-
-            return result;
-        }
-
-        public void Move(string sourceFileName, string destFileName, bool overwrite)
-        {
-            Reconnect();
-
-            lock (client)
-            {
-                if (overwrite)
-                {
-                    client.MoveFile(sourceFileName, destFileName, FtpRemoteExists.Overwrite);
-                }
-                else
-                {
-                    client.MoveFile(sourceFileName, destFileName);
-                }
-            }
-        }
-
-        public byte[] ReadAllBytes(string path)
-        {
-            Reconnect();
-
-            lock (client)
-            {
-                client.DownloadBytes(out var result, path);
-
-                return result;
-            }
-        }
-
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
-        {
-            Reconnect();
-
             lock (client)
             {
                 if (overwrite)
                 {
-                    client.UploadBytes(bytes, path, FtpRemoteExists.Overwrite);
+                    client.UploadStream(ms, path, FtpRemoteExists.Overwrite);
                 }
                 else
                 {
@@ -105,23 +88,56 @@ namespace ft.IO.Files
                         throw new Exception($"{path} exists. Will not overwrite.");
                     }
 
-                    client.UploadBytes(bytes, path);
+                    client.UploadStream(ms, path);
                 }
             }
         }
 
-        public long GetFileSize(string path)
+        return Task.CompletedTask;
+    }
+
+    public Task MoveAsync(string sourceFileName, string destFileName, bool overwrite)
+    {
+        EnsureConnected();
+
+        lock (client)
         {
-            Reconnect();
-
-            var result = 0L;
-
-            lock (client)
+            if (overwrite)
             {
-                result = client.GetFileSize(path, 0);
+                client.MoveFile(sourceFileName, destFileName, FtpRemoteExists.Overwrite);
             }
-
-            return result;
+            else
+            {
+                client.MoveFile(sourceFileName, destFileName);
+            }
         }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<Stream> GetStreamAsync(string path)
+    {
+        EnsureConnected();
+
+        lock (client)
+        {
+            return !client.DownloadBytes(out var result, path)
+                ? throw new InvalidOperationException("Download operation failed.")
+                : Task.FromResult<Stream>(new MemoryStream(result));
+        }
+    }
+
+    public Task<long> GetFileSizeAsync(string path)
+    {
+        EnsureConnected();
+
+        long result;
+
+        lock (client)
+        {
+            result = client.GetFileSize(path, 0);
+        }
+
+        return Task.FromResult(result);
     }
 }

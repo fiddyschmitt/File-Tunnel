@@ -1,54 +1,50 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace ft
+namespace ft;
+
+public class Relay
 {
-    public class Relay
+    public EventHandler? RelayFinished;
+    private bool Stopped = false;
+
+    public Relay(Stream fromStream, Stream toStream, long maxFileSizeBytes, int readDurationMillis)
     {
-        public EventHandler? RelayFinished;
-        bool Stopped = false;
+        //FPS 06/09/2025: Using 64 KB because it's likely the largest size that can be atomically written by both SMB and NFS.
+        //Unverified though.
+        //NFSv2 max 8 KB
+        //NFSv3 max 64 KB
+        //NFSv4 max between 64 KB and 1 MB
+        //SMB 1.x max 64 KB
+        //SMB 2.x max 8 MB
+        //SMB 3.x max 8 MB
 
-        public Relay(Stream fromStream, Stream toStream, long maxFileSizeBytes, int readDurationMillis)
+        var bufferSize = 65535;
+
+        var bytesToRead = bufferSize;
+        if (maxFileSizeBytes > 0)
         {
-            //FPS 06/09/2025: Using 64 KB because it's likely the largest size that can be atomically written by both SMB and NFS.
-            //Unverified though.
-            //NFSv2 max 8 KB
-            //NFSv3 max 64 KB
-            //NFSv4 max between 64 KB and 1 MB
-            //SMB 1.x max 64 KB
-            //SMB 2.x max 8 MB
-            //SMB 3.x max 8 MB
+            bytesToRead = (int)(maxFileSizeBytes * 0.9);        //leave some room for commands like Purge
+            bytesToRead = Math.Min(bufferSize, bytesToRead);
+        }
 
-            var bufferSize = 65535;
+        //var filename = $"";
+        //var i = 1;
 
-            var bytesToRead = bufferSize;
-            if (maxFileSizeBytes > 0)
-            {
-                bytesToRead = (int)(maxFileSizeBytes * 0.9);        //leave some room for commands like Purge
-                bytesToRead = Math.Min(bufferSize, bytesToRead);
-            }
+        //while (true)
+        //{
+        //    filename = $"{Environment.ProcessId} - {i}.dat";
+        //    if (!File.Exists(filename))
+        //    {
+        //        break;
+        //    }
 
-            //var filename = $"";
-            //var i = 1;
+        //    i++;
+        //}
 
-            //while (true)
-            //{
-            //    filename = $"{Environment.ProcessId} - {i}.dat";
-            //    if (!File.Exists(filename))
-            //    {
-            //        break;
-            //    }
+        //var fs = File.Create(filename);
 
-            //    i++;
-            //}
-
-            //var fs = File.Create(filename);
-
-            Threads.StartNew(() =>
+        Threads.StartNew(() =>
             {
                 try
                 {
@@ -73,41 +69,40 @@ namespace ft
                 RelayFinished?.Invoke(this, new EventArgs());
             }, $"{fromStream.Name(true)} -> {toStream.Name(false)}");
 
-            FromStream = fromStream;
-            ToStream = toStream;
-        }
+        FromStream = fromStream;
+        ToStream = toStream;
+    }
 
-        public Stream FromStream { get; }
-        public Stream ToStream { get; }
+    public Stream FromStream { get; }
+    public Stream ToStream { get; }
 
-        public void Stop()
+    public void Stop()
+    {
+        if (Stopped) return;
+
+        Stopped = true;
+
+        try
         {
-            if (Stopped) return;
-
-            Stopped = true;
-
-            try
-            {
-                FromStream.Close();
-            }
-            catch
-            {
-                //Program.Log($"Stop(): {ex}");
-            }
-
-
-            try
-            {
-                ToStream.Close();
-            }
-            catch
-            {
-                //Program.Log($"Stop(): {ex}");
-            }
-
-
-
-            Program.Log($"Closed relay. {FromStream.Name(true)} -> {ToStream.Name(false)}");
+            FromStream.Close();
         }
+        catch
+        {
+            //Program.Log($"Stop(): {ex}");
+        }
+
+
+        try
+        {
+            ToStream.Close();
+        }
+        catch
+        {
+            //Program.Log($"Stop(): {ex}");
+        }
+
+
+
+        Program.Log($"Closed relay. {FromStream.Name(true)} -> {ToStream.Name(false)}");
     }
 }

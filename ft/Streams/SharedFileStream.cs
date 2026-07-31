@@ -1,123 +1,116 @@
 ﻿using ft.Commands;
 using ft.Listeners;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.IO.Pipes;
-using System.Linq;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
-namespace ft.Streams
+namespace ft.Streams;
+
+public class SharedFileStream : Stream
 {
-    public class SharedFileStream : Stream
+    public void EstablishConnection(string destinationEndpointStr)
     {
-        public void EstablishConnection(string destinationEndpointStr)
+        SharedFileManager.Connect(ConnectionId, destinationEndpointStr);
+    }
+
+    public override bool CanRead => true;
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => true;
+
+    public override long Length => throw new NotImplementedException();
+
+    public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
+    public SharedFileManager SharedFileManager { get; }
+    public int ConnectionId { get; }
+
+    public override void Flush()
+    {
+        throw new NotImplementedException();
+    }
+
+    private byte[]? currentData = null;
+    private int currentDataIndex;
+
+    public SharedFileStream(SharedFileManager sharedFileManager, int connectionId)
+    {
+        SharedFileManager = sharedFileManager;
+        ConnectionId = connectionId;
+
+        //File.Create(sentFile).Close();
+        //File.Create(receivedFile).Close();
+    }
+
+    //string sentFile = $"diag-sent-{Environment.MachineName}.txt";
+    //string receivedFile = $"diag-received-{Environment.MachineName}.txt";
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (currentData == null || currentData.Length == currentDataIndex)
         {
-            SharedFileManager.Connect(ConnectionId, destinationEndpointStr);
+            currentData = SharedFileManager.Read(ConnectionId);
+            currentDataIndex = 0;
         }
 
-        public override bool CanRead => true;
-
-        public override bool CanSeek => false;
-
-        public override bool CanWrite => true;
-
-        public override long Length => throw new NotImplementedException();
-
-        public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public SharedFileManager SharedFileManager { get; }
-        public int ConnectionId { get; }
-
-        public override void Flush()
+        if (currentData == null)
         {
-            throw new NotImplementedException();
+            return 0;
         }
-
-        byte[]? currentData = null;
-        int currentDataIndex;
-
-        public SharedFileStream(SharedFileManager sharedFileManager, int connectionId)
+        else
         {
-            SharedFileManager = sharedFileManager;
-            ConnectionId = connectionId;
+            var toCopy = count;
+            toCopy = Math.Min(toCopy, currentData.Length - currentDataIndex);
 
-            //File.Create(sentFile).Close();
-            //File.Create(receivedFile).Close();
+            Array.Copy(currentData, currentDataIndex, buffer, offset, toCopy);
+
+            //var received = new ReadOnlySpan<byte>(buffer, offset, toCopy);
+            //File.AppendAllLines(receivedFile, [$"{received.Length:N0} bytes", Convert.ToBase64String(received.ToArray())]);
+
+            currentDataIndex += toCopy;
+
+            return toCopy;
         }
+    }
 
-        //string sentFile = $"diag-sent-{Environment.MachineName}.txt";
-        //string receivedFile = $"diag-received-{Environment.MachineName}.txt";
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        throw new NotImplementedException();
+    }
 
-        public override int Read(byte[] buffer, int offset, int count)
+    public override void SetLength(long value)
+    {
+        throw new NotImplementedException();
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        // Always copy to decouple from caller’s buffer
+        var toSend = new byte[count];
+        Buffer.BlockCopy(buffer, offset, toSend, 0, count);
+
+        var forwardCommand = new Forward(ConnectionId, toSend);
+
+        while (true)
         {
-            if (currentData == null || currentData.Length == currentDataIndex)
+            if (closed)
             {
-                currentData = SharedFileManager.Read(ConnectionId);
-                currentDataIndex = 0;
+                throw new IOException($"Connection {ConnectionId} is closed.");
             }
 
-            if (currentData == null)
-            {
-                return 0;
-            }
-            else
-            {
-                var toCopy = count;
-                toCopy = Math.Min(toCopy, currentData.Length - currentDataIndex);
+            var enqueuedSuccessfully = SharedFileManager.EnqueueToSend(forwardCommand);
 
-                Array.Copy(currentData, currentDataIndex, buffer, offset, toCopy);
-
-                //var received = new ReadOnlySpan<byte>(buffer, offset, toCopy);
-                //File.AppendAllLines(receivedFile, [$"{received.Length:N0} bytes", Convert.ToBase64String(received.ToArray())]);
-
-                currentDataIndex += toCopy;
-
-                return toCopy;
-            }
+            if (enqueuedSuccessfully) break;
         }
+    }
 
-        public override long Seek(long offset, SeekOrigin origin)
-        {
-            throw new NotImplementedException();
-        }
+    private volatile bool closed = false;
 
-        public override void SetLength(long value)
-        {
-            throw new NotImplementedException();
-        }
+    public override void Close()
+    {
+        closed = true;
 
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            // Always copy to decouple from caller’s buffer
-            var toSend = new byte[count];
-            Buffer.BlockCopy(buffer, offset, toSend, 0, count);
+        base.Close();
 
-            var forwardCommand = new Forward(ConnectionId, toSend);
-
-            while (true)
-            {
-                if (closed)
-                {
-                    throw new IOException($"Connection {ConnectionId} is closed.");
-                }
-
-                var enqueuedSuccessfully = SharedFileManager.EnqueueToSend(forwardCommand);
-
-                if (enqueuedSuccessfully) break;
-            }
-        }
-
-        volatile bool closed = false;
-
-        public override void Close()
-        {
-            closed = true;
-
-            base.Close();
-
-            SharedFileManager.TearDown(ConnectionId);
-        }
+        SharedFileManager.TearDown(ConnectionId);
     }
 }

@@ -24,56 +24,55 @@
 
 using System.Runtime.InteropServices;
 
-namespace System.Threading
+namespace System.Threading;
+
+/// <summary>
+/// Platform Dependent Wait
+/// Accurately wait down to 1ms if your platform will allow it
+/// Wont murder your CPU
+public static partial class WindowsDelay
 {
+    internal const string windowsMultimediaAPIString = "winmm.dll";
+
+    [LibraryImport(windowsMultimediaAPIString)]
+    internal static partial int timeBeginPeriod(int period);
+
+    [LibraryImport(windowsMultimediaAPIString)]
+    internal static partial int timeEndPeriod(int period);
+
+    [LibraryImport(windowsMultimediaAPIString)]
+    internal static partial int timeGetDevCaps(ref TimerCapabilities caps, int sizeOfTimerCaps);
+
+    internal static TimerCapabilities Capabilities;
+
+    static WindowsDelay()
+    {
+        _ = timeGetDevCaps(ref Capabilities, Marshal.SizeOf(Capabilities));
+    }
+
     /// <summary>
     /// Platform Dependent Wait
     /// Accurately wait down to 1ms if your platform will allow it
     /// Wont murder your CPU
-    public static partial class WindowsDelay
+    /// </summary>
+    /// <param name="delayMs"></param>
+    public static void Wait(int delayMs)
     {
-        internal const string windowsMultimediaAPIString = "winmm.dll";
+        _ = timeBeginPeriod(Capabilities.PeriodMinimum);
+        Thread.Sleep(delayMs);
+        _ = timeEndPeriod(Capabilities.PeriodMinimum);
+    }
 
-        [LibraryImport(windowsMultimediaAPIString)]
-        internal static partial int timeBeginPeriod(int period);
+    /// <summary>
+    /// The Min/Max supported period for the Mutlimedia Timer in milliseconds
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TimerCapabilities
+    {
+        /// <summary>Minimum supported period in milliseconds.</summary>
+        public int PeriodMinimum;
 
-        [LibraryImport(windowsMultimediaAPIString)]
-        internal static partial int timeEndPeriod(int period);
-
-        [LibraryImport(windowsMultimediaAPIString)]
-        internal static partial int timeGetDevCaps(ref TimerCapabilities caps, int sizeOfTimerCaps);
-
-        internal static TimerCapabilities Capabilities;
-
-        static WindowsDelay()
-        {
-            _ = timeGetDevCaps(ref Capabilities, Marshal.SizeOf(Capabilities));
-        }
-
-        /// <summary>
-        /// Platform Dependent Wait
-        /// Accurately wait down to 1ms if your platform will allow it
-        /// Wont murder your CPU
-        /// </summary>
-        /// <param name="delayMs"></param>
-        public static void Wait(int delayMs)
-        {
-            _ = timeBeginPeriod(Capabilities.PeriodMinimum);
-            Thread.Sleep(delayMs);
-            _ = timeEndPeriod(Capabilities.PeriodMinimum);
-        }
-
-        /// <summary>
-        /// The Min/Max supported period for the Mutlimedia Timer in milliseconds
-        /// </summary>
-        [StructLayout(LayoutKind.Sequential)]
-        public struct TimerCapabilities
-        {
-            /// <summary>Minimum supported period in milliseconds.</summary>
-            public int PeriodMinimum;
-
-            /// <summary>Maximum supported period in milliseconds.</summary>
-            public int PeriodMaximum;
-        }
+        /// <summary>Maximum supported period in milliseconds.</summary>
+        public int PeriodMaximum;
     }
 }

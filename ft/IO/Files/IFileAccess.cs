@@ -1,23 +1,20 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.IO;
 using System.Threading.Tasks;
 
-namespace ft.IO.Files
+namespace ft.IO.Files;
+
+public interface IFileAccess
 {
-    public interface IFileAccess
-    {
-        bool Exists(string path);
+    Task<bool> ExistsAsync(string path);
 
-        void Delete(string path);
+    Task DeleteAsync(string path);
 
-        void WriteAllBytes(string path, byte[] bytes, bool overwrite = true);
+    Task WriteAllBytesAsync(string path, ReadOnlyMemory<byte> buffer, bool overwrite = true);
 
-        void Move(string sourceFileName, string destFileName, bool overwrite);
+    Task MoveAsync(string sourceFileName, string destFileName, bool overwrite);
 
-        byte[] ReadAllBytes(string path);
+    Task<Stream> GetStreamAsync(string path);
 
-        long GetFileSize(string path);
-    }
+    Task<long> GetFileSizeAsync(string path);
 }

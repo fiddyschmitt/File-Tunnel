@@ -8,573 +8,587 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading;
 using System.Threading.RateLimiting;
 using System.Threading.Tasks;
 
-namespace ft.Listeners
+namespace ft.Listeners;
+
+public abstract class SharedFileManager : StreamEstablisher
 {
-    public abstract class SharedFileManager : StreamEstablisher
+    public EventHandler<OnlineStatusEventArgs>? OnlineStatusChanged;
+    public EventHandler<CreateLocalListenerEventArgs>? CreateLocalListenerRequested;
+    public EventHandler? SessionChanged;
+
+    public string ReadFromFilename { get; }
+    public string WriteToFilename { get; }
+
+    protected readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
+
+    //Per-connection waiters for a ConnectResult from the dialing side. Only dynamic (SOCKS) connections
+    //register one (so the host can send an accurate SOCKS reply); every other connection's ConnectResult
+    //is discarded on arrival.
+    private readonly ConcurrentDictionary<int, BlockingCollection<byte>> connectResultWaiters = [];
+
+    // TODO: use channel
+    //If left unlimited, this can fill up faster than we can send them through the file tunnel.
+    //FPS 22/08/2025: When this is set to 20, RDP latency is worse than when it is set to 1.
+    protected BlockingCollection<Command> SendQueue = new(1);
+
+    private const int reportIntervalMs = 1000;
+    public int TunnelTimeoutMilliseconds { get; protected set; }
+    public bool Verbose { get; protected set; }
+    private DateTime? lastContactFromCounterpart;
+    private DateTime? lastSuccessfulPing;
+    public bool IsOnline { get; protected set; } = false;
+
+
+    public abstract Task SendPumpAsync();
+
+    public abstract Task ReceivePumpAsync();
+
+    public abstract override void Stop(string reason);
+
+    public SharedFileManager(string readFromFilename, string writeToFilename, int tunnelTimeoutMilliseconds,
+        bool verbose)
     {
-        public EventHandler<OnlineStatusEventArgs>? OnlineStatusChanged;
-        public EventHandler<CreateLocalListenerEventArgs>? CreateLocalListenerRequested;
-        public EventHandler? SessionChanged;
+        ReadFromFilename = readFromFilename;
+        WriteToFilename = writeToFilename;
+        TunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
+        Verbose = verbose;
+    }
 
-        public string ReadFromFilename { get; }
-        public string WriteToFilename { get; }
-
-        protected readonly ConcurrentDictionary<int, BlockingCollection<byte[]>> ReceiveQueue = [];
-
-        //Per-connection waiters for a ConnectResult from the dialing side. Only dynamic (SOCKS) connections
-        //register one (so the host can send an accurate SOCKS reply); every other connection's ConnectResult
-        //is discarded on arrival.
-        readonly ConcurrentDictionary<int, BlockingCollection<byte>> connectResultWaiters = [];
-
-        //If left unlimited, this can fill up faster than we can send them through the file tunnel.
-        //FPS 22/08/2025: When this is set to 20, RDP latency is worse than when it is set to 1.
-        protected BlockingCollection<Command> SendQueue = new(1);
-
-        const int reportIntervalMs = 1000;
-        public int TunnelTimeoutMilliseconds { get; protected set; }
-        public bool Verbose { get; protected set; }
-        DateTime? lastContactFromCounterpart;
-        DateTime? lastSuccessfulPing;
-        public bool IsOnline { get; protected set; } = false;
-
-
-        public abstract void SendPump();
-
-        public abstract void ReceivePump();
-
-        public override abstract void Stop(string reason);
-
-        public SharedFileManager(string readFromFilename, string writeToFilename, int tunnelTimeoutMilliseconds, bool verbose)
+    public void Connect(int connectionId, string destinationEndpointStr)
+    {
+        var connectCommand = new Connect(connectionId, destinationEndpointStr);
+        if (EnqueueToSend(connectCommand))
         {
-            ReadFromFilename = readFromFilename;
-            WriteToFilename = writeToFilename;
-            TunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
-            Verbose = verbose;
-        }
-
-        public void Connect(int connectionId, string destinationEndpointStr)
-        {
-            var connectCommand = new Connect(connectionId, destinationEndpointStr);
-            if (EnqueueToSend(connectCommand))
+            if (!ReceiveQueue.TryGetValue(connectionId, out _))
             {
-                if (!ReceiveQueue.TryGetValue(connectionId, out _))
-                {
-                    ReceiveQueue.TryAdd(connectionId, []);
-                }
+                ReceiveQueue.TryAdd(connectionId, []);
             }
         }
+    }
 
-        //--- SOCKS connect-result signalling --------------------------------------------------------------
-        //A dynamic (SOCKS) host registers a waiter BEFORE sending its Connect, then blocks in
-        //AwaitConnectResult until the dialing side reports the outcome via a ConnectResult command.
+    //--- SOCKS connect-result signalling --------------------------------------------------------------
+    //A dynamic (SOCKS) host registers a waiter BEFORE sending its Connect, then blocks in
+    //AwaitConnectResult until the dialing side reports the outcome via a ConnectResult command.
 
-        public void RegisterConnectResultWaiter(int connectionId)
+    public void RegisterConnectResultWaiter(int connectionId)
+    {
+        connectResultWaiters[connectionId] = new BlockingCollection<byte>(1);
+    }
+
+    public void SendConnectResult(int connectionId, byte status)
+    {
+        EnqueueToSend(new ConnectResult(connectionId, status));
+    }
+
+    //Blocks until the dialing side reports the connect result, or the timeout elapses (→ treated as a
+    //failure, so a stuck or SOCKS-unaware counterpart yields a failure reply rather than a hang).
+    public byte AwaitConnectResult(int connectionId, int timeoutMilliseconds)
+    {
+        var status = (byte)ConnectStatus.GeneralFailure;
+
+        if (connectResultWaiters.TryGetValue(connectionId, out var waiter))
         {
-            connectResultWaiters[connectionId] = new BlockingCollection<byte>(1);
-        }
-
-        public void SendConnectResult(int connectionId, byte status)
-        {
-            EnqueueToSend(new ConnectResult(connectionId, status));
-        }
-
-        //Blocks until the dialing side reports the connect result, or the timeout elapses (→ treated as a
-        //failure, so a stuck or SOCKS-unaware counterpart yields a failure reply rather than a hang).
-        public byte AwaitConnectResult(int connectionId, int timeoutMilliseconds)
-        {
-            var status = (byte)ConnectStatus.GeneralFailure;
-
-            if (connectResultWaiters.TryGetValue(connectionId, out var waiter))
+            try
             {
-                try
-                {
-                    if (!waiter.TryTake(out status, timeoutMilliseconds))
-                    {
-                        status = (byte)ConnectStatus.GeneralFailure;
-                    }
-                }
-                catch
+                if (!waiter.TryTake(out status, timeoutMilliseconds))
                 {
                     status = (byte)ConnectStatus.GeneralFailure;
                 }
-
-                connectResultWaiters.TryRemove(connectionId, out _);
             }
-
-            return status;
-        }
-
-        public override void Start()
-        {
-            Threads.StartNew(ReceivePump, nameof(ReceivePump));
-            Threads.StartNew(SendPump, nameof(SendPump));
-            Threads.StartNew(SendPingRequests, nameof(SendPingRequests));
-            Threads.StartNew(ReportNetworkPerformance, nameof(ReportNetworkPerformance));
-            Threads.StartNew(MonitorOnlineStatus, nameof(MonitorOnlineStatus));
-
-            if (Debugger.IsAttached)
+            catch
             {
-                //Threads.StartNew(WriteThreadReport, nameof(WriteThreadReport));
-            }
-        }
-
-        public int GenerateUniqueConnectionId()
-        {
-            int result;
-            while (true)
-            {
-                result = Random.Shared.Next(int.MaxValue);
-
-                if (!ReceiveQueue.ContainsKey(result))
-                {
-                    break;
-                }
-            }
-
-            return result;
-        }
-
-        public bool EnqueueToSend(Command cmd, int timeoutMilliseconds)
-        {
-            bool result;
-            try
-            {
-                result = SendQueue.TryAdd(cmd, timeoutMilliseconds);
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"WARNING! Error while enqueing {cmd.GetType().Name}: {ex.Message}");
-                result = false;
-            }
-
-            if (!result)
-            {
-                Program.Log($"WARNING! Could not enqueue {cmd.GetType().Name}");
-            }
-
-            return result;
-        }
-
-        public bool EnqueueToSend(Command cmd)
-        {
-            var result = EnqueueToSend(cmd, TunnelTimeoutMilliseconds);
-            return result;
-        }
-
-        //Per-connection outgoing sequence numbers. Connection-scoped commands (Connect/Forward/TearDown)
-        //carry one in PacketNumber so the counterpart can apply them in order even if the transport
-        //delivers files out of order (e.g. 9p / upload-download). PacketNumber was otherwise an unused
-        //random value on these commands.
-        readonly ConcurrentDictionary<int, long> sendSequenceNumbers = [];
-
-        //Called by the SendPump as each command is dequeued, i.e. in actual send order, so the numbering
-        //is gapless - only commands that are really sent consume a number (a created-but-never-sent
-        //command would otherwise leave a gap and stall the counterpart's reorder buffer).
-        protected void AssignSendSequence(Command command)
-        {
-            var connectionId = command switch
-            {
-                Forward forward => (int?)forward.ConnectionId,
-                Connect connect => connect.ConnectionId,
-                TearDown teardown => teardown.ConnectionId,
-                _ => null
-            };
-
-            if (connectionId is int cid)
-            {
-                command.PacketNumber = (ulong)sendSequenceNumbers.AddOrUpdate(cid, 0L, (_, v) => v + 1);
-            }
-        }
-
-        public byte[]? Read(int connectionId)
-        {
-            if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
-            {
-                return null;
-            }
-
-            byte[]? result = null;
-            try
-            {
-                result = connectionReceiveQueue.Take();
-            }
-            catch (InvalidOperationException)
-            {
-                //This is normal - the queue might have been marked as AddingComplete while we were listening
-            }
-
-            return result;
-        }
-
-        protected void CommandSent(Command command)
-        {
-            if (command is Forward forward && forward.Payload != null)
-            {
-                var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
-                sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
-            }
-
-            if (command is Ping ping && ping.PingType == EnumPingType.Request)
-            {
-                lock (sentPingRequests)
-                {
-                    sentPingRequests.Add((DateTime.Now, ping));
-                }
-            }
-        }
-
-        protected void CommandReceived(Command command)
-        {
-            lastContactFromCounterpart = DateTime.Now;
-
-            // Connect/Forward/TearDown are connection-scoped and carry a per-connection sequence number
-            // (in PacketNumber); they must be applied in order. On a strictly in-order transport
-            // (Normal/IsolatedReads) ReceiveInOrder is a no-op (each is already the expected one); on an
-            // out-of-order one (9p / upload-download) it reassembles them. Ping/CreateListener aren't
-            // connection-scoped, so they bypass the reorder.
-            var connectionId = command switch
-            {
-                Forward forward => (int?)forward.ConnectionId,
-                Connect connect => connect.ConnectionId,
-                TearDown teardown => teardown.ConnectionId,
-                _ => null
-            };
-
-            if (connectionId is int cid)
-            {
-                ReceiveInOrder(cid, command);
-            }
-            else
-            {
-                ProcessCommand(command);
-            }
-        }
-
-        const int MAX_REORDER_BUFFERED_COMMANDS = 10000;
-
-        sealed class ReorderState
-        {
-            public ulong NextExpected;
-            public readonly Dictionary<ulong, Command> Buffer = [];
-        }
-
-        readonly ConcurrentDictionary<int, ReorderState> reorderStates = [];
-
-        //Delivers a connection's commands to ProcessCommand strictly in sequence order: buffers any that
-        //arrive ahead of a gap, discards any that arrive after already being delivered (e.g. a re-read
-        //file). Over 9p the bytes all arrive, just out of order, so a gap fills from a later read.
-        void ReceiveInOrder(int connectionId, Command command)
-        {
-            var state = reorderStates.GetOrAdd(connectionId, _ => new ReorderState());
-            var seq = command.PacketNumber;
-
-            if (seq < state.NextExpected)
-            {
-                return; //already delivered - discard
-            }
-
-            if (seq > state.NextExpected)
-            {
-                //arrived ahead of a gap - hold it until the gap fills
-                if (state.Buffer.Count < MAX_REORDER_BUFFERED_COMMANDS)
-                {
-                    state.Buffer[seq] = command;
-                }
-                else if (Verbose)
-                {
-                    Program.Log($"WARNING! Reorder buffer full for connection {connectionId} (awaiting seq {state.NextExpected}); dropping seq {seq}.");
-                }
-                return;
-            }
-
-            //seq == NextExpected: deliver it, then drain any now-consecutive buffered commands
-            ProcessCommand(command);
-            state.NextExpected++;
-
-            while (state.Buffer.Remove(state.NextExpected, out var buffered))
-            {
-                ProcessCommand(buffered);
-                state.NextExpected++;
-            }
-        }
-
-        void ProcessCommand(Command command)
-        {
-            if (command is Forward forward && forward.Payload != null)
-            {
-                if (ReceiveQueue.TryGetValue(forward.ConnectionId, out var connectionReceiveQueue))
-                {
-                    connectionReceiveQueue.Add(forward.Payload);
-
-                    var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
-                    receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
-                }
-            }
-            else if (command is Connect connect)
-            {
-                if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
-                {
-                    ReceiveQueue.TryAdd(connect.ConnectionId, []);
-
-                    Threads.StartNew(() =>
-                    {
-                        var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
-                        ConnectionAccepted?.Invoke(this, new ConnectionAcceptedEventArgs(sharedFileStream, connect.DestinationEndpointString));
-                    }, "ConnectionAccepted");
-                }
-            }
-            else if (command is CreateListener createListener)
-            {
-                var createLocalListenerEventArgs = new CreateLocalListenerEventArgs(createListener.Protocol, createListener.ForwardString);
-                CreateLocalListenerRequested?.Invoke(this, createLocalListenerEventArgs);
-            }
-            else if (command is ConnectResult connectResult)
-            {
-                //Deliver the dial outcome to a waiting SOCKS host; discard if nobody is waiting (non-SOCKS).
-                if (connectResultWaiters.TryGetValue(connectResult.ConnectionId, out var waiter))
-                {
-                    try { waiter.TryAdd(connectResult.Status); } catch { }
-                }
-            }
-            else if (command is TearDown teardown && ReceiveQueue.TryGetValue(teardown.ConnectionId, out var connectionReceiveQueue))
-            {
-                Program.Log($"Counterpart asked to tear down connection {teardown.ConnectionId}");
-
-                ReceiveQueue.Remove(teardown.ConnectionId, out _);
-
-                connectionReceiveQueue.CompleteAdding();
-
-                //connection finished - drop its reorder + sequence state (also stops a recycled
-                //connection id from inheriting stale sequencing)
-                reorderStates.TryRemove(teardown.ConnectionId, out _);
-                sendSequenceNumbers.TryRemove(teardown.ConnectionId, out _);
-                connectResultWaiters.TryRemove(teardown.ConnectionId, out _);
-            }
-            else if (command is Ping ping)
-            {
-                if (ping.PingType == EnumPingType.Request)
-                {
-                    var response = new Ping(EnumPingType.Response)
-                    {
-                        ResponseToPacketNumber = ping.PacketNumber
-                    };
-
-                    Task.Factory.StartNew(() =>
-                    {
-                        //start in a new task, because we want to continue receiving messages while queuing this message may block
-                        EnqueueToSend(response);
-                    });
-                }
-
-                if (ping.PingType == EnumPingType.Response)
-                {
-                    lock (sentPingRequests)
-                    {
-                        var pingRequest = sentPingRequests.FirstOrDefault(sentPing => sentPing.Ping.PacketNumber == ping.ResponseToPacketNumber);
-
-                        if (pingRequest != default)
-                        {
-                            latestRTT = DateTime.Now - pingRequest.DateSent;
-                            lastSuccessfulPing = DateTime.Now;
-                        }
-                    }
-                }
-            }
-        }
-
-        public void TearDown(int connectionId)
-        {
-            var teardownCommand = new TearDown(connectionId);
-
-            if (IsOnline)
-            {
-                EnqueueToSend(teardownCommand);
-            }
-
-            if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
-            {
-                receiveQueue.CompleteAdding();
-                ReceiveQueue.TryRemove(connectionId, out _);
+                status = (byte)ConnectStatus.GeneralFailure;
             }
 
             connectResultWaiters.TryRemove(connectionId, out _);
         }
 
-        public void TearDownAllConnections()
+        return status;
+    }
+
+    public override void Start()
+    {
+        Task.Factory.StartNew(ReceivePumpAsync, TaskCreationOptions.LongRunning);
+        Task.Factory.StartNew(SendPumpAsync, TaskCreationOptions.LongRunning);
+        Task.Factory.StartNew(SendPingRequestsAsync, TaskCreationOptions.LongRunning);
+        Task.Factory.StartNew(ReportNetworkPerformanceAsync, TaskCreationOptions.LongRunning);
+        Task.Factory.StartNew(MonitorOnlineStatus, TaskCreationOptions.LongRunning);
+
+        if (Debugger.IsAttached)
         {
-            ReceiveQueue
-                .Keys
-                .ToList()
-                .ForEach(connectionId =>
+            //Threads.StartNew(WriteThreadReport, nameof(WriteThreadReport));
+        }
+    }
+
+    public int GenerateUniqueConnectionId()
+    {
+        int result;
+        while (true)
+        {
+            result = Random.Shared.Next(int.MaxValue);
+
+            if (!ReceiveQueue.ContainsKey(result))
+            {
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    public bool EnqueueToSend(Command cmd, int timeoutMilliseconds)
+    {
+        bool result;
+        try
+        {
+            result = SendQueue.TryAdd(cmd, timeoutMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"WARNING! Error while enqueing {cmd.GetType().Name}: {ex.Message}");
+            result = false;
+        }
+
+        if (!result)
+        {
+            Program.Log($"WARNING! Could not enqueue {cmd.GetType().Name}");
+        }
+
+        return result;
+    }
+
+    public bool EnqueueToSend(Command cmd)
+    {
+        var result = EnqueueToSend(cmd, TunnelTimeoutMilliseconds);
+        return result;
+    }
+
+    //Per-connection outgoing sequence numbers. Connection-scoped commands (Connect/Forward/TearDown)
+    //carry one in PacketNumber so the counterpart can apply them in order even if the transport
+    //delivers files out of order (e.g. 9p / upload-download). PacketNumber was otherwise an unused
+    //random value on these commands.
+    private readonly ConcurrentDictionary<int, long> sendSequenceNumbers = [];
+
+    //Called by the SendPump as each command is dequeued, i.e. in actual send order, so the numbering
+    //is gapless - only commands that are really sent consume a number (a created-but-never-sent
+    //command would otherwise leave a gap and stall the counterpart's reorder buffer).
+    protected void AssignSendSequence(Command command)
+    {
+        int? connectionId = command switch
+        {
+            Forward forward => forward.ConnectionId,
+            Connect connect => connect.ConnectionId,
+            TearDown teardown => teardown.ConnectionId,
+            _ => null
+        };
+
+        if (connectionId is null)
+        {
+            return;
+        }
+
+        command.PacketNumber = (ulong)sendSequenceNumbers.AddOrUpdate(connectionId.Value, 0L, (_, v) => v + 1);
+    }
+
+    public byte[]? Read(int connectionId)
+    {
+        if (!ReceiveQueue.TryGetValue(connectionId, out var connectionReceiveQueue))
+        {
+            return null;
+        }
+
+        byte[]? result = null;
+        try
+        {
+            result = connectionReceiveQueue.Take();
+        }
+        catch (InvalidOperationException)
+        {
+            //This is normal - the queue might have been marked as AddingComplete while we were listening
+        }
+
+        return result;
+    }
+
+    protected void CommandSent(Command command)
+    {
+        if (command is Forward forward && forward.Payload != null)
+        {
+            var totalBytesSent = sentBandwidth.TotalBytesTransferred + (ulong)forward.Payload.Length;
+            sentBandwidth.SetTotalBytesTransferred(totalBytesSent);
+        }
+
+        if (command is Ping ping && ping.PingType == EnumPingType.Request)
+        {
+            lock (sentPingRequests)
+            {
+                sentPingRequests.Add((DateTime.Now, ping));
+            }
+        }
+    }
+
+    protected void CommandReceived(Command command)
+    {
+        lastContactFromCounterpart = DateTime.Now;
+
+        // Connect/Forward/TearDown are connection-scoped and carry a per-connection sequence number
+        // (in PacketNumber); they must be applied in order. On a strictly in-order transport
+        // (Normal/IsolatedReads) ReceiveInOrder is a no-op (each is already the expected one); on an
+        // out-of-order one (9p / upload-download) it reassembles them. Ping/CreateListener aren't
+        // connection-scoped, so they bypass the reorder.
+        int? connectionId = command switch
+        {
+            Forward forward => forward.ConnectionId,
+            Connect connect => connect.ConnectionId,
+            TearDown teardown => teardown.ConnectionId,
+            _ => null
+        };
+
+        if (connectionId.HasValue)
+        {
+            ReceiveInOrder(connectionId.Value, command);
+        }
+        else
+        {
+            ProcessCommand(command);
+        }
+    }
+
+    private const int MAX_REORDER_BUFFERED_COMMANDS = 10000;
+
+    private sealed class ReorderState
+    {
+        public ulong NextExpected;
+        public readonly Dictionary<ulong, Command> Buffer = [];
+    }
+
+    private readonly ConcurrentDictionary<int, ReorderState> reorderStates = [];
+
+    //Delivers a connection's commands to ProcessCommand strictly in sequence order: buffers any that
+    //arrive ahead of a gap, discards any that arrive after already being delivered (e.g. a re-read
+    //file). Over 9p the bytes all arrive, just out of order, so a gap fills from a later read.
+    private void ReceiveInOrder(int connectionId, Command command)
+    {
+        var state = reorderStates.GetOrAdd(connectionId, _ => new ReorderState());
+        var seq = command.PacketNumber;
+
+        if (seq < state.NextExpected)
+        {
+            return; //already delivered - discard
+        }
+
+        if (seq > state.NextExpected)
+        {
+            //arrived ahead of a gap - hold it until the gap fills
+            if (state.Buffer.Count < MAX_REORDER_BUFFERED_COMMANDS)
+            {
+                state.Buffer[seq] = command;
+            }
+            else if (Verbose)
+            {
+                Program.Log(
+                    $"WARNING! Reorder buffer full for connection {connectionId} (awaiting seq {state.NextExpected}); dropping seq {seq}.");
+            }
+
+            return;
+        }
+
+        //seq == NextExpected: deliver it, then drain any now-consecutive buffered commands
+        ProcessCommand(command);
+        state.NextExpected++;
+
+        while (state.Buffer.Remove(state.NextExpected, out var buffered))
+        {
+            ProcessCommand(buffered);
+            state.NextExpected++;
+        }
+    }
+
+    private void ProcessCommand(Command command)
+    {
+        if (command is Forward forward && forward.Payload != null)
+        {
+            if (ReceiveQueue.TryGetValue(forward.ConnectionId, out var connectionReceiveQueue))
+            {
+                connectionReceiveQueue.Add(forward.Payload);
+
+                var totalBytesReceived = receivedBandwidth.TotalBytesTransferred + (ulong)(forward.Payload.Length);
+                receivedBandwidth.SetTotalBytesTransferred(totalBytesReceived);
+            }
+        }
+        else if (command is Connect connect)
+        {
+            if (!ReceiveQueue.ContainsKey(connect.ConnectionId))
+            {
+                ReceiveQueue.TryAdd(connect.ConnectionId, []);
+
+                Threads.StartNew(() =>
                 {
-                    TearDown(connectionId);
+                    var sharedFileStream = new SharedFileStream(this, connect.ConnectionId);
+                    ConnectionAccepted?.Invoke(this,
+                        new ConnectionAcceptedEventArgs(sharedFileStream, connect.DestinationEndpointString));
+                }, "ConnectionAccepted");
+            }
+        }
+        else if (command is CreateListener createListener)
+        {
+            var createLocalListenerEventArgs =
+                new CreateLocalListenerEventArgs(createListener.Protocol, createListener.ForwardString);
+            CreateLocalListenerRequested?.Invoke(this, createLocalListenerEventArgs);
+        }
+        else if (command is ConnectResult connectResult)
+        {
+            //Deliver the dial outcome to a waiting SOCKS host; discard if nobody is waiting (non-SOCKS).
+            if (connectResultWaiters.TryGetValue(connectResult.ConnectionId, out var waiter))
+            {
+                try
+                {
+                    waiter.TryAdd(connectResult.Status);
+                }
+                catch
+                {
+                }
+            }
+        }
+        else if (command is TearDown teardown &&
+                 ReceiveQueue.TryGetValue(teardown.ConnectionId, out var connectionReceiveQueue))
+        {
+            Program.Log($"Counterpart asked to tear down connection {teardown.ConnectionId}");
+
+            ReceiveQueue.Remove(teardown.ConnectionId, out _);
+
+            connectionReceiveQueue.CompleteAdding();
+
+            //connection finished - drop its reorder + sequence state (also stops a recycled
+            //connection id from inheriting stale sequencing)
+            reorderStates.TryRemove(teardown.ConnectionId, out _);
+            sendSequenceNumbers.TryRemove(teardown.ConnectionId, out _);
+            connectResultWaiters.TryRemove(teardown.ConnectionId, out _);
+        }
+        else if (command is Ping ping)
+        {
+            if (ping.PingType == EnumPingType.Request)
+            {
+                var response = new Ping(EnumPingType.Response)
+                {
+                    ResponseToPacketNumber = ping.PacketNumber
+                };
+
+                Task.Factory.StartNew(() =>
+                {
+                    //start in a new task, because we want to continue receiving messages while queuing this message may block
+                    EnqueueToSend(response);
                 });
-        }
+            }
 
-        private readonly List<(DateTime DateSent, Ping Ping)> sentPingRequests = [];
-
-        public TimeSpan? latestRTT = null;
-        public void SendPingRequests()
-        {
-            var pingRateLimiter = new FixedWindowRateLimiter(
-                    new FixedWindowRateLimiterOptions()
-                    {
-                        PermitLimit = 1,
-                        Window = TimeSpan.FromMilliseconds(1000),
-                        QueueLimit = int.MaxValue,
-                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-                    });
-
-            while (true)
+            if (ping.PingType == EnumPingType.Response)
             {
-                try
+                lock (sentPingRequests)
                 {
-                    pingRateLimiter.Wait();
+                    var pingRequest = sentPingRequests.FirstOrDefault(sentPing =>
+                        sentPing.Ping.PacketNumber == ping.ResponseToPacketNumber);
 
-                    var pingRequest = new Ping(EnumPingType.Request);
-
-                    EnqueueToSend(pingRequest, 1000);
-
-                    lock (sentPingRequests)
+                    if (pingRequest != default)
                     {
-                        sentPingRequests
-                            .RemoveAll(ping =>
-                            {
-                                var timeSinceSent = DateTime.Now - ping.DateSent;
-                                var remove = timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds;
-                                return remove;
-                            });
+                        latestRTT = DateTime.Now - pingRequest.DateSent;
+                        lastSuccessfulPing = DateTime.Now;
                     }
                 }
-                catch (Exception ex)
-                {
-                    Program.Log($"{nameof(SendPingRequests)}: {ex}");
-                }
-            }
-        }
-
-        readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
-        readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
-        public void ReportNetworkPerformance()
-        {
-            while (true)
-            {
-                try
-                {
-                    var sentBandwidthStr = sentBandwidth.GetBandwidth();
-                    var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
-
-                    lock (Program.ConsoleOutputLock)
-                    {
-                        Console.Write($"{DateTime.Now}  Counterpart: ");
-
-                        if (IsOnline)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Console.Write($"{"Online",-10}");
-
-                            var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
-
-
-                            if (latestRTT != null)
-                            {
-                                logStr += $" {latestRTT.Value.TotalMilliseconds:N0} ms";
-                                latestRTT = null;
-                            }
-
-                            Console.ForegroundColor = Program.OriginalConsoleColour;
-                            Console.WriteLine(logStr);
-                        }
-                        else
-                        {
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            Console.Write($"{"Offline",-10}");
-
-                            var offlineReason = "Counterpart is not responding.";
-
-                            Console.ForegroundColor = Program.OriginalConsoleColour;
-                            Console.WriteLine(offlineReason);
-                        }
-                    }
-
-                    Delay.Wait(reportIntervalMs);
-                }
-                catch (Exception ex)
-                {
-                    Program.Log($"{nameof(ReportNetworkPerformance)}: {ex}");
-                }
-            }
-        }
-
-        private void MonitorOnlineStatus()
-        {
-            // The try/catch is INSIDE the loop: an OnlineStatusChanged subscriber that throws (e.g. a
-            // listener failing to bind an already-used -L port) must not kill this thread - otherwise
-            // IsOnline freezes forever and outages never tear connections down / listeners never restart.
-            while (true)
-            {
-                try
-                {
-                    if (lastContactFromCounterpart != null && lastSuccessfulPing != null)
-                    {
-                        var orig = IsOnline;
-
-                        var timeSinceLastContact = DateTime.Now - lastContactFromCounterpart.Value;
-                        var timeSinceLastSuccessfulPing = DateTime.Now - lastSuccessfulPing.Value;
-
-                        IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds && timeSinceLastSuccessfulPing.TotalMilliseconds < TunnelTimeoutMilliseconds;
-
-                        if (orig != IsOnline)
-                        {
-                            OnlineStatusChanged?.Invoke(this, new OnlineStatusEventArgs(IsOnline));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Program.Log($"{nameof(MonitorOnlineStatus)}: {ex.Message}");
-                }
-
-                Delay.Wait(100);
-            }
-        }
-
-        public static void WriteThreadReport()
-        {
-            while (true)
-            {
-                var threads = Threads
-                                    .CreatedThreads
-                                    .Where(thread => thread.ThreadState != System.Threading.ThreadState.Stopped)
-                                    .OrderBy(thread => thread.ThreadState)
-                                    .ThenBy(thread => thread.Name)
-                                    .Where(thread => !string.IsNullOrEmpty(thread.Name))
-                                    .ToList();
-
-                var threadStr = threads
-                                    .Select((thread, index) => $"{index + 1:N0}/{threads.Count:N0} [{thread.ThreadState}] (Id {thread.ManagedThreadId}) {thread.Name}")
-                                    .ToString(Environment.NewLine);
-
-                Console.WriteLine(threadStr);
-
-                Delay.Wait(10000);
             }
         }
     }
 
-    public class OnlineStatusEventArgs(bool isOnline)
+    public void TearDown(int connectionId)
     {
-        public bool IsOnline { get; } = isOnline;
+        var teardownCommand = new TearDown(connectionId);
+
+        if (IsOnline)
+        {
+            EnqueueToSend(teardownCommand);
+        }
+
+        if (ReceiveQueue.TryGetValue(connectionId, out var receiveQueue))
+        {
+            receiveQueue.CompleteAdding();
+            ReceiveQueue.TryRemove(connectionId, out _);
+        }
+
+        connectResultWaiters.TryRemove(connectionId, out _);
     }
 
-    public class CreateLocalListenerEventArgs(string protocol, string forwardString)
+    public void TearDownAllConnections()
     {
-        public string Protocol { get; } = protocol;
-        public string ForwardString { get; } = forwardString;
+        ReceiveQueue
+            .Keys
+            .ToList()
+            .ForEach(connectionId => { TearDown(connectionId); });
     }
+
+    private readonly List<(DateTime DateSent, Ping Ping)> sentPingRequests = [];
+
+    public TimeSpan? latestRTT = null;
+
+    public async Task SendPingRequestsAsync()
+    {
+        var pingRateLimiter = new FixedWindowRateLimiter(
+            new FixedWindowRateLimiterOptions()
+            {
+                PermitLimit = 1,
+                Window = TimeSpan.FromMilliseconds(1000),
+                QueueLimit = int.MaxValue,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            });
+
+        while (true)
+        {
+            try
+            {
+                using var limit = await pingRateLimiter.AcquireAsync();
+
+                var pingRequest = new Ping(EnumPingType.Request);
+
+                EnqueueToSend(pingRequest, 1000);
+
+                lock (sentPingRequests)
+                {
+                    sentPingRequests
+                        .RemoveAll(ping =>
+                        {
+                            var timeSinceSent = DateTime.Now - ping.DateSent;
+                            var remove = timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds;
+                            return remove;
+                        });
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"{nameof(SendPingRequestsAsync)}: {ex}");
+            }
+        }
+    }
+
+    private readonly BandwidthTracker sentBandwidth = new(100, reportIntervalMs);
+    private readonly BandwidthTracker receivedBandwidth = new(100, reportIntervalMs);
+
+    public async Task ReportNetworkPerformanceAsync()
+    {
+        while (true)
+        {
+            try
+            {
+                var sentBandwidthStr = sentBandwidth.GetBandwidth();
+                var receivedBandwidthStr = receivedBandwidth.GetBandwidth();
+
+                lock (Program.ConsoleOutputLock)
+                {
+                    Console.Write($"{DateTime.Now}  Counterpart: ");
+
+                    if (IsOnline)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.Write($"{"Online",-10}");
+
+                        var logStr = $"Rx: {receivedBandwidthStr,-12} Tx: {sentBandwidthStr,-12}";
+
+
+                        if (latestRTT != null)
+                        {
+                            logStr += $" {latestRTT.Value.TotalMilliseconds:N0} ms";
+                            latestRTT = null;
+                        }
+
+                        Console.ForegroundColor = Program.OriginalConsoleColour;
+                        Console.WriteLine(logStr);
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.Write($"{"Offline",-10}");
+
+                        var offlineReason = "Counterpart is not responding.";
+
+                        Console.ForegroundColor = Program.OriginalConsoleColour;
+                        Console.WriteLine(offlineReason);
+                    }
+                }
+
+                await Task.Delay(reportIntervalMs);
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"{nameof(ReportNetworkPerformanceAsync)}: {ex}");
+            }
+        }
+    }
+
+    private async Task MonitorOnlineStatus()
+    {
+        // The try/catch is INSIDE the loop: an OnlineStatusChanged subscriber that throws (e.g. a
+        // listener failing to bind an already-used -L port) must not kill this thread - otherwise
+        // IsOnline freezes forever and outages never tear connections down / listeners never restart.
+        while (true)
+        {
+            try
+            {
+                if (lastContactFromCounterpart != null && lastSuccessfulPing != null)
+                {
+                    var orig = IsOnline;
+
+                    var timeSinceLastContact = DateTime.Now - lastContactFromCounterpart.Value;
+                    var timeSinceLastSuccessfulPing = DateTime.Now - lastSuccessfulPing.Value;
+
+                    IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds &&
+                               timeSinceLastSuccessfulPing.TotalMilliseconds < TunnelTimeoutMilliseconds;
+
+                    if (orig != IsOnline)
+                    {
+                        OnlineStatusChanged?.Invoke(this, new OnlineStatusEventArgs(IsOnline));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"{nameof(MonitorOnlineStatus)}: {ex.Message}");
+            }
+
+            await Task.Delay(100);
+        }
+    }
+
+    public static void WriteThreadReport()
+    {
+        while (true)
+        {
+            var threads = Threads
+                .CreatedThreads
+                .Where(thread => thread.ThreadState != System.Threading.ThreadState.Stopped)
+                .OrderBy(thread => thread.ThreadState)
+                .ThenBy(thread => thread.Name)
+                .Where(thread => !string.IsNullOrEmpty(thread.Name))
+                .ToList();
+
+            var threadStr = threads
+                .Select((thread, index) =>
+                    $"{index + 1:N0}/{threads.Count:N0} [{thread.ThreadState}] (Id {thread.ManagedThreadId}) {thread.Name}")
+                .ToString(Environment.NewLine);
+
+            Console.WriteLine(threadStr);
+
+            Delay.Wait(10000);
+        }
+    }
+}
+
+public class OnlineStatusEventArgs(bool isOnline)
+{
+    public bool IsOnline { get; } = isOnline;
+}
+
+public class CreateLocalListenerEventArgs(string protocol, string forwardString)
+{
+    public string Protocol { get; } = protocol;
+    public string ForwardString { get; } = forwardString;
 }

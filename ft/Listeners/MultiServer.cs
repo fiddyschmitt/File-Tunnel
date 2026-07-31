@@ -2,177 +2,173 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace ft.Listeners
+namespace ft.Listeners;
+
+public class MultiServer : StreamEstablisher
 {
-    public class MultiServer : StreamEstablisher
+    private readonly List<(StreamEstablisher Listener, bool OriginatedFromRemote, string FullLocalEndpoint, string FullRemoteEndpoint)> servers = [];
+    private bool started = false;
+
+    public MultiServer()
     {
-        readonly List<(StreamEstablisher Listener, bool OriginatedFromRemote, string FullLocalEndpoint, string FullRemoteEndpoint)> servers = [];
-        bool started = false;
 
-        public MultiServer()
+    }
+
+    public void Add(string protocol, string forwardStr, bool originatedFromRemote)
+    {
+        if (protocol == "socks")
         {
-
+            AddSocks(forwardStr, originatedFromRemote);
+            return;
         }
 
-        public void Add(string protocol, string forwardStr, bool originatedFromRemote)
+        if (protocol == "http")
         {
-            if (protocol == "socks")
-            {
-                AddSocks(forwardStr, originatedFromRemote);
-                return;
-            }
-
-            if (protocol == "http")
-            {
-                AddHttpProxy(forwardStr, originatedFromRemote);
-                return;
-            }
-
-            (var listenEndpoint, var destinationEndpoint) = NetworkUtilities.ParseForwardString(forwardStr);
-
-            var fullLocalEndpoint = $"{protocol}://{listenEndpoint}";
-            var fullRemoteEndpoint = $"{protocol}://{destinationEndpoint}";
-
-            var alreadyExists = servers
-                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
-            if (alreadyExists) return;
-
-            StreamEstablisher? listener = null;
-            if (protocol == "tcp")
-            {
-                listener = new TcpServer(listenEndpoint, fullRemoteEndpoint);
-            }
-
-            if (protocol == "udp")
-            {
-                listener = new UdpServer(listenEndpoint, fullRemoteEndpoint);
-            }
-
-            if (listener == null)
-            {
-                throw new Exception($"Could not instantiate listener for: {forwardStr}");
-            }
-
-            Program.Log($"Initialised {protocol} forwarder for: (local) {listenEndpoint} -> (remote) {destinationEndpoint}");
-
-            listener.ConnectionAccepted += (sender, args) =>
-            {
-                ConnectionAccepted?.Invoke(this, args);
-            };
-
-            servers.Add((listener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
-
-            if (started)
-            {
-                listener.Start();
-            }
+            AddHttpProxy(forwardStr, originatedFromRemote);
+            return;
         }
 
-        // Dynamic (SOCKS) listener: no fixed destination, so it can't go through ParseForwardString.
-        // The remote endpoint is a constant sentinel so the (local,remote) dedupe stays idempotent across
-        // the repeated CreateListener re-ships on reconnect / session change.
-        void AddSocks(string listenSpec, bool originatedFromRemote)
+        (var listenEndpoint, var destinationEndpoint) = NetworkUtilities.ParseForwardString(forwardStr);
+
+        var fullLocalEndpoint = $"{protocol}://{listenEndpoint}";
+        var fullRemoteEndpoint = $"{protocol}://{destinationEndpoint}";
+
+        var alreadyExists = servers
+            .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
+        if (alreadyExists) return;
+
+        StreamEstablisher? listener = null;
+        if (protocol == "tcp")
         {
-            var listenEndpoint = NetworkUtilities.ParseListenOnlyString(listenSpec);
+            listener = new TcpServer(listenEndpoint, fullRemoteEndpoint);
+        }
 
-            var fullLocalEndpoint = $"socks://{listenEndpoint}";
-            var fullRemoteEndpoint = "socks://dynamic";
+        if (protocol == "udp")
+        {
+            listener = new UdpServer(listenEndpoint, fullRemoteEndpoint);
+        }
 
-            var alreadyExists = servers
-                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
-            if (alreadyExists) return;
+        if (listener == null)
+        {
+            throw new Exception($"Could not instantiate listener for: {forwardStr}");
+        }
 
-            var socksListener = new SocksServer(listenEndpoint);
+        Program.Log($"Initialised {protocol} forwarder for: (local) {listenEndpoint} -> (remote) {destinationEndpoint}");
 
-            Program.Log($"Initialised SOCKS proxy on {listenEndpoint}");
+        listener.ConnectionAccepted += (sender, args) =>
+        {
+            ConnectionAccepted?.Invoke(this, args);
+        };
 
-            socksListener.ConnectionAccepted += (sender, args) =>
+        servers.Add((listener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
+
+        if (started)
+        {
+            listener.Start();
+        }
+    }
+
+    // Dynamic (SOCKS) listener: no fixed destination, so it can't go through ParseForwardString.
+    // The remote endpoint is a constant sentinel so the (local,remote) dedupe stays idempotent across
+    // the repeated CreateListener re-ships on reconnect / session change.
+    private void AddSocks(string listenSpec, bool originatedFromRemote)
+    {
+        var listenEndpoint = NetworkUtilities.ParseListenOnlyString(listenSpec);
+
+        var fullLocalEndpoint = $"socks://{listenEndpoint}";
+        var fullRemoteEndpoint = "socks://dynamic";
+
+        var alreadyExists = servers
+            .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
+        if (alreadyExists) return;
+
+        var socksListener = new SocksServer(listenEndpoint);
+
+        Program.Log($"Initialised SOCKS proxy on {listenEndpoint}");
+
+        socksListener.ConnectionAccepted += (sender, args) =>
+        {
+            ConnectionAccepted?.Invoke(this, args);
+        };
+
+        servers.Add((socksListener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
+
+        if (started)
+        {
+            socksListener.Start();
+        }
+    }
+
+    // HTTP CONNECT proxy listener - same dynamic (no fixed destination) shape as AddSocks.
+    private void AddHttpProxy(string listenSpec, bool originatedFromRemote)
+    {
+        var listenEndpoint = NetworkUtilities.ParseListenOnlyString(listenSpec);
+
+        var fullLocalEndpoint = $"http://{listenEndpoint}";
+        var fullRemoteEndpoint = "http://dynamic";
+
+        var alreadyExists = servers
+            .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
+        if (alreadyExists) return;
+
+        var httpListener = new HttpProxyServer(listenEndpoint);
+
+        Program.Log($"Initialised HTTP proxy on {listenEndpoint}");
+
+        httpListener.ConnectionAccepted += (sender, args) =>
+        {
+            ConnectionAccepted?.Invoke(this, args);
+        };
+
+        servers.Add((httpListener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
+
+        if (started)
+        {
+            httpListener.Start();
+        }
+    }
+
+    public void Add(string protocol, IEnumerable<string> forwardsStrings, bool originatedFromRemote)
+    {
+        forwardsStrings
+            .ToList()
+            .ForEach(forwardsStr => Add(protocol, forwardsStr, originatedFromRemote));
+    }
+
+    public override void Start()
+    {
+        started = true;
+
+        servers
+            .ForEach(server => server.Listener.Start());
+    }
+
+    public override void Stop(string reason)
+    {
+        if (!started) return;
+
+        started = false;
+
+        servers
+            .ForEach(server => server.Listener.Stop(reason));
+    }
+
+    public void RemoveListenersOriginatingFromRemote(string reason)
+    {
+        servers
+            .RemoveAll(server =>
             {
-                ConnectionAccepted?.Invoke(this, args);
-            };
-
-            servers.Add((socksListener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
-
-            if (started)
-            {
-                socksListener.Start();
-            }
-        }
-
-        // HTTP CONNECT proxy listener - same dynamic (no fixed destination) shape as AddSocks.
-        void AddHttpProxy(string listenSpec, bool originatedFromRemote)
-        {
-            var listenEndpoint = NetworkUtilities.ParseListenOnlyString(listenSpec);
-
-            var fullLocalEndpoint = $"http://{listenEndpoint}";
-            var fullRemoteEndpoint = "http://dynamic";
-
-            var alreadyExists = servers
-                                    .Exists(server => server.FullLocalEndpoint == fullLocalEndpoint && server.FullRemoteEndpoint == fullRemoteEndpoint);
-            if (alreadyExists) return;
-
-            var httpListener = new HttpProxyServer(listenEndpoint);
-
-            Program.Log($"Initialised HTTP proxy on {listenEndpoint}");
-
-            httpListener.ConnectionAccepted += (sender, args) =>
-            {
-                ConnectionAccepted?.Invoke(this, args);
-            };
-
-            servers.Add((httpListener, originatedFromRemote, fullLocalEndpoint, fullRemoteEndpoint));
-
-            if (started)
-            {
-                httpListener.Start();
-            }
-        }
-
-        public void Add(string protocol, IEnumerable<string> forwardsStrings, bool originatedFromRemote)
-        {
-            forwardsStrings
-                .ToList()
-                .ForEach(forwardsStr => Add(protocol, forwardsStr, originatedFromRemote));
-        }
-
-        public override void Start()
-        {
-            started = true;
-
-            servers
-                .ForEach(server => server.Listener.Start());
-        }
-
-        public override void Stop(string reason)
-        {
-            if (!started) return;
-
-            started = false;
-
-            servers
-                .ForEach(server => server.Listener.Stop(reason));
-        }
-
-        public void RemoveListenersOriginatingFromRemote(string reason)
-        {
-            servers
-                .RemoveAll(server =>
+                try
                 {
-                    try
+                    if (server.OriginatedFromRemote)
                     {
-                        if (server.OriginatedFromRemote)
-                        {
-                            server.Listener.Stop(reason);
-                        }
+                        server.Listener.Stop(reason);
                     }
-                    catch { }
+                }
+                catch { }
 
-                    return server.OriginatedFromRemote;
-                });
-        }
+                return server.OriginatedFromRemote;
+            });
     }
 }

@@ -1,49 +1,42 @@
 ﻿using ft.Utilities;
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace ft.IO
+namespace ft.IO;
+
+public class ToggleReader
 {
-    public class ToggleReader
+    private readonly BinaryReader reader;
+    private readonly long position;
+    private readonly int tunnelTimeoutMilliseconds;
+    private readonly bool verbose;
+
+    public ToggleReader(BinaryReader reader, long position, int tunnelTimeoutMilliseconds, bool verbose)
     {
-        readonly BinaryReader reader;
-        readonly long position;
-        private readonly int tunnelTimeoutMilliseconds;
-        private readonly bool verbose;
+        this.reader = reader;
+        this.position = position;
+        this.tunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
+        this.verbose = verbose;
 
-        public ToggleReader(BinaryReader reader, long position, int tunnelTimeoutMilliseconds, bool verbose)
+        reader.BaseStream.Seek(position, SeekOrigin.Begin);
+    }
+
+    public void Wait(byte value)
+    {
+        reader.BaseStream.Seek(position, SeekOrigin.Begin);
+
+        while (true)
         {
-            this.reader = reader;
-            this.position = position;
-            this.tunnelTimeoutMilliseconds = tunnelTimeoutMilliseconds;
-            this.verbose = verbose;
+            var currentValue = reader.PeekChar();
 
-            reader.BaseStream.Seek(position, SeekOrigin.Begin);
-        }
-
-        public void Wait(byte value)
-        {
-            reader.BaseStream.Seek(position, SeekOrigin.Begin);
-
-            int currentValue;
-            while (true)
+            if (currentValue == value)
             {
-                currentValue = reader.PeekChar();
-
-                if (currentValue == value)
-                {
-                    break;
-                }
-
-                //required for VirtualBoxSharedFolder,Normal,Windows,Windows,Linux
-                reader.BaseStream.ForceRead(tunnelTimeoutMilliseconds, verbose);
-
-                Delay.Wait(1);
+                break;
             }
+
+            //required for VirtualBoxSharedFolder,Normal,Windows,Windows,Linux
+            reader.BaseStream.ForceRead(tunnelTimeoutMilliseconds, verbose);
+
+            Delay.Wait(1);
         }
     }
 }
