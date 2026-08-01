@@ -130,6 +130,35 @@ namespace ft.IO.Files
             return memoryStream.ToArray();
         }
 
+        public byte[] ReadBytes(string path, long offset, int count)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(path));
+
+            //Range goes through the signed-header channel: Sign() both adds it to the request and folds
+            //it into the SigV4 canonical headers. The key must be lowercase to match the canonical form.
+            var signedHeaders = new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["range"] = $"bytes={offset}-{offset + count - 1}"
+            };
+
+            Sign(request, CanonicalUri(path), signedHeaders, null);
+            using var response = client.Send(request);
+
+            //A ranged GET answers 206 Partial Content, which EnsureSuccessStatusCode accepts. A server
+            //that ignores Range answers 200 with the whole object, so slice defensively below.
+            response.EnsureSuccessStatusCode();
+
+            using var stream = response.Content.ReadAsStream();
+            using var memoryStream = new MemoryStream();
+            stream.CopyTo(memoryStream);
+
+            return IFileAccess.SliceRange(
+                memoryStream.ToArray(),
+                response.StatusCode == HttpStatusCode.PartialContent,
+                offset,
+                count);
+        }
+
         public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             using var request = new HttpRequestMessage(HttpMethod.Put, BuildUri(path))

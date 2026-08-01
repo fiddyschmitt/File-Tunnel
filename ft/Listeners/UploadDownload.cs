@@ -18,6 +18,13 @@ namespace ft.Listeners
 {
     public class UploadDownload : SharedFileManager
     {
+        //Every file written by SendPump starts with a fixed header - see the "write the file header"
+        //block in SendPump. The readers below only ever want this header, never the commands after it,
+        //so they use IFileAccess.ReadBytes to fetch just these bytes rather than the whole file.
+        const int SESSION_ID_BYTES = sizeof(long);
+        const int DATE_WRITTEN_BYTES = sizeof(long);
+        const int FILE_HEADER_BYTES = SESSION_ID_BYTES + DATE_WRITTEN_BYTES;
+
         private readonly PacedAccess fileAccess;
 
         public UploadDownload(
@@ -290,7 +297,11 @@ namespace ft.Listeners
 
         public static long ReadSessionMetadata(IFileAccess fileAccess, string filename)
         {
-            var sessionMetadataBytes = fileAccess.ReadAllBytes(filename);
+            //Only the session id is wanted. That matters most on the single-subfile transports
+            //(FTP/WebDAV/S3/Dropbox), where this file is not a small metadata file but the payload file
+            //itself - so reading it whole meant downloading every queued command, every few seconds,
+            //just to compare 8 bytes.
+            var sessionMetadataBytes = fileAccess.ReadBytes(filename, 0, SESSION_ID_BYTES);
             using var memoryStream = new MemoryStream(sessionMetadataBytes);
             using var binaryReader = new BinaryReader(memoryStream);
 
@@ -354,7 +365,8 @@ namespace ft.Listeners
                                                     var dateWrittenEpoch = 0L;
                                                     try
                                                     {
-                                                        var content = fileAccess.ReadAllBytes(candidate.Filename);
+                                                        //Only the header is needed to rank the subfiles by recency.
+                                                        var content = fileAccess.ReadBytes(candidate.Filename, 0, FILE_HEADER_BYTES);
                                                         using var contentMs = new MemoryStream(content);
                                                         using var br = new BinaryReader(contentMs);
 

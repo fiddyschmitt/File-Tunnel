@@ -149,6 +149,32 @@ namespace ft.IO.Files
             return memoryStream.ToArray();
         }
 
+        public byte[] ReadBytes(string path, long offset, int count)
+        {
+            //The download endpoint honours a standard Range header, so the callers that only want the
+            //file header don't have to pull the whole object down.
+            using var response = Send(() =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{ContentHost}/2/files/download");
+                request.Headers.TryAddWithoutValidation("Dropbox-API-Arg", PathJson(path));
+                request.Headers.Range = new RangeHeaderValue(offset, offset + count - 1);
+                return request;
+            });
+
+            //EnsureSuccess tests IsSuccessStatusCode, which covers the 206 a ranged request returns.
+            EnsureSuccess(response);
+
+            using var stream = response.Content.ReadAsStream();
+            using var memoryStream = new MemoryStream();
+            stream.CopyTo(memoryStream);
+
+            return IFileAccess.SliceRange(
+                memoryStream.ToArray(),
+                response.StatusCode == HttpStatusCode.PartialContent,
+                offset,
+                count);
+        }
+
         public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             using var response = Send(() =>

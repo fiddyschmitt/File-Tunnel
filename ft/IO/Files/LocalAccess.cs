@@ -79,6 +79,20 @@ namespace ft.IO.Files
             return result;
         }
 
+        public byte[] ReadBytes(string path, long offset, int count)
+        {
+            using var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+            if (offset >= fileStream.Length) return [];
+
+            fileStream.Seek(offset, SeekOrigin.Begin);
+
+            var buffer = new byte[(int)Math.Min(count, fileStream.Length - offset)];
+            fileStream.ReadExactly(buffer);
+
+            return buffer;
+        }
+
         public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             if (overwrite)

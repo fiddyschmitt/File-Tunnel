@@ -120,6 +120,30 @@ namespace ft.IO.Files
             }
         }
 
+        public byte[] ReadBytes(string path, long offset, int count)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(path));
+            request.Headers.Range = new RangeHeaderValue(offset, offset + count - 1);
+
+            lock (client)
+            {
+                using var response = client.Send(request);
+
+                //206 Partial Content on success; EnsureSuccessStatusCode accepts it.
+                response.EnsureSuccessStatusCode();
+
+                using var stream = response.Content.ReadAsStream();
+                using var memoryStream = new MemoryStream();
+                stream.CopyTo(memoryStream);
+
+                return IFileAccess.SliceRange(
+                    memoryStream.ToArray(),
+                    response.StatusCode == HttpStatusCode.PartialContent,
+                    offset,
+                    count);
+            }
+        }
+
         public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             using var request = new HttpRequestMessage(HttpMethod.Put, BuildUri(path))

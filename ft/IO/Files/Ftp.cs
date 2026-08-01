@@ -88,6 +88,13 @@ namespace ft.IO.Files
             }
         }
 
+        //Deliberately NO ranged-read override here: FTP inherits IFileAccess.ReadBytes's whole-file
+        //fallback. FluentFTP can do it (DownloadBytes takes restart/stop positions), but truncating the
+        //data connection desynchronises vsftpd - measured as "500 OOPS: priv_sock_get_cmd" on every
+        //subsequent operation, because this backend shares ONE FtpClient across all of them, so the
+        //session never recovers and the tunnel never comes online. All 3 FTP end-to-end rows timed out
+        //at 152s with the override; all 3 pass in ~10-24s without it.
+
         public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             Reconnect();

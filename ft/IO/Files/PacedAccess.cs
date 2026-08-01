@@ -58,6 +58,14 @@ namespace ft.IO.Files
             return result;
         }
 
+        public byte[] ReadBytes(string path, long offset, int count)
+        {
+            Delay.Wait(paceMilliseconds);
+
+            var result = BaseAccess.ReadBytes(path, offset, count);
+            return result;
+        }
+
         public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
         {
             Delay.Wait(paceMilliseconds);
