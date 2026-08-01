@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ft_tests.Utilities;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -47,16 +48,19 @@ namespace ft_tests.Runner
 
             process = new Process { StartInfo = psi };
 
-            // Subscribe to both output and error streams
+            // Subscribe to both output and error streams. These two handlers are raised on separate
+            // threads and share the log with ConductTest, so the appends must go through TestOutputLog -
+            // it serialises them and, critically, cannot throw back onto an event thread (an unhandled
+            // exception there kills the test host and aborts the whole run).
             process.OutputDataReceived += (s, e) =>
             {
                 if (e.Data != null)
-                    File.AppendAllText(outputFilename, e.Data + Environment.NewLine);
+                    TestOutputLog.AppendLine(outputFilename, e.Data);
             };
             process.ErrorDataReceived += (s, e) =>
             {
                 if (e.Data != null)
-                    File.AppendAllText(outputFilename, "[ERR] " + e.Data + Environment.NewLine);
+                    TestOutputLog.AppendLine(outputFilename, "[ERR] " + e.Data);
             };
 
             process.Start();

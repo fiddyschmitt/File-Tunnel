@@ -993,7 +993,7 @@ namespace ft_tests
         {
 
             var testNumberStr = $"Test {testNumber++}";
-            File.AppendAllLines(localWindowsOutputFilename, [testNumberStr]);
+            TestOutputLog.AppendLine(localWindowsOutputFilename, testNumberStr);
 
             csvWriter.NextRecord();
 
@@ -1095,7 +1095,7 @@ namespace ft_tests
 
 
 
-            File.AppendAllLines(localWindowsOutputFilename, ["--------------------------------------------------------------------------------"]);
+            TestOutputLog.AppendLine(localWindowsOutputFilename, "--------------------------------------------------------------------------------");
 
             Assert.IsTrue(result.Success, result.Errror);
         }
