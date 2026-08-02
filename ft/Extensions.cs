@@ -720,9 +720,18 @@ namespace ft
             }
         }
 
+        //Nullable, and deliberately so: the limiters are only constructed when --write-interval /
+        //--read-interval are set, and both default to 0, so a null limiter is the normal case and must
+        //stay a no-op rather than a dereference.
         public static void Wait(this ReplenishingRateLimiter? limiter)
         {
-            limiter?.AcquireAsync(1, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+            if (limiter == null) return;
+
+            //AcquireAsync hands back a lease that owns the permit; dispose it rather than leaking it.
+            //A FixedWindowRateLimiter replenishes on the window rather than on release, so this changes
+            //nothing today - but it is what the API asks for, and it would matter to any limiter that
+            //returns permits when the lease is released.
+            using var lease = limiter.AcquireAsync(1, CancellationToken.None).AsTask().GetAwaiter().GetResult();
         }
     }
 }
