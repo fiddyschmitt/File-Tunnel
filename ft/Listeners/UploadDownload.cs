@@ -228,7 +228,11 @@ namespace ft.Listeners
                         Program.Log($"[{writeFileShortName}] Serialised {commandsSent:N0} commands into {Path.GetFileName(writeToFilename)} ({memoryStream.Length.BytesToString()})");
                     }
 
-                    var commandBytes = memoryStream.ToArray();
+                    //Hand the backend a window onto the MemoryStream's own buffer rather than copying
+                    //every batch of commands into a fresh exact-size array. Safe to call GetBuffer() -
+                    //this is a parameterless MemoryStream - and the write completes before the buffer is
+                    //reused on the next pass.
+                    var commandBytes = memoryStream.GetBuffer().AsMemory(0, (int)memoryStream.Length);
 
                     Extensions.Time(
                         $"[{writeFileShortName}] Write file",
@@ -256,7 +260,7 @@ namespace ft.Listeners
                                     using var sessionMetadataMemoryStream = new MemoryStream();
                                     using var sessionMetadataWriter = new BinaryWriter(sessionMetadataMemoryStream);
                                     sessionMetadataWriter.Write(sessionId);
-                                    var sessionMetadata = sessionMetadataMemoryStream.ToArray();
+                                    var sessionMetadata = sessionMetadataMemoryStream.GetBuffer().AsMemory(0, (int)sessionMetadataMemoryStream.Length);
 
                                     fileAccess.WriteAllBytes(WriteToFilename, sessionMetadata, true);
                                 }

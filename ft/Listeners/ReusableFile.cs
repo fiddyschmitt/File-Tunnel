@@ -212,8 +212,10 @@ namespace ft.Listeners
                                 //write the message to file
                                 var commandStartPos = fileStream.Position;
 
-                                var commandBytes = ms.ToArray();
-                                binaryWriter.Write(commandBytes);
+                                //Write straight out of the MemoryStream's own buffer. ToArray() would
+                                //copy every command an extra time on the hot path; BinaryWriter takes a
+                                //span, and ms is a parameterless MemoryStream so GetBuffer() is allowed.
+                                binaryWriter.Write(ms.GetBuffer().AsSpan(0, (int)ms.Length));
 
                                 var commandEndPos = fileStream.Position;
 

@@ -175,7 +175,7 @@ namespace ft.IO.Files
                 count);
         }
 
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
+        public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true)
         {
             using var response = Send(() =>
             {
@@ -186,7 +186,7 @@ namespace ft.IO.Files
 
                 var request = new HttpRequestMessage(HttpMethod.Post, $"{ContentHost}/2/files/upload")
                 {
-                    Content = new ByteArrayContent(bytes)
+                    Content = new ReadOnlyMemoryContent(bytes)
                 };
                 request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
                 request.Headers.TryAddWithoutValidation("Dropbox-API-Arg", arg);

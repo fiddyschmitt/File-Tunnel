@@ -159,11 +159,11 @@ namespace ft.IO.Files
                 count);
         }
 
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
+        public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true)
         {
             using var request = new HttpRequestMessage(HttpMethod.Put, BuildUri(path))
             {
-                Content = new ByteArrayContent(bytes)
+                Content = new ReadOnlyMemoryContent(bytes)
             };
 
             var signedHeaders = new SortedDictionary<string, string>(StringComparer.Ordinal);
@@ -229,13 +229,13 @@ namespace ft.IO.Files
 
         //Signs the request using AWS Signature Version 4 and applies the required headers.
         //additionalSignedHeaders are both included in the signature and sent on the request.
-        void Sign(HttpRequestMessage request, string canonicalUri, SortedDictionary<string, string> additionalSignedHeaders, byte[]? payload)
+        void Sign(HttpRequestMessage request, string canonicalUri, SortedDictionary<string, string> additionalSignedHeaders, ReadOnlyMemory<byte>? payload)
         {
             var now = DateTime.UtcNow;
             var amzDate = now.ToString("yyyyMMddTHHmmssZ", CultureInfo.InvariantCulture);
             var dateStamp = now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
-            var payloadHash = payload == null ? EmptyPayloadHash : Sha256Hex(payload);
+            var payloadHash = payload is null ? EmptyPayloadHash : Sha256Hex(payload.Value.Span);
 
             var host = request.RequestUri!.IdnHost;
             if (!request.RequestUri.IsDefaultPort)
@@ -305,7 +305,7 @@ namespace ft.IO.Files
             return result;
         }
 
-        static string Sha256Hex(byte[] data)
+        static string Sha256Hex(ReadOnlySpan<byte> data)
         {
             var result = Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
             return result;

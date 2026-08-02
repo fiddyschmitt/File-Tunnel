@@ -24,7 +24,7 @@ namespace ft_tests
         {
             public bool Exists(string path) => inner.Exists(path);
             public void Delete(string path) => inner.Delete(path);
-            public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true) => inner.WriteAllBytes(path, bytes, overwrite);
+            public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true) => inner.WriteAllBytes(path, bytes, overwrite);
             public void Move(string source, string dest, bool overwrite) => inner.Move(source, dest, overwrite);
             public byte[] ReadAllBytes(string path) => inner.ReadAllBytes(path);
             public long GetFileSize(string path) => inner.GetFileSize(path);

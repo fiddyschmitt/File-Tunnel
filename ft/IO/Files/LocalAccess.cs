@@ -93,23 +93,14 @@ namespace ft.IO.Files
             return buffer;
         }
 
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
+        public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true)
         {
-            if (overwrite)
+            if (!overwrite && Exists(path))
             {
-                File.WriteAllBytes(path, bytes);
+                throw new Exception($"{path} exists. Will not overwrite.");
             }
-            else
-            {
-                if (Exists(path))
-                {
-                    throw new Exception($"{path} exists. Will not overwrite.");
-                }
-                else
-                {
-                    File.WriteAllBytes(path, bytes);
-                }
-            }
+
+            File.WriteAllBytes(path, bytes.Span);
         }
 
         //public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)

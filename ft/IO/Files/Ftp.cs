@@ -95,15 +95,21 @@ namespace ft.IO.Files
         //session never recovers and the tunnel never comes online. All 3 FTP end-to-end rows timed out
         //at 152s with the override; all 3 pass in ~10-24s without it.
 
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
+        public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true)
         {
             Reconnect();
+
+            //FTP is the one backend that still needs an exact-size array: FluentFTP's UploadBytes takes a
+            //byte[] with no offset/length, and the caller hands us a slice of a larger buffer whose spare
+            //capacity must not be uploaded. Copied outside the lock so it doesn't hold up the single
+            //shared connection. Every other backend writes the caller's buffer without copying.
+            var buffer = bytes.ToArray();
 
             lock (client)
             {
                 if (overwrite)
                 {
-                    client.UploadBytes(bytes, path, FtpRemoteExists.Overwrite);
+                    client.UploadBytes(buffer, path, FtpRemoteExists.Overwrite);
                 }
                 else
                 {
@@ -112,7 +118,7 @@ namespace ft.IO.Files
                         throw new Exception($"{path} exists. Will not overwrite.");
                     }
 
-                    client.UploadBytes(bytes, path);
+                    client.UploadBytes(buffer, path);
                 }
             }
         }

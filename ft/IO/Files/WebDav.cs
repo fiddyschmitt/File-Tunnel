@@ -144,11 +144,11 @@ namespace ft.IO.Files
             }
         }
 
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
+        public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true)
         {
             using var request = new HttpRequestMessage(HttpMethod.Put, BuildUri(path))
             {
-                Content = new ByteArrayContent(bytes)
+                Content = new ReadOnlyMemoryContent(bytes)
             };
 
             if (!overwrite)

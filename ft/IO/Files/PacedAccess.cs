@@ -66,7 +66,7 @@ namespace ft.IO.Files
             return result;
         }
 
-        public void WriteAllBytes(string path, byte[] bytes, bool overwrite = true)
+        public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true)
         {
             Delay.Wait(paceMilliseconds);
 

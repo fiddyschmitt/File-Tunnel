@@ -12,7 +12,10 @@ namespace ft.IO.Files
 
         void Delete(string path);
 
-        void WriteAllBytes(string path, byte[] bytes, bool overwrite = true);
+        //Takes ReadOnlyMemory rather than byte[] so callers can hand over a slice of a buffer they
+        //already hold instead of allocating an exact-size copy of every command. Memory rather than
+        //Span because the HTTP backends wrap it in ReadOnlyMemoryContent, which has to store it.
+        void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true);
 
         void Move(string sourceFileName, string destFileName, bool overwrite);
 
