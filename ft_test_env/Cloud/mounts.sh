@@ -11,13 +11,44 @@
 
 MOUNT_TIMEOUT=25
 
+# A mount can be present in /proc/mounts yet unusable: a 9p mount whose diod was restarted (the
+# in-kernel 9p client cannot reconnect), or a CIFS/NFS mount whose server went away. Such a mount
+# fails `mountpoint -q`, because stat() on the mountpoint errors.
+#
+# That used to mean "not mounted, so mount it" - which stacked a fresh mount on top of the dead one
+# without ever clearing it. Every re-run added another layer, and because the dead layer is what
+# stat() lands on, the mountpoint stayed broken no matter how many times this script ran. Health
+# checks then reported "not mounted" forever. So: probe for usability, not just presence, and
+# unstack anything dead before mounting.
+mount_is_healthy() {
+    local mp="$1"
+    mountpoint -q "$mp" 2>/dev/null || return 1
+    # Present AND responsive - catches a hung server that still leaves the mount listed.
+    timeout 5 stat "$mp" >/dev/null 2>&1 || return 1
+    return 0
+}
+
+clear_dead_mounts() {
+    local mp="$1" i
+    # Lazy umount so a hung server can't block, and repeated to unstack layers left by earlier runs.
+    for i in 1 2 3 4 5; do
+        grep -q " ${mp} " /proc/mounts 2>/dev/null || break
+        timeout "$MOUNT_TIMEOUT" umount -l "$mp" 2>/dev/null || break
+    done
+}
+
 remount() {
     local type="$1" src="$2" mp="$3" opts="$4"
-    mkdir -p "$mp"
-    if mountpoint -q "$mp"; then
+    if mount_is_healthy "$mp"; then
         echo "Already mounted: $mp"
         return 0
     fi
+    # Clear before mkdir: stat() on a broken mountpoint returns EIO, so mkdir -p would fail there.
+    if grep -q " ${mp} " /proc/mounts 2>/dev/null; then
+        echo "Clearing unusable mount(s) at $mp"
+        clear_dead_mounts "$mp"
+    fi
+    mkdir -p "$mp"
     if [ -n "$opts" ]; then
         timeout "$MOUNT_TIMEOUT" mount -t "$type" "$src" "$mp" -o "$opts" \
             && echo "Mounted: $src -> $mp" \
