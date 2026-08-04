@@ -20,6 +20,11 @@ namespace ft.Listeners
 {
     public class ReusableFile : SharedFileManager
     {
+        //How long to keep re-reading a command that is only partially visible before giving up and
+        //falling back to restarting the pump. Comfortably under the tunnel timeout, so a genuinely
+        //corrupt read still surfaces long before the counterpart could be declared offline.
+        const int ReadRetryMilliseconds = 2000;
+
         const long SESSION_ID = 0;
         const int READY_FOR_PURGE_FLAG = sizeof(long);
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
@@ -410,15 +415,46 @@ namespace ft.Listeners
                         var commandStartPos = fileStream.Position;
                         Command? command;
 
-                        try
+                        //A partially-visible command is normal on a transport that doesn't publish a
+                        //writer's append atomically - the VirtualBox shared folder and RDP's \\tsclient
+                        //redirector both hand us a Forward whose payload is still arriving ("Forward
+                        //payload truncated: read N of 65535 bytes"). The bytes are in flight, not corrupt,
+                        //so re-read the same command in place: seek back, refresh the view, try again.
+                        //
+                        //This used to fall straight through to the restart path below, which reopens the
+                        //file, re-reads the session id and costs ~1.5s. A couple of those in a row aged the
+                        //keepalive past the tunnel timeout, so the tunnel went offline and tore down every
+                        //carried connection mid-transfer - surfacing as a truncated payload in the test.
+                        //Recovering in place keeps it to milliseconds and leaves the ping unstarved.
+                        //
+                        //Bounded, and the old restart path is still the fallback: if the data really is
+                        //corrupt rather than late, this gives up after ReadRetryMilliseconds and behaves
+                        //exactly as before.
+                        var readAttempt = Stopwatch.StartNew();
+                        while (true)
                         {
-                            command = Command.Deserialise(binaryReader);
+                            try
+                            {
+                                command = Command.Deserialise(binaryReader);
+                                break;
+                            }
+                            catch when (readAttempt.ElapsedMilliseconds < ReadRetryMilliseconds)
+                            {
+                                fileStream.Seek(commandStartPos, SeekOrigin.Begin);
+                                fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
+                                Delay.Wait(1);
+                            }
+                            catch
+                            {
+                                retryPos = commandStartPos;
+                                Delay.Wait(500);
+                                throw;
+                            }
                         }
-                        catch
+
+                        if (Verbose && readAttempt.ElapsedMilliseconds > 0)
                         {
-                            retryPos = commandStartPos;
-                            Delay.Wait(500);
-                            throw;
+                            Program.Log($"[{readFileShortName}] Re-read a partially-visible command at position {commandStartPos:N0} after {readAttempt.ElapsedMilliseconds:N0} ms.");
                         }
 
                         var commandEndPos = fileStream.Position;
