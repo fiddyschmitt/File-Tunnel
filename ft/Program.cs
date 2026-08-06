@@ -32,6 +32,7 @@ namespace ft
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WebDavOptions))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(S3Options))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(DropboxOptions))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(SqsOptions))]
         public static void Main(string[] args)
         {
             if (args.Contains("--version"))
@@ -78,6 +79,13 @@ namespace ft
                 parser
                     .ParseArguments<DropboxOptions>(args)
                     .WithParsed(RunDropboxSession)
+                    .WithNotParsed(err => Environment.Exit(1));
+            }
+            else if (args.Contains("--sqs"))
+            {
+                parser
+                    .ParseArguments<SqsOptions>(args)
+                    .WithParsed(RunSqsSession)
                     .WithNotParsed(err => Environment.Exit(1));
             }
             else
@@ -197,6 +205,34 @@ namespace ft
                                              o.Verbose);
 
             RunSession(sharedFileManager, o, o.MaxFileSizeBytes);
+        }
+
+        private static void RunSqsSession(SqsOptions o)
+        {
+            var accessKey = o.ResolveAccessKey();
+            var secretKey = o.ResolveSecretKey();
+
+            if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
+            {
+                Log("An SQS access key and secret key are required. Provide them via --access-key / --secret-key, or via the FT_SQS_ACCESS_KEY / FT_SQS_SECRET_KEY environment variables.", ConsoleColor.Red);
+                Environment.Exit(1);
+                return;
+            }
+
+            ApplyHttpBackendTuning("SQS");
+
+            var sqsTunnel = new ft.Listeners.SqsTunnel(
+                o.Region,
+                accessKey,
+                secretKey,
+                o.ReadFrom.Trim(),
+                o.WriteTo.Trim(),
+                Options.TunnelTimeoutMilliseconds,
+                o.Verbose,
+                o.MaxConnections,
+                o.MaxFileSizeBytes);
+
+            RunSession(sqsTunnel, o, o.MaxFileSizeBytes);
         }
 
         private static void RunDropboxSession(DropboxOptions o)
