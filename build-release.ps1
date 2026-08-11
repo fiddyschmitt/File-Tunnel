@@ -20,7 +20,9 @@ $ErrorActionPreference = 'Stop'
 $proj = Join-Path $PSScriptRoot 'ft\ft.csproj'
 
 # RIDs shipped on the GitHub releases. Each has a publish profile of the same name.
-$rids = @('win-x64', 'win-arm64', 'linux-x64', 'linux-arm', 'linux-arm64', 'osx-x64', 'osx-arm64')
+# linux-musl-x64 covers musl-libc distros (Alpine, and Alpine-based containers), which the
+# glibc linux-x64 build does not run on.
+$rids = @('win-x64', 'win-arm64', 'linux-x64', 'linux-musl-x64', 'linux-arm', 'linux-arm64', 'osx-x64', 'osx-arm64')
 
 # Fresh output folder
 if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
