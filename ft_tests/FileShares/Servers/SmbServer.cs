@@ -20,6 +20,8 @@ namespace ft_tests.FileShares.Servers
         {
             if (OS == OS.Linux) processRunner.Run("systemctl", "restart smbd");
             if (OS == OS.Windows) processRunner.Run(@"cmd.exe", "/c net stop lanmanserver && net start lanmanserver");
+            // OS.Mac: intentionally a no-op. Kickstarting the Mac's smbd would drop every client's mount to
+            // its share mid-test; the client-side F_NOCACHE refresh (MacDirectRefresh) handles staleness.
         }
     }
 }
