@@ -465,6 +465,10 @@ namespace ft
         private static extern int libc_close(int fd);
         [DllImport("libc", SetLastError = true, EntryPoint = "statfs")]
         private static extern int statfs(string path, byte[] buf);
+        [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
+        private static extern int libc_fcntl(int fd, int cmd, int arg);
+        private const int MAC_F_NOCACHE = 48;   // macOS: turn the unified buffer cache off for this fd
+        private const int MAC_REFRESH_BYTES = 65536;   // one read through the F_NOCACHE handle to refresh the held view
         private const int O_RDONLY = 0;
         private const int SEEK_SET = 0;
         private const int DIRECT_ALIGN = 4096; // O_DIRECT buffer/offset/length alignment
@@ -648,6 +652,10 @@ namespace ft
                         catch { }
                     }
                 }
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                {
+                    MacDirectRefresh(fileStream);
+                }
                 else
                 {
                     fileStream.Flush(verbose, tunnelTimeoutMilliseconds);
@@ -713,6 +721,42 @@ namespace ft
             {
                 return false;
             }
+            finally
+            {
+                if (raw != IntPtr.Zero) Marshal.FreeHGlobal(raw);
+                libc_close(fd);
+            }
+        }
+
+        // macOS: a long-lived (held) read handle on a network mount - notably smbfs - is served a STALE view.
+        // It never sees a counterpart's appends, and even reopening the handle returns the cached size (the
+        // smbfs attribute cache survives a handle reopen), so a Normal-mode reader stalls forever at the
+        // handshake. Reading the page the reader is waiting on through a SEPARATE handle with F_NOCACHE (the
+        // unified buffer cache turned off for that fd) forces a server round-trip that refreshes the pages the
+        // held handle then reads from - the macOS analog of the Linux O_DIRECT TryDirectRefresh.
+        //
+        // Gating is INVERTED from Linux: there, CIFS/NFS revalidate on read so they're skipped and only FUSE
+        // gets refreshed; on macOS smbfs does NOT revalidate, so the refresh is required. Run unconditionally
+        // on macOS - ft only ForceReads its own tunnel files (which live on the caching mount), and on a
+        // coherent mount at a genuine EOF the separate read simply returns 0 bytes, a cheap no-op. Verified to
+        // make Normal mode work across sender/receiver position, sustained load, and Samba + Windows servers.
+        private static void MacDirectRefresh(FileStream fileStream)
+        {
+            var fd = libc_open(fileStream.Name, O_RDONLY);
+            if (fd < 0)
+            {
+                return;
+            }
+
+            var raw = IntPtr.Zero;
+            try
+            {
+                libc_fcntl(fd, MAC_F_NOCACHE, 1);
+                raw = Marshal.AllocHGlobal(MAC_REFRESH_BYTES);
+                libc_lseek(fd, fileStream.Position, SEEK_SET);
+                _ = libc_read(fd, raw, MAC_REFRESH_BYTES);
+            }
+            catch { }
             finally
             {
                 if (raw != IntPtr.Zero) Marshal.FreeHGlobal(raw);

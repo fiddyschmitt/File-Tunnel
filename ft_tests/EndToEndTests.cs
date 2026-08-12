@@ -199,11 +199,15 @@ namespace ft_tests
         [DataRow(OS.Linux, OS.Windows, OS.Linux, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.Normal)]
         [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.IsolatedReads)]
-        // Mac as an SMB client, over the .81 Samba share. IsolatedReads only: macOS's SMB client caches
-        // aggressively, so (like sshfs / vboxsf / the Windows SMB redirector) a held-handle Normal read is
-        // stale. IsolatedReads' reopen-per-read, made coherent by the F_NOCACHE bypass in
-        // IsolatedReadsFileStream, is what works.
+        // Mac as an SMB client, over the .81 Samba share. Both modes work. macOS's SMB client caches
+        // aggressively - a held-handle read is stale even across a reopen (the smbfs attribute cache
+        // survives it) - so both modes defeat the cache with F_NOCACHE: IsolatedReads reopens per read
+        // (IsolatedReadsFileStream), and Normal's ForceRead reads the awaited page through a separate
+        // F_NOCACHE handle (MacDirectRefresh), refreshing the held view - the macOS analog of the Linux
+        // O_DIRECT refresh. Both tunnel directions covered.
+        [DataRow(OS.Mac, OS.Linux, OS.Linux, Mode.Normal, DisplayName = "Smb Mac-Linux-Linux Normal")]
         [DataRow(OS.Mac, OS.Linux, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Linux-Linux-Mac Normal")]
         [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Linux-Mac IsolatedReads")]
         public void Smb(OS client1OS, OS serverOS, OS client2OS, Mode mode)
         {
