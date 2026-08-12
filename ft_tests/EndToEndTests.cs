@@ -24,6 +24,10 @@ namespace ft_tests
     {
         const string WIN_X64_EXE = @"R:\Temp\ft release\win-x64\ft.exe";
         const string LINUX_X64_EXE = @"R:\Temp\ft release\linux-x64\ft";
+        const string OSX_ARM64_EXE = @"R:\Temp\ft release\osx-arm64\ft";
+
+        // The Mac mounts the SMB shares in userspace under here (assumes the 'smith' login on .33).
+        const string MAC_SMB_ROOT = "/Users/smith/mnt/smb";
 
         // SOCKS end-to-end test: the dev box (this test process) is 192.168.0.31 and hosts the controlled
         // destinations the SOCKS exit dials; side1 hosts the SOCKS proxy on :5005.
@@ -48,6 +52,8 @@ namespace ft_tests
         static ProcessRunner linux_x64_1;
         static ProcessRunner linux_x64_2;
         static ProcessRunner linux_x64_3;
+
+        static ProcessRunner mac_1;   // the Mac (.33) — SMB client to start
 
         // Dropbox credentials (user-secrets). When absent, the Dropbox test skips (Assert.Inconclusive)
         // rather than failing - it hits real Dropbox (no local emulator), so it is opt-in.
@@ -106,6 +112,17 @@ namespace ft_tests
             linux_x64_1 = new LinuxProcessRunner("192.168.0.80", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.80.log");
             linux_x64_2 = new LinuxProcessRunner("192.168.0.81", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.81.log");
             linux_x64_3 = new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.82.log");
+
+            // The Mac (.33): SSH key auth, no sudo, ft in userspace. It is not orchestrator-managed, so its
+            // SMB client mounts are ensured here rather than by the Linux provisioning - a guest mount of the
+            // .81 Samba share, done idempotently (skip if already mounted).
+            var macUser = config["mac_ssh_username"] ?? "smith";
+            var macKey = config["mac_ssh_keypath"] ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519");
+            mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log");
+            // Guest mount of the .81 Samba share. NOTE: macOS's SMB client caching is not yet solved for
+            // ft (see the Mac-SMB investigation notes) - a reader does not reliably see the counterpart's
+            // appends. Kept here so the plumbing stays wired while that is worked out.
+            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.81/data\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs -N //GUEST:@192.168.0.81/data \"$MP\"");
 
 
             var writer = new StreamWriter(testResultsFilename)
@@ -182,6 +199,12 @@ namespace ft_tests
         [DataRow(OS.Linux, OS.Windows, OS.Linux, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.Normal)]
         [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        // Mac as an SMB client, over the .81 Samba share. IsolatedReads only: macOS's SMB client caches
+        // aggressively, so (like sshfs / vboxsf / the Windows SMB redirector) a held-handle Normal read is
+        // stale. IsolatedReads' reopen-per-read, made coherent by the F_NOCACHE bypass in
+        // IsolatedReadsFileStream, is what works.
+        [DataRow(OS.Mac, OS.Linux, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Linux-Mac IsolatedReads")]
         public void Smb(OS client1OS, OS serverOS, OS client2OS, Mode mode)
         {
             SmbServer smbServer = serverOS == OS.Linux
@@ -193,12 +216,12 @@ namespace ft_tests
 
             var writePath1 = SmbPathLookup(client1OS, serverOS, filename1);
             var readPath1 = SmbPathLookup(client1OS, serverOS, filename2);
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var client1Runner = client1OS switch { OS.Windows => win10_x64_1, OS.Mac => mac_1, _ => linux_x64_1 };
             var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1}");
 
             var readPath2 = SmbPathLookup(client2OS, serverOS, filename1);
             var writePath2 = SmbPathLookup(client2OS, serverOS, filename2);
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var client2Runner = client2OS switch { OS.Windows => win10_x64_3, OS.Mac => mac_1, _ => linux_x64_3 };
             var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2}");
 
             ConductTunnelTests(mode, side1, smbServer, side2, readPath1, writePath1, readPath2, writePath2);
@@ -216,6 +239,8 @@ namespace ft_tests
                 (OS.Windows, OS.Linux) => @$"\\192.168.0.81\data\",
                 (OS.Linux, OS.Windows) => @$"/media/smb/192.168.0.32/shared/",
                 (OS.Linux, OS.Linux) => @$"/media/smb/192.168.0.81/data/",
+                (OS.Mac, OS.Linux) => $@"{MAC_SMB_ROOT}/192.168.0.81/data/",
+                (OS.Mac, OS.Windows) => $@"{MAC_SMB_ROOT}/192.168.0.32/shared/",
                 _ => throw new InvalidOperationException("Unsupported client/server OS combo")
             };
 
