@@ -6,8 +6,12 @@ namespace ft_tests.Runner
     // A macOS node. Modeled on LinuxProcessRunner, with two deliberate differences:
     //  - SSH KEY auth, not a password. The Mac is set up for public-key login; SSH.NET loads the
     //    private key (ed25519) and authenticates with it.
-    //  - NO sudo. sudo needs a password on the Mac, and it isn't needed anyway: ft runs in userspace,
-    //    and the SMB shares are mounted as the user (mount_smbfs, no root).
+    //  - NO sudo to run ft (userspace) or to mount client shares (mount_smbfs as the user). The
+    //    server-side SMB setup is the exception - it uses passwordless sudo granted on the Mac.
+    //
+    // There is only one physical Mac, so a combo with Mac on BOTH tunnel sides puts two ft processes on
+    // it at once. Each runner instance therefore deploys ft under a UNIQUE name (ft-1, ft-2, ...) and
+    // Stop() kills only that one by its full path - a global "pkill ft" would take out the other side.
     public class MacProcessRunner : ProcessRunner
     {
         private readonly SshClient sshClient;
@@ -15,25 +19,26 @@ namespace ft_tests.Runner
         private readonly string remoteExecutablePath;
         private readonly string outputFilename;
 
-        public MacProcessRunner(string host, string username, string privateKeyPath, string localExecutablePath, string outputFilename, int port = 22) : base(host)
+        public MacProcessRunner(string host, string username, string privateKeyPath, string localExecutablePath, string outputFilename, int instance = 1, int port = 22) : base(host)
         {
             var keyFile = new PrivateKeyFile(privateKeyPath);
             connectionInfo = new ConnectionInfo(host, port, username, new PrivateKeyAuthenticationMethod(username, keyFile));
 
             var remoteFolder = "/tmp/ft/";
-            remoteExecutablePath = remoteFolder + Path.GetFileName(localExecutablePath);
+            // Unique per instance so two ft processes can coexist on the one Mac; Stop() kills only this path.
+            remoteExecutablePath = $"{remoteFolder}{Path.GetFileName(localExecutablePath)}-{instance}";
 
             sshClient = new SshClient(connectionInfo);
             sshClient.Connect();
 
             sshClient.CreateCommand($"mkdir -p \"{remoteFolder}\"").Execute();
-
+            // One-time cleanup of strays, incl. the old single-name "ft" (safe: constructors run at
+            // ClassInit, before any test launches ft).
+            sshClient.CreateCommand("pkill -x ft || true").Execute();
             Stop();
 
             var scpClient = new ScpClient(connectionInfo);
             scpClient.Connect();
-
-            Stop();
             scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
 
             sshClient.CreateCommand($"chmod +x \"{remoteExecutablePath}\"").Execute();
@@ -59,8 +64,9 @@ namespace ft_tests.Runner
 
         public override TimeSpan? Stop()
         {
-            var processName = Path.GetFileName(remoteExecutablePath);
-            sshClient.CreateCommand($"pkill -x \"{processName}\" || true").Execute();
+            // Kill only THIS instance's ft (matched by its unique full path), never a global pkill - the
+            // other tunnel side may be a second ft on this same Mac.
+            sshClient.CreateCommand($"pkill -f \"{remoteExecutablePath}\" || true").Execute();
             return null;
         }
 

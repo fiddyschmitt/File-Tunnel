@@ -53,7 +53,8 @@ namespace ft_tests
         static ProcessRunner linux_x64_2;
         static ProcessRunner linux_x64_3;
 
-        static ProcessRunner mac_1;   // the Mac (.33) — SMB client to start
+        static ProcessRunner mac_1;   // the Mac (.33) — side-1 ft (unique exe ft-1)
+        static ProcessRunner mac_2;   // the Mac (.33) — side-2 ft (unique exe ft-2), so Mac can be on both sides
 
         // Dropbox credentials (user-secrets). When absent, the Dropbox test skips (Assert.Inconclusive)
         // rather than failing - it hits real Dropbox (no local emulator), so it is opt-in.
@@ -106,23 +107,34 @@ namespace ft_tests
             }
 
             win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE, localWindowsOutputFilename);
-            win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); //win10 VM
-            win10_x64_3 = new RemoteWindowsProcessRunner("192.168.0.20", config["edm_username"], config["edm_password"], WIN_X64_EXE);          //elitedesk
+            // A remote lab node can be unreachable - the .20 elitedesk in particular degrades over long
+            // sessions (its SSH/runremote dies while the box still pings). Tolerate it so one dead node
+            // doesn't abort ClassInit and block the entire suite: a row that needs the missing node is
+            // skipped (Assert.Inconclusive - see the guard in the test methods), and every row that does
+            // not use it still runs.
+            try { win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); } //win10 VM
+            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_2 (.32) unavailable: {ex.Message}"); win10_x64_2 = null!; }
+            try { win10_x64_3 = new RemoteWindowsProcessRunner("192.168.0.20", config["edm_username"], config["edm_password"], WIN_X64_EXE); } //elitedesk
+            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_3 (.20) unavailable: {ex.Message}"); win10_x64_3 = null!; }
 
             linux_x64_1 = new LinuxProcessRunner("192.168.0.80", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.80.log");
             linux_x64_2 = new LinuxProcessRunner("192.168.0.81", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.81.log");
             linux_x64_3 = new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.82.log");
 
-            // The Mac (.33): SSH key auth, no sudo, ft in userspace. It is not orchestrator-managed, so its
-            // SMB client mounts are ensured here rather than by the Linux provisioning - a guest mount of the
-            // .81 Samba share, done idempotently (skip if already mounted).
+            // The Mac (.33): SSH key auth, ft in userspace. Not orchestrator-managed, so its SMB client
+            // mounts are ensured here rather than by Linux provisioning. Two runner instances (ft-1/ft-2)
+            // let the Mac be on both tunnel sides at once. macOS Normal-mode SMB works via MacDirectRefresh
+            // (ForceRead's separate F_NOCACHE read), so both modes are covered.
             var macUser = config["mac_ssh_username"] ?? "smith";
             var macKey = config["mac_ssh_keypath"] ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519");
-            mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log");
-            // Guest mount of the .81 Samba share. NOTE: macOS's SMB client caching is not yet solved for
-            // ft (see the Mac-SMB investigation notes) - a reader does not reliably see the counterpart's
-            // appends. Kept here so the plumbing stays wired while that is worked out.
+            mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log", instance: 1);
+            mac_2 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac2.log", instance: 2);
+            // Client mounts (idempotent, as the user - no sudo): the .81 Samba share as guest, and the .32
+            // Windows share with the smb credentials (the same account the Linux nodes use for it).
+            var macSmbUser = config["win10_vm_username"];
+            var macSmbPass = config["win10_vm_password"];
             mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.81/data\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs -N //GUEST:@192.168.0.81/data \"$MP\"");
+            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.32/shared\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs \"//{macSmbUser}:{macSmbPass}@192.168.0.32/Shared\" \"$MP\"");
 
 
             var writer = new StreamWriter(testResultsFilename)
@@ -209,6 +221,24 @@ namespace ft_tests
         [DataRow(OS.Mac, OS.Linux, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Linux IsolatedReads")]
         [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Linux-Linux-Mac Normal")]
         [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Linux-Mac IsolatedReads")]
+        // Mac client against Windows (.32) and Linux (.81) servers, paired with every other-client OS
+        // (Windows/Linux/Mac). The two-Mac rows exercise ft-1 + ft-2 coexisting on the single Mac.
+        [DataRow(OS.Mac, OS.Windows, OS.Windows, Mode.Normal, DisplayName = "Smb Mac-Windows-Windows Normal")]
+        [DataRow(OS.Mac, OS.Windows, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Mac-Windows-Windows IsolatedReads")]
+        [DataRow(OS.Mac, OS.Windows, OS.Linux, Mode.Normal, DisplayName = "Smb Mac-Windows-Linux Normal")]
+        [DataRow(OS.Mac, OS.Windows, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Windows-Linux IsolatedReads")]
+        [DataRow(OS.Mac, OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Smb Mac-Windows-Mac Normal")]
+        [DataRow(OS.Mac, OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Mac-Windows-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Linux, OS.Windows, Mode.Normal, DisplayName = "Smb Mac-Linux-Windows Normal")]
+        [DataRow(OS.Mac, OS.Linux, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Mac, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Mac-Linux-Mac Normal")]
+        [DataRow(OS.Mac, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Windows, OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Smb Windows-Windows-Mac Normal")]
+        [DataRow(OS.Windows, OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Windows-Windows-Mac IsolatedReads")]
+        [DataRow(OS.Windows, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Windows-Linux-Mac Normal")]
+        [DataRow(OS.Windows, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Windows-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Linux, OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Smb Linux-Windows-Mac Normal")]
+        [DataRow(OS.Linux, OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Windows-Mac IsolatedReads")]
         public void Smb(OS client1OS, OS serverOS, OS client2OS, Mode mode)
         {
             SmbServer smbServer = serverOS == OS.Linux
@@ -225,8 +255,13 @@ namespace ft_tests
 
             var readPath2 = SmbPathLookup(client2OS, serverOS, filename1);
             var writePath2 = SmbPathLookup(client2OS, serverOS, filename2);
-            var client2Runner = client2OS switch { OS.Windows => win10_x64_3, OS.Mac => mac_1, _ => linux_x64_3 };
+            var client2Runner = client2OS switch { OS.Windows => win10_x64_3, OS.Mac => mac_2, _ => linux_x64_3 };
             var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2}");
+
+            // A required lab node may be down (see the ClassInit tolerance). Skip rather than NRE-fail, so
+            // one dead node doesn't fail rows across the matrix; the row runs once the node is back.
+            if (client1Runner is null || client2Runner is null || (serverOS == OS.Windows && win10_x64_2 is null))
+                Assert.Inconclusive($"Skipped: a required lab node is unavailable ({client1OS}-{serverOS}-{client2OS} {mode}).");
 
             ConductTunnelTests(mode, side1, smbServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
