@@ -129,11 +129,15 @@ namespace ft_tests
             var macKey = config["mac_ssh_keypath"] ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519");
             mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log", instance: 1);
             mac_2 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac2.log", instance: 2);
-            // Client mounts (idempotent, as the user - no sudo): the .81 Samba share as guest, and the .32
-            // Windows share with the smb credentials (the same account the Linux nodes use for it).
+            // Client mounts (idempotent, as the user - no sudo): the .81 Samba share and the .32 Windows
+            // share, both with credentials (the same accounts the Linux nodes use). The .81 share is mounted
+            // AUTHENTICATED (user/live), not as guest: macOS drops an idle *guest* SMB session within ~90s,
+            // so a guest mount is dead by the time a Mac cell runs after ClassInit - an authenticated session
+            // persists (verified alive past 200s idle). This is also the typical way to mount it (the Linux
+            // nodes use username=user,password=live), so guest was the atypical outlier.
             var macSmbUser = config["win10_vm_username"];
             var macSmbPass = config["win10_vm_password"];
-            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.81/data\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs -N //GUEST:@192.168.0.81/data \"$MP\"");
+            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.81/data\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs //user:live@192.168.0.81/data \"$MP\"");
             mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.32/shared\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs \"//{macSmbUser}:{macSmbPass}@192.168.0.32/Shared\" \"$MP\"");
 
             // The Mac as an SMB SERVER (.33 hosts /Users/smith/ftshare, share 'ftshare') so it can be the
@@ -296,12 +300,12 @@ namespace ft_tests
             var writePath1 = SmbPathLookup(client1OS, serverOS, filename1);
             var readPath1 = SmbPathLookup(client1OS, serverOS, filename2);
             var client1Runner = client1OS switch { OS.Windows => win10_x64_1, OS.Mac => mac_1, _ => linux_x64_1 };
-            var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1}");
+            var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1} --verbose");
 
             var readPath2 = SmbPathLookup(client2OS, serverOS, filename1);
             var writePath2 = SmbPathLookup(client2OS, serverOS, filename2);
             var client2Runner = client2OS switch { OS.Windows => win10_x64_3, OS.Mac => mac_2, _ => linux_x64_3 };
-            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2}");
+            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2} --verbose");
 
             // A required lab node may be down (see the ClassInit tolerance). Skip rather than NRE-fail, so
             // one dead node doesn't fail rows across the matrix; the row runs once the node is back.
@@ -315,13 +319,6 @@ namespace ft_tests
             // IR is the reliable mode and Normal needs the F_NOCACHE refresh.
             if (serverOS == OS.Mac && mode == Mode.IsolatedReads)
                 Assert.Inconclusive("IsolatedReads is unsupported against a macOS SMB server (smbd serves stale reopens).");
-
-            // Milder facet of the same limit: even in Normal mode, two dissimilar remote SMB stacks reading
-            // each other's writes through the Mac server intermittently stall past the offline timeout (the
-            // coherency lag is worst across dissimilar clients). Reliable when the two clients are the same
-            // OS, or when the Mac itself is a client (loopback). Only the mixed remote-OS pairing is skipped.
-            if (serverOS == OS.Mac && mode == Mode.Normal && client1OS != client2OS && client2OS != OS.Mac)
-                Assert.Inconclusive("Normal vs a macOS SMB server is marginal for mixed remote-client OSes (smbd cross-client coherency lag).");
 
             ConductTunnelTests(mode, side1, smbServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
