@@ -286,6 +286,16 @@ namespace ft.Listeners
             long currentSessionId = -1;
             long? retryPos = null;
 
+            // macOS smbfs serves a held read handle a stale view across a counterpart's purge (the
+            // truncate-and-regrow that caps the file). The in-place MacDirectRefresh keeps the handle
+            // coherent in steady state, but under load it intermittently can't reveal the writer's
+            // post-purge appends before the offline timeout - the reader stalls, the tunnel is declared
+            // offline and every carried connection is torn down mid-transfer. Reopening the handle at the
+            // purge boundary re-syncs the smbfs client cache reliably (exactly what --isolated-reads does
+            // on every read, which is why IR never hits this). macOS-only: other platforms read a purged
+            // file coherently, and an extra open there is pure cost. Measured: LMM 6/12 -> 12/12, 0 timeouts.
+            var reopenReadHandleAfterPurge = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+
             while (true)
             {
                 try
@@ -525,6 +535,19 @@ namespace ft.Listeners
                             isPurgeComplete.Wait(0);
 
                             Program.Log($"[{readFileShortName}] File was purged by counterpart.");
+
+                            // Reopen the read handle here (macOS only - see reopenReadHandleAfterPurge) to
+                            // re-sync the smbfs client cache across the purge. CRC-safe: the per-command hash
+                            // resets on each Command.Deserialise, so a fresh HashingStream carries no state.
+                            if (reopenReadHandleAfterPurge)
+                            {
+                                binaryReader.Dispose();   // disposes the wrapping HashingStream + fileStream
+                                fileStream = IsolatedReads
+                                    ? new IsolatedReadsFileStream(ReadFromFilename)
+                                    : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                                binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
+                            }
                         }
                     }
                 }
