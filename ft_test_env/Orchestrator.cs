@@ -16,6 +16,7 @@ namespace ft_test_env
         private readonly CloudInitSeed seed;
         private readonly LinuxHealthChecks linux;
         private readonly WindowsHealthChecks windows;
+        private readonly WindowsProvisioner winProvisioner;
 
         public Orchestrator(EnvConfig config)
         {
@@ -24,6 +25,7 @@ namespace ft_test_env
             seed = new CloudInitSeed(config);
             linux = new LinuxHealthChecks(config);
             windows = new WindowsHealthChecks(config);
+            winProvisioner = new WindowsProvisioner(config);
         }
 
         // ---- 1. one-time prep (idempotent) ----
@@ -100,7 +102,25 @@ namespace ft_test_env
                 });
             }
 
+            PrepWindowsNodes(step);
+
             return Summary(step);
+        }
+
+        private void PrepWindowsNodes(StepRunner step)
+        {
+            var gold = config.WindowsGold;
+            if (!gold.Enabled)
+            {
+                step.Run("Windows nodes", () => StepOutcome.Skip("disabled (WindowsGold:Enabled=false)"));
+                return;
+            }
+
+            // The clones are (re)created from the gold's CURRENT state at every bring-up (so they pick up any
+            // gold updates), so prep only checks that the gold image is present.
+            step.Run($"{gold.GoldVmName}: gold image present", () => vbox.VmExists(gold.GoldVmName)
+                ? StepOutcome.Ok("clones are re-created from its current state at bring-up")
+                : StepOutcome.Fail($"gold VM '{gold.GoldVmName}' not found — build it once (see FT_WIN_GOLD_IMAGE.md)"));
         }
 
         private StepOutcome DownloadImageIfMissing(Action<string> report)
@@ -216,8 +236,17 @@ namespace ft_test_env
                 step.Run($"{client.Name}: provisioning complete", () => linux.WaitForProvisioned(client));
             }
 
-            // Mount any shares not already present (e.g. a Windows host that came online after
-            // the nodes booted). Idempotent — already-mounted shares are left as-is.
+            // Windows nodes AFTER the Linux track (deviation from rclone, which runs the two in parallel):
+            // the ft-provisioning cmdkeys .81 and the Nfs rows mount X: from .81, so the Linux server must
+            // already be up.
+            BringUpWindowsNodes(step);
+
+            // Start the hand-built server VM (.84) if it's off - it is not cloned/reconfigured, just started -
+            // so the Linux //.84/Shared mount below (and the Windows SMB rows) have a server to reach.
+            EnsureServerUp(step);
+
+            // Mount cross-host shares AFTER the server VM is up: the Linux SMB client mount //192.168.0.84/Shared
+            // targets it. EnsureMounts is idempotent; already-mounted shares are left as-is.
             foreach (var node in config.NodesServerFirst)
             {
                 linux.EnsureMounts(step, node);
@@ -228,8 +257,180 @@ namespace ft_test_env
             {
                 linux.CheckNode(step, node);
             }
+            if (config.WindowsGold.Enabled)
+            {
+                foreach (var node in config.WindowsNodesOrdered)
+                {
+                    windows.CheckNode(step, node);
+                }
+            }
+            if (config.WindowsServer.Enabled)
+            {
+                windows.CheckServer(step, config.WindowsServer);
+            }
 
             return Summary(step);
+        }
+
+        /// <summary>
+        /// Brings up the Windows clones fresh from the gold's CURRENT state every run: shut the gold down,
+        /// delete the previous clones, snapshot the gold's current state and linked-clone off it (so manual
+        /// gold changes flow through), then reconfigure each clone (rename + IP + reboot) SEQUENTIALLY (they
+        /// all boot at the gold's SourceIp) and run the thin ft-specific provisioning. The linked-clone diff
+        /// is persistent, so a later reboot (RebootNode) keeps a node's config.
+        /// </summary>
+        private void BringUpWindowsNodes(StepRunner step)
+        {
+            var gold = config.WindowsGold;
+            if (!gold.Enabled) return;
+
+            step.Section("Bring up Windows nodes");
+
+            if (!vbox.VmExists(gold.GoldVmName))
+            {
+                step.Run($"{gold.GoldVmName}: present", () => StepOutcome.Fail("gold VM not found — see FT_WIN_GOLD_IMAGE.md"));
+                return;
+            }
+
+            EnsureGoldOff(step, gold);
+
+            // Delete the previous clones so the gold snapshot they pin can be refreshed.
+            foreach (var node in config.WindowsNodesOrdered)
+            {
+                step.Run($"{node.CloneName}: delete previous clone", () =>
+                {
+                    if (!vbox.VmExists(node.CloneName)) return StepOutcome.Skip("none");
+                    vbox.Unregister(node.CloneName);
+                    return StepOutcome.Ok("deleted");
+                });
+            }
+
+            step.Run($"{gold.GoldVmName}: snapshot current state as '{gold.GoldSnapshot}'", () =>
+            {
+                if (vbox.SnapshotExists(gold.GoldVmName, gold.GoldSnapshot))
+                    vbox.DeleteSnapshot(gold.GoldVmName, gold.GoldSnapshot);
+                vbox.TakeSnapshot(gold.GoldVmName, gold.GoldSnapshot);
+                return StepOutcome.Ok("captured");
+            });
+
+            foreach (var node in config.WindowsNodesOrdered)
+            {
+                step.Run($"{node.CloneName}: linked clone off current gold", () =>
+                {
+                    vbox.CloneLinkedFromGold(gold.GoldVmName, gold.GoldSnapshot, node.CloneName);
+                    return StepOutcome.Ok($"linked clone of {gold.GoldVmName}");
+                });
+            }
+
+            // Reconfigure + provision each clone, one at a time (they all boot at the gold's SourceIp).
+            foreach (var node in config.WindowsNodesOrdered)
+            {
+                StartReconfigureProvision(step, node, gold);
+            }
+        }
+
+        /// <summary>
+        /// Brings up (or re-brings-up) a SINGLE Windows node from the gold, without touching the others.
+        /// Used to finish/repair a partial bring-up and to re-provision one node after a manual gold change —
+        /// each run is short (one clone + one reconfigure), unlike the full <see cref="BringUpAll"/>. Clones
+        /// off the gold's existing 'clean' snapshot (taking one if absent). Boots the fresh clone at the gold's
+        /// SourceIp, so never run two of these concurrently.
+        /// </summary>
+        public bool BringUpWindowsNode(WindowsNodeConfig node)
+        {
+            var step = new StepRunner();
+            step.Section($"Bring up {node.CloneName} ({node.Ip}) [{node.Role}]");
+
+            var gold = config.WindowsGold;
+            if (!gold.Enabled)
+            {
+                step.Run("Windows nodes", () => StepOutcome.Fail("disabled (WindowsGold:Enabled=false)"));
+                return Summary(step);
+            }
+            if (!vbox.VmExists(gold.GoldVmName))
+            {
+                step.Run($"{gold.GoldVmName}: present", () => StepOutcome.Fail("gold VM not found — see FT_WIN_GOLD_IMAGE.md"));
+                return Summary(step);
+            }
+
+            EnsureGoldOff(step, gold);
+
+            step.Run($"{node.CloneName}: delete previous clone", () =>
+            {
+                if (!vbox.VmExists(node.CloneName)) return StepOutcome.Skip("none");
+                vbox.Unregister(node.CloneName);
+                return StepOutcome.Ok("deleted");
+            });
+
+            step.Run($"{gold.GoldVmName}: snapshot '{gold.GoldSnapshot}' present", () =>
+            {
+                if (vbox.SnapshotExists(gold.GoldVmName, gold.GoldSnapshot)) return StepOutcome.Skip("reusing existing");
+                vbox.TakeSnapshot(gold.GoldVmName, gold.GoldSnapshot);
+                return StepOutcome.Ok("captured");
+            });
+
+            step.Run($"{node.CloneName}: linked clone off gold", () =>
+            {
+                vbox.CloneLinkedFromGold(gold.GoldVmName, gold.GoldSnapshot, node.CloneName);
+                return StepOutcome.Ok($"linked clone of {gold.GoldVmName}");
+            });
+
+            StartReconfigureProvision(step, node, gold);
+
+            step.Section("Health check");
+            windows.CheckNode(step, node);
+
+            return Summary(step);
+        }
+
+        /// <summary>Ensures the gold is powered off (graceful SSH shutdown, else forced) so it can be snapshotted/cloned.</summary>
+        private void EnsureGoldOff(StepRunner step, WindowsGoldConfig gold)
+        {
+            step.Run($"{gold.GoldVmName}: ensure powered off (graceful)", () =>
+            {
+                if (!vbox.VmRunning(gold.GoldVmName)) return StepOutcome.Skip("already off");
+                var requested = windows.RequestShutdown(gold.SourceIp);
+                if (vbox.WaitUntilOff(gold.GoldVmName, gold.ShutdownTimeoutSeconds))
+                    return StepOutcome.Ok(requested ? "clean shutdown via SSH" : "shut down");
+                vbox.PowerOff(gold.GoldVmName);
+                return StepOutcome.Ok("forced off (did not shut down in time)");
+            });
+        }
+
+        /// <summary>Starts a freshly-cloned node at the gold's SourceIp, reconfigures it (rename + IP + reboot),
+        /// confirms the new identity, then runs the thin ft provisioning. Shared by the full and single-node paths.</summary>
+        private void StartReconfigureProvision(StepRunner step, WindowsNodeConfig node, WindowsGoldConfig gold)
+        {
+            step.Run($"{node.CloneName}: start (boots at {gold.SourceIp})", () =>
+            {
+                vbox.StartVmHeadless(node.CloneName);
+                return StepOutcome.Ok();
+            });
+            step.Run($"{node.CloneName}: wait for SSH at {gold.SourceIp}", () => windows.WaitForSsh(gold.SourceIp, gold.SshReadyTimeoutSeconds));
+            step.Run($"{node.CloneName}: reconfigure ({node.Hostname} + {node.Ip} + reboot)", () => windows.LaunchReconfigure(node));
+            step.Run($"{node.CloneName}: wait until reconfigured ({node.Hostname} @ {node.Ip})", () => windows.ConfirmReconfigured(node));
+            step.Run($"{node.CloneName}: ft provisioning", () => winProvisioner.ProvisionNode(node));
+        }
+
+        /// <summary>Starts the hand-built server VM (.84) if it's off. Unlike the clones it is not cloned or
+        /// reconfigured - it's a fixed, manually-built VM with a distinct SID - so we only ensure it's running
+        /// and SSH-reachable.</summary>
+        private void EnsureServerUp(StepRunner step)
+        {
+            var server = config.WindowsServer;
+            if (!server.Enabled) return;
+
+            step.Section("Windows server VM");
+            step.Run($"{server.VmName}: running", () =>
+            {
+                if (!vbox.VmExists(server.VmName))
+                    return StepOutcome.Fail($"server VM '{server.VmName}' not registered — build it by hand (see FT_WIN_GOLD_IMAGE.md 'Server VM')");
+                if (vbox.VmRunning(server.VmName)) return StepOutcome.Skip("already running");
+                vbox.StartVmHeadless(server.VmName);
+                return StepOutcome.Ok("started");
+            });
+            step.Run($"{server.VmName}: wait for SSH at {server.Ip}", () =>
+                windows.WaitForSsh(server.Ip, config.WindowsGold.SshReadyTimeoutSeconds));
         }
 
         // ---- 3. bring up a single node ----
@@ -282,6 +483,31 @@ namespace ft_test_env
                 });
             }
 
+            if (config.WindowsGold.Enabled)
+            {
+                foreach (var node in config.WindowsNodesOrdered)
+                {
+                    step.Run($"{node.CloneName}: power off", () =>
+                    {
+                        if (!vbox.VmExists(node.CloneName)) return StepOutcome.Skip("not registered");
+                        if (!vbox.VmRunning(node.CloneName)) return StepOutcome.Skip("already off");
+                        vbox.PowerOff(node.CloneName);
+                        return StepOutcome.Ok();
+                    });
+                }
+            }
+
+            if (config.WindowsServer.Enabled)
+            {
+                step.Run($"{config.WindowsServer.VmName}: power off", () =>
+                {
+                    if (!vbox.VmExists(config.WindowsServer.VmName)) return StepOutcome.Skip("not registered");
+                    if (!vbox.VmRunning(config.WindowsServer.VmName)) return StepOutcome.Skip("already off");
+                    vbox.PowerOff(config.WindowsServer.VmName);
+                    return StepOutcome.Ok();
+                });
+            }
+
             return Summary(step);
         }
 
@@ -305,13 +531,100 @@ namespace ft_test_env
         public bool CheckWindows()
         {
             var step = new StepRunner();
-            step.Section("Windows service checks");
+            step.Section("Windows node checks");
 
+            if (config.WindowsGold.Enabled)
+            {
+                foreach (var node in config.WindowsNodesOrdered)
+                {
+                    windows.CheckNode(step, node);
+                }
+            }
+
+            if (config.WindowsServer.Enabled)
+            {
+                windows.CheckServer(step, config.WindowsServer);
+            }
+
+            // The dev box (.31) and any other external hosts still get their local checks.
             foreach (var host in config.WindowsHosts)
             {
                 windows.CheckHost(step, host);
             }
 
+            return Summary(step);
+        }
+
+        // ---- 7. check gold image readiness ----
+
+        public bool CheckGold()
+        {
+            var step = new StepRunner();
+            step.Section("Gold image readiness");
+
+            if (!config.WindowsGold.Enabled)
+            {
+                step.Run("gold image", () => StepOutcome.Skip("disabled (WindowsGold:Enabled=false)"));
+                return Summary(step);
+            }
+
+            windows.CheckGold(step);
+            return Summary(step);
+        }
+
+        // ---- 8. reboot a Windows node (clear tiring; config survives the persistent linked-clone diff) ----
+
+        public bool RebootNode(WindowsNodeConfig node)
+        {
+            var step = new StepRunner();
+            step.Section($"Reboot {node.CloneName} ({node.Ip})");
+
+            step.Run($"{node.CloneName}: reboot via SSH", () =>
+            {
+                if (!vbox.VmExists(node.CloneName)) return StepOutcome.Fail("clone not registered — bring up first");
+                if (!vbox.VmRunning(node.CloneName)) return StepOutcome.Fail("not running");
+                return windows.RequestShutdown(node.Ip, reboot: true)
+                    ? StepOutcome.Ok("reboot requested")
+                    : StepOutcome.Fail("could not reach the node over SSH to reboot it");
+            });
+
+            // shutdown /r keeps sshd up for a few seconds, so wait for the node to actually go down before
+            // waiting for it to come back — otherwise we'd reconnect to the still-running pre-reboot node.
+            step.Run($"{node.CloneName}: wait until it goes down", () =>
+                windows.WaitForSshDown(node.Ip, 90));
+
+            step.Run($"{node.CloneName}: wait for SSH back at {node.Ip}", () =>
+                windows.WaitForSsh(node.Ip, config.WindowsGold.SshReadyTimeoutSeconds));
+
+            // Confirm ft-ready — the persistent diff kept the config; autologon + the baked runremote
+            // autostart must have re-established the interactive session + UDP 8888.
+            windows.CheckNode(step, node);
+
+            return Summary(step);
+        }
+
+        /// <summary>Reboots the hand-built server VM (.84) to clear tiring, then confirms it comes back
+        /// SMB/RDP-ready (autologon re-establishes the interactive session + runremote UDP 8888).</summary>
+        public bool RebootServer()
+        {
+            var step = new StepRunner();
+            var server = config.WindowsServer;
+            step.Section($"Reboot {server.VmName} ({server.Ip})");
+
+            step.Run($"{server.VmName}: reboot via SSH", () =>
+            {
+                if (!vbox.VmExists(server.VmName)) return StepOutcome.Fail("server VM not registered");
+                if (!vbox.VmRunning(server.VmName)) return StepOutcome.Fail("not running");
+                return windows.RequestShutdown(server.Ip, reboot: true)
+                    ? StepOutcome.Ok("reboot requested")
+                    : StepOutcome.Fail("could not reach the server over SSH to reboot it");
+            });
+
+            step.Run($"{server.VmName}: wait until it goes down", () => windows.WaitForSshDown(server.Ip, 90));
+            step.Run($"{server.VmName}: wait for SSH back at {server.Ip}", () =>
+                windows.WaitForSsh(server.Ip, config.WindowsGold.SshReadyTimeoutSeconds));
+
+            windows.CheckServer(step, server);
             return Summary(step);
         }
 

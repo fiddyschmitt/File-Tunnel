@@ -11,9 +11,13 @@ var configuration = new ConfigurationBuilder()
 var config = configuration.Get<EnvConfig>() ?? new EnvConfig();
 var orchestrator = new Orchestrator(config);
 
-Console.WriteLine("File Tunnel — Linux test environment orchestrator");
+Console.WriteLine("File Tunnel — Linux + Windows test environment orchestrator");
 Console.WriteLine($"Working dir: {config.WorkingDir}");
-Console.WriteLine($"Nodes: {string.Join(", ", config.Nodes.Select(n => $"{n.Name} ({n.Ip})"))}");
+Console.WriteLine($"Linux nodes: {string.Join(", ", config.Nodes.Select(n => $"{n.Name} ({n.Ip})"))}");
+if (config.WindowsGold.Enabled)
+    Console.WriteLine($"Windows clients: {string.Join(", ", config.WindowsNodes.Select(n => $"{n.CloneName} ({n.Ip})"))}  [gold {config.WindowsGold.GoldVmName} @ {config.WindowsGold.SourceIp}]");
+if (config.WindowsServer.Enabled)
+    Console.WriteLine($"Windows server: {config.WindowsServer.VmName} ({config.WindowsServer.Ip})  [hand-built, distinct SID]");
 
 while (true)
 {
@@ -24,7 +28,10 @@ while (true)
     Console.WriteLine("  3) Bring up a single node");
     Console.WriteLine("  4) Teardown (power off all nodes)");
     Console.WriteLine("  5) Check Linux services");
-    Console.WriteLine("  6) Check Windows services");
+    Console.WriteLine("  6) Check Windows nodes");
+    Console.WriteLine("  7) Check gold image readiness");
+    Console.WriteLine("  8) Reboot a Windows machine (client clone or the server VM) to clear tiring");
+    Console.WriteLine("  9) Bring up a single Windows client node (finish/repair a partial bring-up)");
     Console.WriteLine("  0) Exit");
     Console.WriteLine("==================================================");
     Console.Write("Choose: ");
@@ -54,6 +61,16 @@ while (true)
                 break;
             case "6":
                 orchestrator.CheckWindows();
+                break;
+            case "7":
+                orchestrator.CheckGold();
+                break;
+            case "8":
+                RebootMenu(config, orchestrator);
+                break;
+            case "9":
+                var winNodeUp = PromptForWindowsNode(config);
+                if (winNodeUp != null) orchestrator.BringUpWindowsNode(winNodeUp);
                 break;
             case "0":
             case "q":
@@ -90,4 +107,63 @@ static NodeConfig? PromptForNode(EnvConfig config)
 
     Console.WriteLine("Invalid selection.");
     return null;
+}
+
+static WindowsNodeConfig? PromptForWindowsNode(EnvConfig config)
+{
+    if (!config.WindowsGold.Enabled || config.WindowsNodes.Count == 0)
+    {
+        Console.WriteLine("No Windows nodes configured.");
+        return null;
+    }
+
+    Console.WriteLine("Which Windows node?");
+    for (var i = 0; i < config.WindowsNodes.Count; i++)
+    {
+        var n = config.WindowsNodes[i];
+        Console.WriteLine($"  {i + 1}) {n.CloneName} ({n.Ip}) [{n.Role}]");
+    }
+    Console.Write("Choose: ");
+
+    if (int.TryParse(Console.ReadLine()?.Trim(), out var idx) && idx >= 1 && idx <= config.WindowsNodes.Count)
+    {
+        return config.WindowsNodes[idx - 1];
+    }
+
+    Console.WriteLine("Invalid selection.");
+    return null;
+}
+
+// Reboot picker for menu 8: lists the client clones AND the hand-built server VM, and dispatches to the
+// right orchestrator call (RebootNode vs RebootServer) since they are different kinds of machine.
+static void RebootMenu(EnvConfig config, Orchestrator orchestrator)
+{
+    var listClients = config.WindowsGold.Enabled && config.WindowsNodes.Count > 0;
+    var hasServer = config.WindowsServer.Enabled;
+    if (!listClients && !hasServer)
+    {
+        Console.WriteLine("No Windows machines configured.");
+        return;
+    }
+
+    Console.WriteLine("Which Windows machine to reboot?");
+    var clientCount = listClients ? config.WindowsNodes.Count : 0;
+    for (var i = 0; i < clientCount; i++)
+    {
+        var n = config.WindowsNodes[i];
+        Console.WriteLine($"  {i + 1}) {n.CloneName} ({n.Ip}) [{n.Role}]");
+    }
+    if (hasServer)
+        Console.WriteLine($"  {clientCount + 1}) {config.WindowsServer.VmName} ({config.WindowsServer.Ip}) [server]");
+    Console.Write("Choose: ");
+
+    if (int.TryParse(Console.ReadLine()?.Trim(), out var idx) && idx >= 1)
+    {
+        if (idx <= clientCount) orchestrator.RebootNode(config.WindowsNodes[idx - 1]);
+        else if (hasServer && idx == clientCount + 1) orchestrator.RebootServer();
+        else Console.WriteLine("Invalid selection.");
+        return;
+    }
+
+    Console.WriteLine("Invalid selection.");
 }

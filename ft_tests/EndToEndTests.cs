@@ -29,6 +29,16 @@ namespace ft_tests
         // The Mac mounts the SMB shares in userspace under here (assumes the 'smith' login on .33).
         const string MAC_SMB_ROOT = "/Users/smith/mnt/smb";
 
+        // Three dedicated Windows VMs: two CLIENT clones (.83, .85, ft_test_env-managed off ft-win-gold) plus a
+        // hand-built SERVER VM (.84). The clones share the gold's machine SID, and Windows 24H2+ rejects SMB/RDP
+        // auth between same-SID peers (KB-enforced CredSSP/NLA SID checks) - so the server must have a DISTINCT
+        // SID: it is a fresh install, NOT cloned from ft-win-gold. The clients only ever talk to the distinct-SID
+        // server (never each other over SMB/RDP), so the same-SID limitation never bites. The server is lean -
+        // it needs no Guest Additions or Client-for-NFS (it never runs the VBox or NFS rows).
+        const string WIN_C1_IP = "192.168.0.83";
+        const string WIN_SERVER_IP = "192.168.0.84";   // hand-built server VM (distinct SID); hosts \\.84\Shared
+        const string WIN_C2_IP = "192.168.0.85";
+
         // SOCKS end-to-end test: the dev box (this test process) is 192.168.0.31 and hosts the controlled
         // destinations the SOCKS exit dials; side1 hosts the SOCKS proxy on :5005.
         const string DEV_BOX_IP = "192.168.0.31";
@@ -44,9 +54,14 @@ namespace ft_tests
 
         static string localWindowsOutputFilename = "";
 
-        static ProcessRunner win10_x64_1;
-        static ProcessRunner win10_x64_2;
-        static ProcessRunner win10_x64_3;
+        static ProcessRunner win10_x64_1;   // dedicated Windows client VM .83 (client1)
+        static ProcessRunner win10_x64_2;   // hand-built Windows SERVER VM .84 (distinct SID: SMB server + Rdp target)
+        static ProcessRunner win10_x64_3;   // dedicated Windows client VM .85 (client2)
+
+        // The dev box (.31) running ft LOCALLY. No longer a tunnel endpoint (that moved to the VMs); kept only
+        // so VirtualBoxSharedFolder can exercise the HOST->guest path (host reads local C:\Temp, which the VM
+        // guests see as \\vboxsvr\c_drive).
+        static ProcessRunner devBoxLocal;
 
 
         static ProcessRunner linux_x64_1;
@@ -55,6 +70,13 @@ namespace ft_tests
 
         static ProcessRunner mac_1;   // the Mac (.33) — side-1 ft (unique exe ft-1)
         static ProcessRunner mac_2;   // the Mac (.33) — side-2 ft (unique exe ft-2), so Mac can be on both sides
+
+        // Mac SMB client-mount credentials (set in ClassInit). Fields, not locals, so RefreshMacClientMount
+        // can re-establish a Mac mount that idle-dropped - see that method and [[test-lab-mount-quirks]].
+        const string macServerUser = "ftsmb";   // the service account the Mac's own smbd exposes for /ftshare
+        static string macSmbUser = "";           // the .32 Windows share account (config win10_vm_username)
+        static string macSmbPass = "";           // the lab smb password (config win10_vm_password)
+        static string macServerPass = "";        // same lab smb password, used for the Mac ftsmb account
 
         // Dropbox credentials (user-secrets). When absent, the Dropbox test skips (Assert.Inconclusive)
         // rather than failing - it hits real Dropbox (no local emulator), so it is opt-in.
@@ -106,16 +128,20 @@ namespace ft_tests
                 Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(exePath)!, "output"));
             }
 
-            win10_x64_1 = new LocalWindowsProcessRunner(WIN_X64_EXE, localWindowsOutputFilename);
-            // A remote lab node can be unreachable - the .20 elitedesk in particular degrades over long
-            // sessions (its SSH/runremote dies while the box still pings). Tolerate it so one dead node
-            // doesn't abort ClassInit and block the entire suite: a row that needs the missing node is
-            // skipped (Assert.Inconclusive - see the guard in the test methods), and every row that does
-            // not use it still runs.
-            try { win10_x64_2 = new RemoteWindowsProcessRunner("192.168.0.32", config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); } //win10 VM
-            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_2 (.32) unavailable: {ex.Message}"); win10_x64_2 = null!; }
-            try { win10_x64_3 = new RemoteWindowsProcessRunner("192.168.0.20", config["edm_username"], config["edm_password"], WIN_X64_EXE); } //elitedesk
-            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_3 (.20) unavailable: {ex.Message}"); win10_x64_3 = null!; }
+            // The dev box (.31) as a LOCAL ft host - only for VirtualBoxSharedFolder's host->guest rows.
+            devBoxLocal = new LocalWindowsProcessRunner(WIN_X64_EXE, localWindowsOutputFilename);
+
+            // Three Windows VMs, all reached via runremote: clients .83/.85 (same-SID clones off ft-win-gold)
+            // and the server VM .84 (distinct SID, hand-built). The clients share the baked-in account
+            // (win10_vm_*); the server has the same username/password but a distinct SID, so SMB/RDP pass-through
+            // from the clients works. A node can be down (rebooting to clear tiring, or not yet brought up), so
+            // tolerate it: a row that needs the missing node is skipped (Assert.Inconclusive), the rest still run.
+            try { win10_x64_1 = new RemoteWindowsProcessRunner(WIN_C1_IP, config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); }
+            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_1 ({WIN_C1_IP}) unavailable: {ex.Message}"); win10_x64_1 = null!; }
+            try { win10_x64_2 = new RemoteWindowsProcessRunner(WIN_SERVER_IP, config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); }
+            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_2 ({WIN_SERVER_IP}) unavailable: {ex.Message}"); win10_x64_2 = null!; }
+            try { win10_x64_3 = new RemoteWindowsProcessRunner(WIN_C2_IP, config["win10_vm_username"], config["win10_vm_password"], WIN_X64_EXE); }
+            catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_3 ({WIN_C2_IP}) unavailable: {ex.Message}"); win10_x64_3 = null!; }
 
             linux_x64_1 = new LinuxProcessRunner("192.168.0.80", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.80.log");
             linux_x64_2 = new LinuxProcessRunner("192.168.0.81", "user", "live", LINUX_X64_EXE, remoteLinuxOutputFilename + " 192.168.0.81.log");
@@ -129,24 +155,19 @@ namespace ft_tests
             var macKey = config["mac_ssh_keypath"] ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519");
             mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log", instance: 1);
             mac_2 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac2.log", instance: 2);
-            // Client mounts (idempotent, as the user - no sudo): the .81 Samba share and the .32 Windows
-            // share, both with credentials (the same accounts the Linux nodes use). The .81 share is mounted
-            // AUTHENTICATED (user/live), not as guest: macOS drops an idle *guest* SMB session within ~90s,
-            // so a guest mount is dead by the time a Mac cell runs after ClassInit - an authenticated session
-            // persists (verified alive past 200s idle). This is also the typical way to mount it (the Linux
-            // nodes use username=user,password=live), so guest was the atypical outlier.
-            var macSmbUser = config["win10_vm_username"];
-            var macSmbPass = config["win10_vm_password"];
-            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.81/data\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs //user:live@192.168.0.81/data \"$MP\"");
-            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.32/shared\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs \"//{macSmbUser}:{macSmbPass}@192.168.0.32/Shared\" \"$MP\"");
+            // Client mounts of the remote SMB servers (idempotent, as the user - no sudo). See
+            // RefreshMacClientMount for the mount details and why these are re-established per cell.
+            macSmbUser = config["win10_vm_username"] ?? "";
+            macSmbPass = config["win10_vm_password"] ?? "";
+            RefreshMacClientMount(OS.Linux);     // the .81 Samba share
+            RefreshMacClientMount(OS.Windows);   // the .32 Windows share
 
             // The Mac as an SMB SERVER (.33 hosts /Users/smith/ftshare, share 'ftshare') so it can be the
             // server for other nodes too. Enabled via passwordless sudo. macOS does NOT put the SMB-NT hash
             // in a new account's HASHLIST, so SMB auth fails until we add it and re-set the password (dscl
             // works for this non-secure-token service account; sysadminctl needs a secure-token unlock). The
             // setup is streamed base64-encoded and run through `sudo bash` to dodge C#->SSH->zsh quoting.
-            const string macServerUser = "ftsmb";
-            var macServerPass = config["win10_vm_password"];   // reuse the lab smb password
+            macServerPass = config["win10_vm_password"] ?? "";   // reuse the lab smb password for the ftsmb account
             var macServerSetup = string.Join('\n',
                 "launchctl enable system/com.apple.smbd 2>/dev/null",
                 "launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist 2>/dev/null || true",
@@ -157,12 +178,8 @@ namespace ft_tests
                 $"dscl . -passwd /Users/{macServerUser} '{macServerPass}'");
             mac_1.RunCommand($"echo {Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(macServerSetup))} | base64 -d | sudo bash");
             // Mac loopback mount of its own share, so the Mac can be a client of the Mac server (both sides).
-            mac_1.RunCommand($"MP=\"{MAC_SMB_ROOT}/192.168.0.33/ftshare\"; mkdir -p \"$MP\"; mount | grep -q \"$MP\" || mount_smbfs \"//{macServerUser}:{macServerPass}@192.168.0.33/ftshare\" \"$MP\"");
-            // Client-node mounts of the Mac share: Linux via cifs (NOPASSWD sudo), Windows via a cached cred.
-            foreach (var lin in new[] { linux_x64_1, linux_x64_3 })
-                lin.RunCommand($"sudo mkdir -p /media/smb/192.168.0.33/ftshare; mountpoint -q /media/smb/192.168.0.33/ftshare || sudo mount -t cifs //192.168.0.33/ftshare /media/smb/192.168.0.33/ftshare -o username={macServerUser},password={macServerPass},vers=3.0");
-            foreach (var wr in new[] { win10_x64_1, win10_x64_3 })
-                wr?.RunCommand($"cmdkey /add:192.168.0.33 /user:{macServerUser} /pass:{macServerPass}");
+            RefreshMacClientMount(OS.Mac);
+            RefreshMacShareClientNodeMounts();
 
             var writer = new StreamWriter(testResultsFilename)
             {
@@ -320,7 +337,80 @@ namespace ft_tests
             if (serverOS == OS.Mac && mode == Mode.IsolatedReads)
                 Assert.Inconclusive("IsolatedReads is unsupported against a macOS SMB server (smbd serves stale reopens).");
 
+            // Client mounts idle-drop during the preceding (non-Mac) cells - which run first, so by the time a
+            // Mac-involved cell runs its mounts have sat idle for many minutes. Refresh both clients' mounts to
+            // the server right before the cell; the per-cell server-service restart only touches the server.
+            if (client1OS == OS.Mac || client2OS == OS.Mac || serverOS == OS.Mac)
+            {
+                RefreshSmbClientMount(client1OS, serverOS, client1Runner);
+                RefreshSmbClientMount(client2OS, serverOS, client2Runner);
+            }
+
             ConductTunnelTests(mode, side1, smbServer, side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        // (Re)establish the Mac's smbfs client mount to the given server's share, idempotently and
+        // authenticated. macOS drops an idle SMB session, so a Mac client mount set up in ClassInit is
+        // often dead by the time a Mac cell runs after the ~15min of non-Mac cells - surfacing as "Could
+        // not connect" (the Mac ft can't write its tunnel file; the log shows "Could not enqueue Ping"
+        // within 2s). SmbServer.Restart restarts the *server* service each cell but not the *client* mount,
+        // so this closes that gap: it runs in ClassInit AND before each Mac-client SMB cell. Authenticated
+        // throughout - the typical option, and a guest session idle-drops fastest (~90s vs 200s+). A dropped
+        // mount VANISHES from `mount`, so the grep-guarded remount re-establishes it. No-op if mac_1 is null.
+        private static void RefreshMacClientMount(OS serverOS)
+        {
+            if (mac_1 == null) return;
+            var (mp, mountSrc) = serverOS switch
+            {
+                OS.Linux => ($"{MAC_SMB_ROOT}/192.168.0.81/data", "//user:live@192.168.0.81/data"),
+                OS.Windows => ($"{MAC_SMB_ROOT}/{WIN_SERVER_IP}/shared", $"//{macSmbUser}:{macSmbPass}@{WIN_SERVER_IP}/Shared"),
+                _ => ($"{MAC_SMB_ROOT}/192.168.0.33/ftshare", $"//{macServerUser}:{macServerPass}@192.168.0.33/ftshare"),
+            };
+            // An idle-dropped smbfs mount can VANISH from `mount` OR ZOMBIE (still listed but dead), so test
+            // writability and force-remount on failure rather than trusting `mount | grep`. The && short-
+            // circuits so touch never runs against a bare (unmounted) local dir.
+            mac_1.RunCommand($"MP=\"{mp}\"; mkdir -p \"$MP\"; " +
+                $"if mount | grep -q \"$MP\" && touch \"$MP/.ftw\" 2>/dev/null; then rm -f \"$MP/.ftw\"; " +
+                $"else umount -f \"$MP\" 2>/dev/null; mount_smbfs \"{mountSrc}\" \"$MP\"; fi");
+        }
+
+        // (Re)establish ONE SMB client's mount to the given server's share, idempotently: Mac via smbfs
+        // (RefreshMacClientMount), Linux via cifs, Windows via a cached cred. Called before each Mac-involved
+        // cell because these mounts idle-drop over the long run before the (last-ordered) Mac cells - the
+        // per-cell server-service restart (SmbServer.Restart) doesn't touch the client mount. The Linux cifs
+        // mount idle-ZOMBIES (mountpoint -q passes but a write fails - see [[test-lab-mount-quirks]]), so test
+        // writability as root and force-remount (umount -l + mount) on failure. No-op if the runner is null.
+        private static void RefreshSmbClientMount(OS clientOS, OS serverOS, ProcessRunner? runner)
+        {
+            if (runner == null) return;
+            if (clientOS == OS.Mac) { RefreshMacClientMount(serverOS); return; }
+            if (clientOS == OS.Linux)
+            {
+                var (mp, src, user, pass) = serverOS switch
+                {
+                    OS.Linux => ("/media/smb/192.168.0.81/data", "//192.168.0.81/data", "user", "live"),
+                    OS.Windows => ($"/media/smb/{WIN_SERVER_IP}/shared", $"//{WIN_SERVER_IP}/Shared", macSmbUser, macSmbPass),
+                    _ => ("/media/smb/192.168.0.33/ftshare", "//192.168.0.33/ftshare", macServerUser, macServerPass),
+                };
+                runner.RunCommand($"sudo sh -c 'MP={mp}; mkdir -p $MP; if mountpoint -q $MP && touch $MP/.ftw 2>/dev/null; then rm -f $MP/.ftw; else umount -l $MP 2>/dev/null; mount -t cifs {src} $MP -o username={user},password={pass},vers=3.0; fi'");
+            }
+            else if (clientOS == OS.Windows)
+            {
+                var (host, user, pass) = serverOS switch
+                {
+                    OS.Linux => ("192.168.0.81", "user", "live"),
+                    OS.Windows => (WIN_SERVER_IP, macSmbUser, macSmbPass),
+                    _ => ("192.168.0.33", macServerUser, macServerPass),
+                };
+                runner.RunCommand($"cmdkey /add:{host} /user:{user} /pass:{pass}");
+            }
+        }
+
+        // Initial ClassInit setup of the Linux/Windows client-node mounts of the Mac's own .33 share.
+        private static void RefreshMacShareClientNodeMounts()
+        {
+            foreach (var lin in new[] { linux_x64_1, linux_x64_3 }) RefreshSmbClientMount(OS.Linux, OS.Mac, lin);
+            foreach (var wr in new[] { win10_x64_1, win10_x64_3 }) RefreshSmbClientMount(OS.Windows, OS.Mac, wr);
         }
 
         private static string SmbPathLookup(OS client, OS server, string fileName)
@@ -331,12 +421,12 @@ namespace ft_tests
 
             string basePath = (client, server) switch
             {
-                (OS.Windows, OS.Windows) => @$"\\192.168.0.32\shared\",
+                (OS.Windows, OS.Windows) => @$"\\{WIN_SERVER_IP}\shared\",
                 (OS.Windows, OS.Linux) => @$"\\192.168.0.81\data\",
-                (OS.Linux, OS.Windows) => @$"/media/smb/192.168.0.32/shared/",
+                (OS.Linux, OS.Windows) => @$"/media/smb/{WIN_SERVER_IP}/shared/",
                 (OS.Linux, OS.Linux) => @$"/media/smb/192.168.0.81/data/",
                 (OS.Mac, OS.Linux) => $@"{MAC_SMB_ROOT}/192.168.0.81/data/",
-                (OS.Mac, OS.Windows) => $@"{MAC_SMB_ROOT}/192.168.0.32/shared/",
+                (OS.Mac, OS.Windows) => $@"{MAC_SMB_ROOT}/{WIN_SERVER_IP}/shared/",
                 (OS.Mac, OS.Mac) => $@"{MAC_SMB_ROOT}/192.168.0.33/ftshare/",
                 (OS.Linux, OS.Mac) => @$"/media/smb/192.168.0.33/ftshare/",
                 (OS.Windows, OS.Mac) => @$"\\192.168.0.33\ftshare\",
@@ -514,18 +604,24 @@ namespace ft_tests
         [DataRow(Mode.IsolatedReads)]
         public void Rdp(Mode mode)
         {
-            var server = new Server(OS.Windows, FileShareType.RDP);
+            if (win10_x64_1 is null || win10_x64_2 is null)
+                Assert.Inconclusive("Skipped: the Windows client (.83) or server (.84) node is unavailable.");
+
+            // side1 (.83, client) runs mstsc into side2 (.84, server) with side1's C: redirected, so side2 sees
+            // the same bytes at \\tsclient\c. The server's distinct machine SID lets the same-SID client
+            // authenticate the RDP session (clone->clone RDP is rejected on 24H2+). See RdpServer.
+            var server = new RdpServer(win10_x64_1, win10_x64_2.RunOnIP, win10Username ?? "", win10Password ?? "");
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            var writePath1 = $@"C:\Temp\{filename1}";
+            var writePath1 = $@"C:\Temp\{filename1}";   // side1 (.83)'s own C:\Temp
             var readPath1 = $@"C:\Temp\{filename2}";
             var side1 = new Client(OS.Windows, win10_x64_1, $"-w {writePath1} -r {readPath1}");
 
             var readPath2 = $@"\\tsclient\c\Temp\{filename1}";
             var writePath2 = $@"\\tsclient\c\Temp\{filename2}";
-            var side2 = new Client(OS.Windows, win10_x64_3, $"-r {readPath2} -w {writePath2}");
+            var side2 = new Client(OS.Windows, win10_x64_2, $"-r {readPath2} -w {writePath2}");
 
             ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
         }
@@ -534,9 +630,9 @@ namespace ft_tests
         // of mstsc - see RdpLinuxServer for the session mechanics. Unlike Rdp above, no hand-made RDP
         // session is required: the test establishes it, which is the whole point of this row.
         //
-        // Pointed at the win10 VM (.32) on purpose: Rdp above uses the elitedesk (.20), and the two
-        // cannot share a Windows box because each needs a different drive redirected into the one
-        // interactive session that user is allowed.
+        // Pointed at client2 (.85): the mstsc Rdp row above uses the server VM (.84) as its side2, so the two
+        // RDP rows use different Windows boxes - each needs a different drive redirected into the one
+        // interactive session that user is allowed. (Linux -> .85 has no SID collision - the client is Linux.)
         //
         // Normal mode only. IsolatedReads does work over FreeRDP redirection (unlike mstsc's, where it
         // fails ~100%), but at ~0.12 MB/s vs ~8 MB/s - measured 8 MB in 67s - so it would dominate the
@@ -545,19 +641,19 @@ namespace ft_tests
         [DataRow(Mode.Normal)]
         public void RdpLinux(Mode mode)
         {
-            var server = new RdpLinuxServer(linux_x64_1, win10_x64_2.RunOnIP, win10Username ?? "", win10Password ?? "");
+            var server = new RdpLinuxServer(linux_x64_1, win10_x64_3.RunOnIP, win10Username ?? "", win10Password ?? "");
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            // side1 (.80) sees the directory natively; side2 (.32) sees the same bytes through RDPDR.
+            // side1 (.80) sees the directory natively; side2 (.85) sees the same bytes through RDPDR.
             var writePath1 = $"{RdpLinuxServer.ExportDir}/{filename1}";
             var readPath1 = $"{RdpLinuxServer.ExportDir}/{filename2}";
             var side1 = new Client(OS.Linux, linux_x64_1, $"-w {writePath1} -r {readPath1}");
 
             var readPath2 = RdpLinuxServer.RedirectedPath(filename1);
             var writePath2 = RdpLinuxServer.RedirectedPath(filename2);
-            var side2 = new Client(OS.Windows, win10_x64_2, $"-r {readPath2} -w {writePath2}");
+            var side2 = new Client(OS.Windows, win10_x64_3, $"-r {readPath2} -w {writePath2}");
 
             ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
         }
@@ -571,33 +667,57 @@ namespace ft_tests
         [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads)]
         public void VirtualBoxSharedFolder(OS client1OS, OS client2OS, Mode mode)
         {
+            // The shared storage is the dev box's C:\ (the c_drive VBox shared folder). Both tunnel ends are
+            // now VBox GUESTS (client1 moved off the dev box onto a dedicated VM), so a Windows client reads
+            // it via \\vboxsvr\c_drive and a Linux client via /media/vboxsf - guest<->guest. The host<->guest
+            // path is covered separately by VirtualBoxSharedFolderHostToGuest.
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive("Skipped: a required VBox-guest node is unavailable.");
+
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            var writePath1 = client1OS switch
-            {
-                OS.Windows => $@"C:\Temp\{filename1}",
-                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
-            };
-            var readPath1 = client1OS switch
-            {
-                OS.Windows => $@"C:\Temp\{filename2}",
-                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
-            };
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var writePath1 = VboxGuestPath(client1OS, filename1);
+            var readPath1 = VboxGuestPath(client1OS, filename2);
             var side1 = new Client(client1OS, client1Runner, $"-w {writePath1} -r {readPath1} --verbose");
 
-            var readPath2 = client2OS switch
-            {
-                OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename1}",
-                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename1}"
-            };
-            var writePath2 = client2OS switch
-            {
-                OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename2}",
-                OS.Linux => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename2}"
-            };
-            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var readPath2 = VboxGuestPath(client2OS, filename1);
+            var writePath2 = VboxGuestPath(client2OS, filename2);
+            var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2} --verbose");
+
+            ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        /// <summary>The path a VBox GUEST reaches the dev box's shared C:\Temp by.</summary>
+        private static string VboxGuestPath(OS os, string filename) => os switch
+        {
+            OS.Windows => $@"\\vboxsvr\c_drive\Temp\{filename}",
+            _ => $@"/media/vboxsf/192.168.0.31/c_drive/Temp/{filename}"
+        };
+
+        // Host->guest: side1 is the dev box running ft LOCALLY (its own C:\Temp IS the c_drive share), side2 is
+        // a VBox guest reading the same bytes via \\vboxsvr / /media/vboxsf. Confirms the host-side path still
+        // works now that the general Windows client1 is a guest VM (per the user's "dev box to VM" request).
+        [DataTestMethod]
+        [DataRow(OS.Windows, Mode.Normal)]
+        [DataRow(OS.Linux, Mode.Normal)]
+        public void VirtualBoxSharedFolderHostToGuest(OS client2OS, Mode mode)
+        {
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            if (client2Runner is null)
+                Assert.Inconclusive("Skipped: a required VBox-guest node is unavailable.");
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            var writePath1 = $@"C:\Temp\{filename1}";   // the dev box's own C:\Temp
+            var readPath1 = $@"C:\Temp\{filename2}";
+            var side1 = new Client(OS.Windows, devBoxLocal, $"-w {writePath1} -r {readPath1} --verbose");
+
+            var readPath2 = VboxGuestPath(client2OS, filename1);
+            var writePath2 = VboxGuestPath(client2OS, filename2);
             var side2 = new Client(client2OS, client2Runner, $"-r {readPath2} -w {writePath2} --verbose");
 
             ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
@@ -616,7 +736,7 @@ namespace ft_tests
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
             var side2 = new Client(client2OS, client2Runner, $"--ftp -u anonymous -h 192.168.0.81 -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.FTP, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
@@ -641,7 +761,7 @@ namespace ft_tests
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
             var side2 = new Client(client2OS, client2Runner, $"--webdav --url {url} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.WebDav), side2, readPath1, writePath1, readPath2, writePath2);
@@ -667,7 +787,7 @@ namespace ft_tests
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_2 : linux_x64_3;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
             var side2 = new Client(client2OS, client2Runner, $"{s3Args} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.S3), side2, readPath1, writePath1, readPath2, writePath2);
@@ -1037,7 +1157,7 @@ namespace ft_tests
 
                 ConductTest(
                         $"{name} (Normal mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
                         "Normal", bytesToSend);
@@ -1054,7 +1174,7 @@ namespace ft_tests
 
                 ConductTest(
                         $"{name} (Isolated Reads mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
                         "Isolated Reads", bytesToSend);
@@ -1074,7 +1194,7 @@ namespace ft_tests
                 //NEITHER --upload-download NOR --pace here - this exercises that detection end-to-end.
                 ConductTest(
                         $"{name} (Upload-Download mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, side2.Args),
                         "Upload-Download", bytesToSend);
@@ -1089,7 +1209,7 @@ namespace ft_tests
 
                 ConductTest(
                         $"{name} (FTP mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
                         "FTP", bytesToSend);
@@ -1106,7 +1226,7 @@ namespace ft_tests
 
                 ConductTest(
                         $"{name} (HTTP API mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:192.168.0.20:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004"),
                         server,
                         new Client(side2.OS, side2.Runner, $"{side2.Args}"),
                         "HTTP API", bytesToSend);

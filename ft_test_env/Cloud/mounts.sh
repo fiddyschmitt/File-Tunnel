@@ -70,7 +70,7 @@ remount cifs   "//192.168.0.31/e"        "/media/smb/192.168.0.31/e"          "u
 remount cifs   "//192.168.0.31/r"        "/media/smb/192.168.0.31/r"          "username=__SMB_USER__,password=__SMB_PASS__"
 remount cifs   "//192.168.0.81/data"     "/media/smb/192.168.0.81/data"       "password="
 remount nfs    "192.168.0.81:/mnt/tmpfs" "/media/nfs/192.168.0.81/tmpfs"      ""
-remount cifs   "//192.168.0.32/Shared"   "/media/smb/192.168.0.32/shared"     "username=__SMB_USER__,password=__SMB_PASS__"
+remount cifs   "//192.168.0.84/Shared"   "/media/smb/192.168.0.84/shared"     "username=__SMB_USER__,password=__SMB_PASS__"
 remount vboxsf "C_DRIVE"                 "/media/vboxsf/192.168.0.31/c_drive" ""
 remount 9p     "192.168.0.81"           "/media/9p/192.168.0.81/export"      "trans=tcp,aname=/srv/9p"
 

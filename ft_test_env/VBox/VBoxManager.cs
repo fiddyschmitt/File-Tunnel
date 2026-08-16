@@ -59,6 +59,21 @@ namespace ft_test_env.VBox
         public bool VmRunning(string name) =>
             TryRun("list", "runningvms").StdOut.Contains($"\"{name}\"", StringComparison.Ordinal);
 
+        /// <summary>The VM's precise state ("running", "stopping", "poweroff", "saved", ...), or "unknown".
+        /// Use this rather than VmRunning when you need the VM to be FULLY off (session lock released) —
+        /// a VM drops off the running list before its power-off transition completes.</summary>
+        public string VmState(string name)
+        {
+            var info = TryRun("showvminfo", name, "--machinereadable");
+            if (!info.Ok) return "unknown";
+            foreach (var line in info.StdOut.Split('\n'))
+            {
+                if (line.StartsWith("VMState=", StringComparison.Ordinal))
+                    return line["VMState=".Length..].Trim().Trim('"', '\r', ' ');
+            }
+            return "unknown";
+        }
+
         public bool BridgeAdapterExists(string adapterName)
         {
             var listing = TryRun("list", "bridgedifs").StdOut;
@@ -81,6 +96,16 @@ namespace ft_test_env.VBox
                           && l.Contains("immutable", StringComparison.OrdinalIgnoreCase));
         }
 
+        public bool SnapshotExists(string vmName, string snapshotName)
+        {
+            var info = TryRun("snapshot", vmName, "list", "--machinereadable");
+            if (!info.Ok) return false;
+            return info.StdOut
+                .Split('\n')
+                .Any(l => l.StartsWith("SnapshotName", StringComparison.OrdinalIgnoreCase)
+                          && l.Contains($"=\"{snapshotName}\"", StringComparison.Ordinal));
+        }
+
         // ---- mutations ----
 
         public void CloneMediumToVdi(string sourceQcow2, string destVdi) =>
@@ -101,8 +126,8 @@ namespace ft_test_env.VBox
             Run("modifymedium", "disk", vdiPath, "--type", "immutable");
         }
 
-        public void CreateVm(string name) =>
-            Run("createvm", "--name", name, "--ostype", "Debian_64", "--register");
+        public void CreateVm(string name, string osType = "Debian_64") =>
+            Run("createvm", "--name", name, "--ostype", osType, "--register");
 
         public void ConfigureVm(string name, int memoryMb, int cpus, string bridgeAdapter) =>
             Run("modifyvm", name,
@@ -164,5 +189,57 @@ namespace ft_test_env.VBox
 
         public void PowerOff(string name) =>
             Run("controlvm", name, "poweroff");
+
+        /// <summary>Poll until the VM is FULLY powered off (state poweroff, lock released), or the timeout
+        /// elapses. Returns true if it stopped.</summary>
+        public bool WaitUntilOff(string name, int timeoutSeconds)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (VmState(name) == "poweroff") return true;
+                Thread.Sleep(2000);
+            }
+            return false;
+        }
+
+        // ---- Windows gold-image linked-clone mutations ----
+
+        /// <summary>Linked-clones the Windows gold VM from a named snapshot into a fresh VM and registers it.
+        /// A linked clone is fast and space-cheap (a persistent diff disk over the gold's snapshot) — the
+        /// Windows analog of the immutable Debian base, except the diff PERSISTS across reboots so a node's
+        /// reconfigured IP/hostname and deployed bits survive a reboot. Re-cloned fresh each bring-up.</summary>
+        public void CloneLinkedFromGold(string goldVmName, string goldSnapshot, string newName) =>
+            Run("clonevm", goldVmName,
+                "--snapshot", goldSnapshot,
+                "--options", "link",
+                "--name", newName,
+                "--register");
+
+        /// <summary>Take a snapshot of the VM's current state (the VM must be off for an offline snapshot).
+        /// Retries on a transient LockMachine/E_FAIL, which can occur briefly after power-off.</summary>
+        public void TakeSnapshot(string vmName, string snapshotName)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                var result = TryRun("snapshot", vmName, "take", snapshotName);
+                if (result.Ok) return;
+                if (attempt >= 6 || !result.Combined.Contains("LockMachine", StringComparison.OrdinalIgnoreCase))
+                    throw new Exception(result.Combined);
+                Thread.Sleep(2000);
+            }
+        }
+
+        /// <summary>Delete a snapshot (best effort). Fails if a linked clone still depends on it, so delete
+        /// the dependent clones first.</summary>
+        public void DeleteSnapshot(string vmName, string snapshotName) =>
+            TryRun("snapshot", vmName, "delete", snapshotName);
+
+        /// <summary>Best-effort power off then unregister + delete a VM and its files.</summary>
+        public void Unregister(string vmName)
+        {
+            if (VmRunning(vmName)) TryRun("controlvm", vmName, "poweroff");
+            TryRun("unregistervm", vmName, "--delete");
+        }
     }
 }
