@@ -29,6 +29,11 @@ namespace ft_tests
         // The Mac mounts the SMB shares in userspace under here (assumes the 'smith' login on .33).
         const string MAC_SMB_ROOT = "/Users/smith/mnt/smb";
 
+        // The Mac mounts the .81 NFS export under here. Unlike smbfs (userspace), an NFS mount needs root,
+        // so it goes through the Mac's passwordless sudo. Kept parallel to MAC_SMB_ROOT and to NfsClient's
+        // Mac branch, which owns the actual (re)mount.
+        const string MAC_NFS_ROOT = "/Users/smith/mnt/nfs";
+
         // Three dedicated Windows VMs: two CLIENT clones (.83, .85, ft_test_env-managed off ft-win-gold) plus a
         // hand-built SERVER VM (.84). The clones share the gold's machine SID, and Windows 24H2+ rejects SMB/RDP
         // auth between same-SID peers (KB-enforced CredSSP/NLA SID checks) - so the server must have a DISTINCT
@@ -460,6 +465,18 @@ namespace ft_tests
         [DataRow(OS.Linux, OS.Windows, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Linux, Mode.Normal)]
         [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        // The Mac (.33) as an NFS client of the .81 export (macOS mounts it via sudo + resvport; ft's
+        // MacDirectRefresh handles read coherency). Completes the client1 x client2 matrix over {W,L,M}.
+        [DataRow(OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Nfs Mac-Linux Normal")]
+        [DataRow(OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux IsolatedReads")]
+        [DataRow(OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Nfs Linux-Mac Normal")]
+        [DataRow(OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Linux-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Nfs Mac-Windows Normal")]
+        [DataRow(OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Mac-Windows IsolatedReads")]
+        [DataRow(OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Nfs Windows-Mac Normal")]
+        [DataRow(OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Windows-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Nfs Mac-Mac Normal")]
+        [DataRow(OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Mac-Mac IsolatedReads")]
         public void Nfs(OS client1OS, OS client2OS, Mode mode)
         {
             var nfsServer = new NfsServer(linux_x64_2);
@@ -469,13 +486,29 @@ namespace ft_tests
 
             var writePath1 = NfsPathLookup(client1OS, filename1);
             var readPath1 = NfsPathLookup(client1OS, filename2);
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var client1Runner = client1OS switch { OS.Windows => win10_x64_1, OS.Mac => mac_1, _ => linux_x64_1 };
             var side1 = new NfsClient(client1OS, client1Runner, $"-w {writePath1} -r {readPath1} --verbose");
 
             var readPath2 = NfsPathLookup(client2OS, filename1);
             var writePath2 = NfsPathLookup(client2OS, filename2);
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var client2Runner = client2OS switch { OS.Windows => win10_x64_3, OS.Mac => mac_2, _ => linux_x64_3 };
             var side2 = new NfsClient(client2OS, client2Runner, $"-r {readPath2} -w {writePath2} --verbose");
+
+            // A Windows client node may be down (those are null-tolerant in ClassInit). Skip rather than
+            // NRE-fail so one dead node doesn't fail rows across the matrix.
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required lab node is unavailable (NFS {client1OS}-{client2OS} {mode}).");
+
+            // Normal mode is unsupported for a macOS NFS *client*: macOS NFS attribute caching (acreg) keeps a
+            // held read handle from seeing a peer's appends promptly. Measured on .33: a FRESH open revalidates
+            // in ~2-4s, but under ft's continuous polling a HELD fd (and even an explicit fstat on it) revalidates
+            // only near acregmax (~9-11s) - too slow to finish within the transfer timeout ("Did not finish").
+            // IsolatedReads reopens per read, getting the fast ~2-4s path, so it IS supported (the same reopen
+            // strategy that makes the macOS SMB client reliable). This is an inherent macOS NFS trait, not a
+            // mount-tunable - actimeo=0/noac would defeat it but that's an unrepresentative cache-off mount, and
+            // the lab keeps typical options (coherency belongs in ft). So the Mac NFS Normal rows are skipped.
+            if ((client1OS == OS.Mac || client2OS == OS.Mac) && mode == Mode.Normal)
+                Assert.Inconclusive("Normal mode is unsupported for a macOS NFS client (attribute-cache revalidation of a held handle races ft's transfer timeout); IsolatedReads is the supported mode.");
 
             ConductTunnelTests(mode, side1, nfsServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
@@ -490,6 +523,7 @@ namespace ft_tests
             {
                 OS.Windows => @"X:\",
                 OS.Linux => "/media/nfs/192.168.0.81/tmpfs/",
+                OS.Mac => $"{MAC_NFS_ROOT}/192.168.0.81/tmpfs/",
                 _ => throw new InvalidOperationException("Unsupported client OS")
             };
 

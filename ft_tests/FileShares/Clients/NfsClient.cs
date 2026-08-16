@@ -43,6 +43,18 @@ namespace ft_tests.FileShares.Clients
                 runner.Run("umount", "/media/nfs/192.168.0.81/tmpfs");
                 runner.Run("mount", "-t nfs 192.168.0.81:/mnt/tmpfs /media/nfs/192.168.0.81/tmpfs");
             }
+
+            if (OS == OS.Mac)
+            {
+                // macOS NFS needs root (via the Mac's passwordless sudo) and a RESERVED source port. The
+                // Linux export is 'secure' (no 'insecure' flag), so a plain mount is REFUSED ("Operation not
+                // permitted") - resvport is required to connect AT ALL (the Linux client uses a reserved port
+                // by default; the Mac must ask for one). That is the ONLY option here: no version pin, no
+                // cache-defeating flags - a Mac reader seeing another client's appends is handled IN ft by
+                // MacDirectRefresh. MacProcessRunner.Run does not add sudo, so pass it explicitly.
+                const string mp = "/Users/smith/mnt/nfs/192.168.0.81/tmpfs";
+                runner.Run("sudo", $"bash -c 'mkdir -p {mp}; umount -f {mp} 2>/dev/null; mount -t nfs -o resvport 192.168.0.81:/mnt/tmpfs {mp}'");
+            }
         }
     }
 }

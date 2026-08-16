@@ -55,6 +55,12 @@ namespace ft_test_env.Ssh
 
                 ssh.CreateCommand($"net share Shared=\"{gold.SharedSharePath}\" /grant:{gold.Username},FULL").Execute();
 
+                // Windows Client-for-NFS must use a RESERVED (privileged) source port to mount the .81 Linux
+                // export, which is 'secure' (no 'insecure' flag) - the same reason the Mac needs resvport.
+                // Without it the mount hangs then fails "Network Error 53". Set it in the NFS client registry
+                // and bounce the redirector (NfsRdr - NOT NfsClnt, which can refuse to restart over SSH).
+                ssh.CreateCommand(@"New-ItemProperty 'HKLM:\SOFTWARE\Microsoft\ClientForNFS\CurrentVersion\Default' -Name UseReservedPorts -Value 1 -PropertyType DWord -Force | Out-Null; Restart-Service NfsRdr -Force").Execute();
+
                 // NOTE: the Windows->.81 (and ->.33) SMB credential is deliberately NOT set here. A cmdkey has
                 // to be saved from ft's INTERACTIVE session (1); one saved over this SSH (session-0) logon is
                 // invisible to ft ("cannot save from this logon session"). The Smb test seeds it in session 1
