@@ -7,10 +7,11 @@ namespace ft_test_env.Ssh
     /// <summary>
     /// The ft-specific, per-clone provisioning done over SSH/SCP after a Windows node has been reconfigured
     /// to its target IP. Almost everything a node needs (runremote autostart in the interactive session,
-    /// Client-for-NFS, the 'Shared' SMB share, cmdkey for .81, RDP, autologon, the c_drive VBox shared
-    /// folder) is BAKED INTO ft-win-gold (see FT_WIN_GOLD_IMAGE.md) and inherited by every linked clone, so
-    /// this step is deliberately thin: stage the CURRENT ft.exe (the gold's copy may be stale), and
-    /// re-assert the two bits most worth guarding against drift (the .81 cmdkey and the Shared share).
+    /// Client-for-NFS, the 'Shared' SMB share, RDP, autologon, the c_drive VBox shared folder) is BAKED INTO
+    /// ft-win-gold (see FT_WIN_GOLD_IMAGE.md) and inherited by every linked clone, so this step is
+    /// deliberately thin: stage the CURRENT ft.exe (the gold's copy may be stale), disable the firewall, and
+    /// re-assert the Shared share. (The .81/.33 client SMB credential is NOT set here - it only works when
+    /// saved from ft's interactive session, so the Smb test seeds it via runremote per cell.)
     /// </summary>
     public class WindowsProvisioner
     {
@@ -54,13 +55,15 @@ namespace ft_test_env.Ssh
 
                 ssh.CreateCommand($"net share Shared=\"{gold.SharedSharePath}\" /grant:{gold.Username},FULL").Execute();
 
-                // Windows->.81\data needs a cached credential (the non-Mac Smb rows never refresh cmdkey at
-                // test time). The .81 SMB share account is the same user/live the Linux nodes SSH with.
-                var server = config.Nodes.FirstOrDefault(n => n.IsServer)?.Ip ?? "192.168.0.81";
-                ssh.CreateCommand($"cmdkey /add:{server} /user:{config.Linux.Username} /pass:{config.Linux.Password}").Execute();
+                // NOTE: the Windows->.81 (and ->.33) SMB credential is deliberately NOT set here. A cmdkey has
+                // to be saved from ft's INTERACTIVE session (1); one saved over this SSH (session-0) logon is
+                // invisible to ft ("cannot save from this logon session"). The Smb test seeds it in session 1
+                // via runremote right before each cell (EndToEndTests.EnsureWinClientSessionCred). The matching
+                // server-side piece - enabling SMB signing on the .81 Samba so a Win 24H2 client will connect at
+                // all - is baked into setup_debian.sh.
 
-                return StepOutcome.Ok(File.Exists(gold.FtExeSource) ? "ft.exe staged; Shared + .81 cmdkey asserted"
-                                                                    : "Shared + .81 cmdkey asserted (ft.exe source missing)");
+                return StepOutcome.Ok(File.Exists(gold.FtExeSource) ? "ft.exe staged; Shared asserted"
+                                                                    : "Shared asserted (ft.exe source missing)");
             }
             catch (Exception ex)
             {

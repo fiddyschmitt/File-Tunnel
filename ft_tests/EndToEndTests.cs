@@ -346,6 +346,11 @@ namespace ft_tests
                 RefreshSmbClientMount(client2OS, serverOS, client2Runner);
             }
 
+            // A Windows client reaches a non-Windows SMB server (.81 Samba / .33 macOS) via a cmdkey that must
+            // live in ft's interactive session - seed it there before the cell (idempotent; see the helper).
+            EnsureWinClientSessionCred(client1OS, serverOS, client1Runner);
+            EnsureWinClientSessionCred(client2OS, serverOS, client2Runner);
+
             ConductTunnelTests(mode, side1, smbServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
@@ -374,12 +379,14 @@ namespace ft_tests
                 $"else umount -f \"$MP\" 2>/dev/null; mount_smbfs \"{mountSrc}\" \"$MP\"; fi");
         }
 
-        // (Re)establish ONE SMB client's mount to the given server's share, idempotently: Mac via smbfs
-        // (RefreshMacClientMount), Linux via cifs, Windows via a cached cred. Called before each Mac-involved
-        // cell because these mounts idle-drop over the long run before the (last-ordered) Mac cells - the
-        // per-cell server-service restart (SmbServer.Restart) doesn't touch the client mount. The Linux cifs
-        // mount idle-ZOMBIES (mountpoint -q passes but a write fails - see [[test-lab-mount-quirks]]), so test
-        // writability as root and force-remount (umount -l + mount) on failure. No-op if the runner is null.
+        // (Re)establish ONE SMB client's *mount* to the given server's share, idempotently: Mac via smbfs
+        // (RefreshMacClientMount), Linux via cifs. A Windows client needs no mount - only a session-1 cmdkey,
+        // handled separately by EnsureWinClientSessionCred (a cmdkey has to be saved from ft's interactive
+        // session, which this SSH-based path can't reach). Called before each Mac-involved cell because these
+        // mounts idle-drop over the long run before the (last-ordered) Mac cells - the per-cell server-service
+        // restart (SmbServer.Restart) doesn't touch the client mount. The Linux cifs mount idle-ZOMBIES
+        // (mountpoint -q passes but a write fails - see [[test-lab-mount-quirks]]), so test writability as root
+        // and force-remount (umount -l + mount) on failure. No-op if the runner is null or the client is Windows.
         private static void RefreshSmbClientMount(OS clientOS, OS serverOS, ProcessRunner? runner)
         {
             if (runner == null) return;
@@ -394,23 +401,30 @@ namespace ft_tests
                 };
                 runner.RunCommand($"sudo sh -c 'MP={mp}; mkdir -p $MP; if mountpoint -q $MP && touch $MP/.ftw 2>/dev/null; then rm -f $MP/.ftw; else umount -l $MP 2>/dev/null; mount -t cifs {src} $MP -o username={user},password={pass},vers=3.0; fi'");
             }
-            else if (clientOS == OS.Windows)
-            {
-                var (host, user, pass) = serverOS switch
-                {
-                    OS.Linux => ("192.168.0.81", "user", "live"),
-                    OS.Windows => (WIN_SERVER_IP, macSmbUser, macSmbPass),
-                    _ => ("192.168.0.33", macServerUser, macServerPass),
-                };
-                runner.RunCommand($"cmdkey /add:{host} /user:{user} /pass:{pass}");
-            }
         }
 
-        // Initial ClassInit setup of the Linux/Windows client-node mounts of the Mac's own .33 share.
+        // A Windows client authenticates to a NON-Windows SMB server (Samba .81 or macOS .33) with a stored
+        // credential, and that credential MUST be created in the INTERACTIVE session (1) where ft runs: cmdkey
+        // saved from the SSH session-0 logon lands in a different logon and is invisible to ft (SSH reports
+        // "cannot save from this logon session"). runremote's Run() launches cmdkey in session 1, exactly where
+        // ft launches - proven: with the cred seeded this way (and .81 Samba signing enabled) ft opens the share.
+        // Idempotent and cheap; a no-op for a Windows server (the client authenticates to .84 with its own
+        // matching smith account) or a non-Windows client. Called before EVERY Smb cell - the .81 rows never
+        // trigger the Mac mount refresh, so this is their only credential seed.
+        private static void EnsureWinClientSessionCred(OS clientOS, OS serverOS, ProcessRunner? runner)
+        {
+            if (runner == null || clientOS != OS.Windows || serverOS == OS.Windows) return;
+            var (host, user, pass) = serverOS == OS.Linux
+                ? ("192.168.0.81", "user", "live")
+                : ("192.168.0.33", macServerUser, macServerPass);
+            runner.Run("cmd.exe", $"/c cmdkey /add:{host} /user:{user} /pass:{pass}");
+        }
+
+        // Initial ClassInit setup of the Linux client-node mounts of the Mac's own .33 share. (Windows clients
+        // need no mount to .33 - just a session-1 cmdkey, which EnsureWinClientSessionCred seeds per cell.)
         private static void RefreshMacShareClientNodeMounts()
         {
             foreach (var lin in new[] { linux_x64_1, linux_x64_3 }) RefreshSmbClientMount(OS.Linux, OS.Mac, lin);
-            foreach (var wr in new[] { win10_x64_1, win10_x64_3 }) RefreshSmbClientMount(OS.Windows, OS.Mac, wr);
         }
 
         private static string SmbPathLookup(OS client, OS server, string fileName)

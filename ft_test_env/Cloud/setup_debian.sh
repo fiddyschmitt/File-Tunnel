@@ -50,6 +50,12 @@ bash -c 'cat >> /etc/samba/smb.conf <<EOF
    guest ok = yes
 EOF'
 
+# Windows 11 24H2+ clients REQUIRE SMB signing by default and refuse a server that doesn't offer it
+# ("...your computer is configured to require SMB signing"). Debian's stock standalone smb.conf leaves
+# signing off, so enable it in [global] - the documented, representative fix for serving modern Windows
+# clients (macOS smbd and Windows Server already sign, which is why only the Samba rows were affected).
+grep -qi 'server signing' /etc/samba/smb.conf || sed -i '/^\[global\]/a\   server signing = auto' /etc/samba/smb.conf
+
 # Enroll the node's login user as a Samba user too (same throwaway password). The share is
 # guest-accessible, but modern Windows blocks unauthenticated guest SMB by default
 # (AllowInsecureGuestAuth), so interactive access from Windows needs a real credential: user/live.
