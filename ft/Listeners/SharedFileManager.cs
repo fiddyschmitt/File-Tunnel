@@ -525,9 +525,18 @@ namespace ft.Listeners
                         var orig = IsOnline;
 
                         var timeSinceLastContact = DateTime.Now - lastContactFromCounterpart.Value;
-                        var timeSinceLastSuccessfulPing = DateTime.Now - lastSuccessfulPing.Value;
 
-                        IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds && timeSinceLastSuccessfulPing.TotalMilliseconds < TunnelTimeoutMilliseconds;
+                        // A peer that is actively sending us ANYTHING (Forward data OR ping requests) is
+                        // alive - receipt is sufficient proof of liveness. We deliberately do NOT also
+                        // require a recent successful ping ROUND-TRIP: under load a slow purge handshake or
+                        // NFS latency can delay our ping's return past TunnelTimeoutMilliseconds while the
+                        // peer is still streaming Forward data to us. That falsely declared the tunnel
+                        // offline and ran TearDownAllConnections(), truncating live mid-transfer connections.
+                        // The `lastSuccessfulPing != null` gate above still requires ONE completed round-trip
+                        // before the tunnel is ever considered online (so startup is unaffected). A genuinely
+                        // broken send path is still caught: the peer stops receiving us -> it goes offline and
+                        // tears down -> we then stop receiving and go offline here via lastContact.
+                        IsOnline = timeSinceLastContact.TotalMilliseconds < TunnelTimeoutMilliseconds;
 
                         if (orig != IsOnline)
                         {
