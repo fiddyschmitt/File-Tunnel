@@ -897,6 +897,13 @@ namespace ft_tests
             side1.Restart();
             side2.Restart();
 
+            // A Windows client reaches the .81 Samba server through a cmdkey that must live in ft's interactive
+            // session (session 1) - seed it before the cell, exactly as ConductTunnelTests does (idempotent; no-op
+            // for a Linux client). Without it the Windows side can't open the tunnel files on \\192.168.0.81\data,
+            // so its ft never comes online and the SOCKS proxy has no exit (counterpart stays Offline the whole run).
+            EnsureWinClientSessionCred(client1OS, server.OS, client1Runner);
+            EnsureWinClientSessionCred(client2OS, server.OS, client2Runner);
+
             // best-effort cleanup of stale tunnel files
             foreach (var (runner, path) in new[] { (side1.Runner, readPath1), (side1.Runner, writePath1), (side2.Runner, readPath2), (side2.Runner, writePath2) })
             {
@@ -919,11 +926,16 @@ namespace ft_tests
             var side1IP = side1.Runner.RunOnIP;
             var udpProxy = new IPEndPoint(IPAddress.Parse(side1IP), SOCKS_PROXY_PORT);
 
+            // Invoke the REAL curl on Windows: the SSH shell on the Windows nodes is PowerShell, where a bare
+            // `curl` is an alias for Invoke-WebRequest - which knows nothing of --socks5 and fails every check.
+            // curl.exe is the genuine binary (built into Win10+); on Linux it stays plain `curl`.
+            var curlBin = side1.OS == OS.Windows ? "curl.exe" : "curl";
+
             // 1) TCP via real curl -> the internet (also exercises far-side DNS resolution on the exit).
             //    Longer deadline: this is where we wait for the tunnel + SOCKS listener to come online.
             Retry("curl -> internet (example.com)", 90, ct, () =>
             {
-                var (code, output) = side1.Runner.RunCommand($"curl -s --max-time 30 --socks5-hostname 127.0.0.1:{SOCKS_PROXY_PORT} http://example.com/");
+                var (code, output) = side1.Runner.RunCommand($"{curlBin} -s --max-time 30 --socks5-hostname 127.0.0.1:{SOCKS_PROXY_PORT} http://example.com/");
                 return code == 0 && output.Contains("Example Domain");
             });
 
@@ -934,7 +946,7 @@ namespace ft_tests
             {
                 Retry("curl -> controlled dev-box responder", 25, ct, () =>
                 {
-                    var (code, output) = side1.Runner.RunCommand($"curl -s --max-time 20 --socks5 127.0.0.1:{SOCKS_PROXY_PORT} http://{DEV_BOX_IP}:{SOCKS_HTTP_PORT}/");
+                    var (code, output) = side1.Runner.RunCommand($"{curlBin} -s --max-time 20 --socks5 127.0.0.1:{SOCKS_PROXY_PORT} http://{DEV_BOX_IP}:{SOCKS_HTTP_PORT}/");
                     return code == 0 && output.Contains(marker);
                 });
             }
@@ -1066,6 +1078,12 @@ namespace ft_tests
             side1.Restart();
             side2.Restart();
 
+            // Seed the Windows client's session-1 cmdkey for the .81 Samba server (see Socks()); without it the
+            // Windows side can't reach \\192.168.0.81\data, so its ft never comes online and the tunnel - and every
+            // proxy riding it - stays dead. Idempotent; no-op for a Linux client.
+            EnsureWinClientSessionCred(client1OS, server.OS, client1Runner);
+            EnsureWinClientSessionCred(client2OS, server.OS, client2Runner);
+
             foreach (var (runner, path) in new[] { (side1.Runner, readPath1), (side1.Runner, writePath1), (side2.Runner, readPath2), (side2.Runner, writePath2) })
             {
                 try { runner.DeleteFile(path); } catch { }
@@ -1102,7 +1120,8 @@ namespace ft_tests
             var checks = proxies.Select(proxy => Task.Run(() =>
             {
                 var nullDevice = proxy.OS == OS.Windows ? "NUL" : "/dev/null";
-                var curl = $"curl -s --fail --max-time 200 -o {nullDevice} --socks5 127.0.0.1:{proxy.Port} http://{DEV_BOX_IP}:{STRESS_HTTP_PORT}/";
+                var curlBin = proxy.OS == OS.Windows ? "curl.exe" : "curl";   // PowerShell aliases bare `curl` to Invoke-WebRequest
+                var curl = $"{curlBin} -s --fail --max-time 200 -o {nullDevice} --socks5 127.0.0.1:{proxy.Port} http://{DEV_BOX_IP}:{STRESS_HTTP_PORT}/";
 
                 var start = DateTime.Now;
                 (int Code, string Output) last = (-1, "");
