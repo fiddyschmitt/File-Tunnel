@@ -631,15 +631,21 @@ namespace ft_tests
                 $"{VirtioGuestClient.Virtio9pMountPoint}/{f1}", $"{VirtioGuestClient.Virtio9pMountPoint}/{f2}");
         }
 
-        // KnownFlaky: Rdp IsolatedReads fails ~100% of the time — the per-read server round-trips
-        // starve the keepalive ping over RDP's high-latency \\tsclient channel (see the SMB fix-stack
-        // notes). RDP Normal is reliable, but TestCategory can't be applied per-DataRow, so the whole
-        // method is quarantined. Exclude with `--filter TestCategory!=KnownFlaky` for a clean green.
+        // The Rdp mstsc row. Normal is reliable (see RdpServer for the April-2026 consent-dialog handling), so
+        // it runs in the clean suite. IsolatedReads is split into its own KnownFlaky method below - both still
+        // run; the tag only lets you exclude IR with `--filter TestCategory!=KnownFlaky` for a clean green.
+        [DataTestMethod]
+        [DataRow(Mode.Normal)]
+        public void Rdp(Mode mode) => ConductRdpTest(mode);
+
+        // KnownFlaky: Rdp IsolatedReads fails ~100% of the time — the per-read server round-trips starve the
+        // keepalive ping over RDP's high-latency \\tsclient channel (see the SMB fix-stack notes).
         [DataTestMethod]
         [TestCategory("KnownFlaky")]
-        [DataRow(Mode.Normal)]
         [DataRow(Mode.IsolatedReads)]
-        public void Rdp(Mode mode)
+        public void RdpIsolatedReads(Mode mode) => ConductRdpTest(mode);
+
+        private void ConductRdpTest(Mode mode)
         {
             if (win10_x64_1 is null || win10_x64_2 is null)
                 Assert.Inconclusive("Skipped: the Windows client (.83) or server (.84) node is unavailable.");
