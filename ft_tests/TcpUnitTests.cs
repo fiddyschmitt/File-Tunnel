@@ -24,9 +24,9 @@ namespace ft_tests
     {
         [DataTestMethod]
         [Timeout(180000)]
-        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", false, 1,  DisplayName = "SingleConnection_HalfDuplex")]
-        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", true,  1,  DisplayName = "SingleConnection_FullDuplex")]
-        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:8001", true,  10, DisplayName = "MultipleConnections_FullDuplex")]
+        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:9001", false, 1,  DisplayName = "SingleConnection_HalfDuplex")]
+        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:9001", true,  1,  DisplayName = "SingleConnection_FullDuplex")]
+        [DataRow(50 * 1024 * 1024, "5001:127.0.0.1:9001", true,  10, DisplayName = "MultipleConnections_FullDuplex")]
         public void Transfer(int bytesToSend, string forwardStr, bool fullDuplex, int connections)
         {
             TestTransfer(bytesToSend, forwardStr, Path.GetTempFileName(), Path.GetTempFileName(), fullDuplex, connections);
