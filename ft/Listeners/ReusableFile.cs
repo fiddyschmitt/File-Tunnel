@@ -296,6 +296,17 @@ namespace ft.Listeners
             // file coherently, and an extra open there is pure cost. Measured: LMM 6/12 -> 12/12, 0 timeouts.
             var reopenReadHandleAfterPurge = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
 
+            // macOS NFS: a held read handle's attribute cache extends toward acregmax (~10s) while it keeps
+            // seeing a stale EOF, so a peer's appends don't become visible before the tunnel timeout - a
+            // FRESH open revalidates in ~2-4s (measured on .33; nothing on the held fd - fstat, F_NOCACHE -
+            // beats it). When stalled this long, reopen the read handle in place (see the wait loop below).
+            // Gated to macOS NFS in NORMAL mode ONLY: a reopened smbfs handle is served the SAME stale bytes
+            // (smbfs is fixed in place by MacDirectRefresh's F_NOCACHE read, not by a reopen), and IR already
+            // reopens per read - so reopening in either case only interferes (both regressed when this was
+            // macOS-wide).
+            var reopenReadHandleWhenStalled = Extensions.IsMacNfsMount(ReadFromFilename) && !IsolatedReads;
+            const int stallReopenMillis = 2000;
+
             while (true)
             {
                 try
@@ -318,6 +329,7 @@ namespace ft.Listeners
                         fileStream = IsolatedReads ?
                                         new IsolatedReadsFileStream(ReadFromFilename) :
                                         new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                        fileStream.DisableReadAheadIfMacNfs();
 
                         if (retryPos != null)
                         {
@@ -347,7 +359,16 @@ namespace ft.Listeners
                         SessionChanged?.Invoke(this, new());
 
 
-                        Stream isReadyForPurgeStream = IsolatedReads ?
+                        // On macOS NFS the purge-handshake flag bytes go stale on a held read handle exactly
+                        // like the data does, stalling the handshake into an offline teardown (the reader can't
+                        // see the counterpart flip a flag). These flag reads are tiny and infrequent (only
+                        // during a purge), so read them the always-fresh IR way - IsolatedReadsFileStream
+                        // reopens + F_NOCACHE-reads on every read. The bulk data read stays the fast reopen-
+                        // when-stalled FileStream; only these flags pay the per-read cost. NFS-gated: smbfs
+                        // Normal reads the flags fine in place via MacDirectRefresh, so leave it untouched.
+                        var freshFlagReads = IsolatedReads || Extensions.IsMacNfsMount(ReadFromFilename);
+
+                        Stream isReadyForPurgeStream = freshFlagReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename) :
                                                             new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isReadyForPurge = new ToggleReader(
@@ -356,7 +377,7 @@ namespace ft.Listeners
                             TunnelTimeoutMilliseconds,
                             Verbose);
 
-                        Stream isPurgeCompleteStream = IsolatedReads ?
+                        Stream isPurgeCompleteStream = freshFlagReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename) :
                                                             new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isPurgeComplete = new ToggleReader(
@@ -379,6 +400,7 @@ namespace ft.Listeners
                     while (true)
                     {
                         var waitForData = Stopwatch.StartNew();
+                        var sinceReopen = Stopwatch.StartNew();
                         while (true)
                         {
                             var nextByte = binaryReader.PeekChar();
@@ -388,6 +410,28 @@ namespace ft.Listeners
                             }
 
                             fileStream.ForceRead(TunnelTimeoutMilliseconds, Verbose);
+
+                            // macOS NFS: reopen the read handle in place to defeat the held handle's stale
+                            // attribute cache (see stallReopenMillis). We resume from the SAME byte position,
+                            // so no command is skipped or re-read; CRC-safe because the per-command hash resets
+                            // on each Command.Deserialise, so the fresh HashingStream carries no state. Each
+                            // reopen's GETATTR reveals ALL data written so far, so the reader bulk-reads the
+                            // backlog and stalls again - unlike IR, which reopens on every read. Only on a real
+                            // stall, so smbfs (kept flowing by MacDirectRefresh) never triggers it.
+                            if (reopenReadHandleWhenStalled
+                                && waitForData.ElapsedMilliseconds > stallReopenMillis
+                                && sinceReopen.ElapsedMilliseconds > stallReopenMillis)
+                            {
+                                var resumePos = fileStream.Position;
+                                binaryReader.Dispose();
+                                fileStream = IsolatedReads
+                                    ? new IsolatedReadsFileStream(ReadFromFilename)
+                                    : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                fileStream.Seek(resumePos, SeekOrigin.Begin);
+                                fileStream.DisableReadAheadIfMacNfs();
+                                binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
+                                sinceReopen.Restart();
+                            }
 
                             if (checkForSessionChange.ElapsedMilliseconds > 1000)
                             {

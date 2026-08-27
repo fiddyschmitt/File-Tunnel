@@ -468,6 +468,7 @@ namespace ft
         [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
         private static extern int libc_fcntl(int fd, int cmd, int arg);
         private const int MAC_F_NOCACHE = 48;   // macOS: turn the unified buffer cache off for this fd
+        private const int MAC_F_RDAHEAD = 45;   // macOS: F_RDAHEAD - toggle read-ahead prefetch for this fd
         private const int MAC_REFRESH_BYTES = 65536;   // one read through the F_NOCACHE handle to refresh the held view
         private const int O_RDONLY = 0;
         private const int SEEK_SET = 0;
@@ -536,6 +537,49 @@ namespace ft
         // delivers whole files out of order and can be caught mid-write at large sizes; used to apply the
         // upload-download small-file cap + low pace automatically, keyed off the mount rather than a flag.
         public static bool IsNinePMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.NineP;
+
+        // True when the path is on a macOS NFS mount. macOS struct statfs is ~2168 bytes (it embeds two
+        // 1024-byte path fields) with f_fstypename - a 16-byte string like "nfs"/"smbfs" - at offset 72;
+        // the Linux-oriented MountMagic above deliberately skips macOS, so read it here with a macOS-sized
+        // buffer. Cached per path (a mount can't change type). Only NFS needs ReusableFile's reopen-when-
+        // stalled + fresh-flag handling: a macOS NFS held read handle serves a STALE view that a FRESH open
+        // revalidates (~2-4s) but neither a held read/fstat nor a separate F_NOCACHE read does. smbfs is the
+        // opposite - its stale view IS fixed in place by the F_NOCACHE read (MacDirectRefresh), and a
+        // reopened smbfs handle is served the same stale bytes - so smbfs must be left on that path.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> MacNfsCache = new();
+        public static bool IsMacNfsMount(string path)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return false;
+            }
+
+            return MacNfsCache.GetOrAdd(path, p =>
+            {
+                try
+                {
+                    // The read file may not exist yet, so fall back to its directory (same mount).
+                    var target = File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p);
+                    var buf = new byte[4096]; // macOS struct statfs ~2168 bytes; f_fstypename[16] at offset 72
+                    if (statfs(target, buf) != 0) return false;
+                    var end = 72;
+                    while (end < 72 + 16 && buf[end] != 0) end++;
+                    return Encoding.ASCII.GetString(buf, 72, end - 72).Equals("nfs", StringComparison.OrdinalIgnoreCase);
+                }
+                catch { return false; }
+            });
+        }
+
+        // macOS NFS: turn OFF read-ahead prefetch on a read handle. Prefetching pages past the frontier of a
+        // file another host is actively appending can cache stale/partial data that a forward-reading held
+        // handle then serves back (out-of-order/duplicate commands); without prefetch the client fetches only
+        // the pages actually read, at the position it reads them. No-op unless a macOS NFS FileStream.
+        public static void DisableReadAheadIfMacNfs(this Stream stream)
+        {
+            if (stream is not FileStream fileStream) return;
+            if (!IsMacNfsMount(fileStream.Name)) return;
+            try { libc_fcntl((int)fileStream.SafeFileHandle.DangerousGetHandle(), MAC_F_RDAHEAD, 0); } catch { }
+        }
 
         // statfs reports plain FUSE for ALL fuse mounts, so it can't separate sshfs (held handle stays
         // stale / Normal is unreliable -> IsolatedReads) from virtio-fs (held handle refreshes on an fstat,

@@ -499,17 +499,6 @@ namespace ft_tests
             if (client1Runner is null || client2Runner is null)
                 Assert.Inconclusive($"Skipped: a required lab node is unavailable (NFS {client1OS}-{client2OS} {mode}).");
 
-            // Normal mode is unsupported for a macOS NFS *client*: macOS NFS attribute caching (acreg) keeps a
-            // held read handle from seeing a peer's appends promptly. Measured on .33: a FRESH open revalidates
-            // in ~2-4s, but under ft's continuous polling a HELD fd (and even an explicit fstat on it) revalidates
-            // only near acregmax (~9-11s) - too slow to finish within the transfer timeout ("Did not finish").
-            // IsolatedReads reopens per read, getting the fast ~2-4s path, so it IS supported (the same reopen
-            // strategy that makes the macOS SMB client reliable). This is an inherent macOS NFS trait, not a
-            // mount-tunable - actimeo=0/noac would defeat it but that's an unrepresentative cache-off mount, and
-            // the lab keeps typical options (coherency belongs in ft). So the Mac NFS Normal rows are skipped.
-            if ((client1OS == OS.Mac || client2OS == OS.Mac) && mode == Mode.Normal)
-                Assert.Inconclusive("Normal mode is unsupported for a macOS NFS client (attribute-cache revalidation of a held handle races ft's transfer timeout); IsolatedReads is the supported mode.");
-
             ConductTunnelTests(mode, side1, nfsServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
