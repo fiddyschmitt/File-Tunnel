@@ -34,4 +34,25 @@ if "$AVDMGR" list avd 2>/dev/null | grep -q "Name: $AVD"; then
 else
   echo no | "$AVDMGR" create avd -n "$AVD" -k "$IMAGE" --force
 fi
+
+# Stage a real Bionic OpenSSL for ft's crypto backends (S3 SigV4, HTTPS/Dropbox). Android ships BoringSSL,
+# which lacks the OpenSSL symbols .NET binds ("a2d_ASN1_OBJECT"); AndroidProcessRunner pushes these onto the
+# emulator and runs ft with LD_LIBRARY_PATH pointed at them. From Termux's openssl package (Bionic-built).
+# The UNVERSIONED sonames (libssl.so / libcrypto.so) matter - .NET's linux-bionic shim probes the bare soname.
+OSSL_DIR="$HOME/Library/Android/ft-openssl"
+OSSL_VER="1%3A3.6.3"
+if [ ! -f "$OSSL_DIR/libssl.so" ] || [ ! -f "$OSSL_DIR/libcrypto.so" ]; then
+  echo "=== staging Bionic OpenSSL (Termux openssl $OSSL_VER) ==="
+  mkdir -p "$OSSL_DIR"
+  TMPD=$(mktemp -d)
+  ( cd "$TMPD"
+    curl -sL -o o.deb "https://packages.termux.dev/apt/termux-main/pool/main/o/openssl/openssl_${OSSL_VER}_aarch64.deb"
+    tar xf o.deb
+    for f in data.tar.xz data.tar.zst data.tar.gz data.tar; do [ -f "$f" ] && tar xf "$f" 2>/dev/null && break; done
+    L="data/data/com.termux/files/usr/lib"
+    cp -f "$L/libcrypto.so.3" "$OSSL_DIR/libcrypto.so"
+    cp -f "$L/libssl.so.3"    "$OSSL_DIR/libssl.so" )
+  rm -rf "$TMPD"
+fi
+ls -la "$OSSL_DIR" 2>/dev/null | grep -E "libssl|libcrypto" || echo "WARNING: OpenSSL not staged (crypto backends will fail on the emulator)"
 echo SETUP_DONE

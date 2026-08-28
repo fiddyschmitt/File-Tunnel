@@ -784,6 +784,7 @@ namespace ft_tests
         [DataRow(OS.Windows, OS.Windows)]
         [DataRow(OS.Windows, OS.Linux)]
         [DataRow(OS.Linux, OS.Linux)]
+        [DataRow(OS.Linux, OS.Android)]   // bionic ft as client2 - plain FTP needs no crypto (issue #45)
         public void FTP(OS client1OS, OS client2OS)
         {
             var writePath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
@@ -793,7 +794,9 @@ namespace ft_tests
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : client2OS == OS.Android ? android_1 : linux_x64_3;
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (FTP {client1OS}-{client2OS}).");
             var side2 = new Client(client2OS, client2Runner, $"--ftp -u anonymous -h 192.168.0.81 -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.FTP, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
@@ -807,12 +810,7 @@ namespace ft_tests
         [DataRow(OS.Windows, OS.Windows)]
         [DataRow(OS.Windows, OS.Linux)]
         [DataRow(OS.Linux, OS.Linux)]
-        // The NativeAOT bionic build (issue #45) in an Android emulator, as client2. WebDav is the Android backend
-        // precisely because it needs NO crypto: a bare emulator ships Android's BoringSSL, which lacks the OpenSSL
-        // symbols .NET's System.Security.Cryptography binds ("Cannot get required symbol a2d_ASN1_OBJECT from
-        // libssl"), so SigV4-signed S3 (and other signed/HTTPS backends) fail there. A real Termux user can
-        // `pkg install openssl` for those; the bare emulator can't, so only WebDav gets an Android row.
-        [DataRow(OS.Linux, OS.Android)]
+        [DataRow(OS.Linux, OS.Android)]   // the NativeAOT bionic build in an Android emulator, as client2 (issue #45)
         public void WebDav(OS client1OS, OS client2OS)
         {
             const string url = "http://192.168.0.81:8080/dav/";
@@ -841,8 +839,10 @@ namespace ft_tests
         [DataRow(OS.Windows, OS.Windows)]
         [DataRow(OS.Windows, OS.Linux)]
         [DataRow(OS.Linux, OS.Linux)]
-        // No Android row: SigV4 signing needs crypto, and a bare Android emulator's BoringSSL lacks the OpenSSL
-        // symbols .NET binds (see the WebDav method's note), so S3 can't run there. WebDav covers Android.
+        // bionic ft as client2 (issue #45). SigV4 crypto works because the emulator provisioning bundles a real
+        // Bionic OpenSSL (libssl.so/libcrypto.so) that AndroidProcessRunner puts on LD_LIBRARY_PATH - Android's
+        // own BoringSSL lacks the OpenSSL symbols .NET binds ("a2d_ASN1_OBJECT"). Real Termux: `pkg install openssl`.
+        [DataRow(OS.Linux, OS.Android)]
         public void S3(OS client1OS, OS client2OS)
         {
             const string s3Args = "--s3 --bucket fttest --endpoint http://192.168.0.81:9000 --access-key ftaccess --secret-key ftsecret";
@@ -854,7 +854,9 @@ namespace ft_tests
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : client2OS == OS.Android ? android_1 : linux_x64_3;
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (S3 {client1OS}-{client2OS}).");
             var side2 = new Client(client2OS, client2Runner, $"{s3Args} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.S3), side2, readPath1, writePath1, readPath2, writePath2);

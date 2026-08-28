@@ -49,6 +49,14 @@ namespace ft_tests.Runner
             }
             sshClient.CreateCommand($"{adb} push \"{macStaging}\" \"{remoteExecutablePath}\"").Execute();
             sshClient.CreateCommand($"{adb} shell chmod 755 \"{remoteExecutablePath}\"").Execute();
+
+            // Push the bundled Bionic OpenSSL (staged on the Mac by mac_android_setup.sh) into /data/local/tmp/ssl,
+            // which Run() puts on LD_LIBRARY_PATH so ft's crypto backends (S3 SigV4, HTTPS/Dropbox) use real OpenSSL
+            // instead of Android's BoringSSL. Best-effort: if the libs are absent, only the crypto rows are affected.
+            var osslMac = $"/Users/{username}/Library/Android/ft-openssl";
+            sshClient.CreateCommand($"{adb} shell 'mkdir -p /data/local/tmp/ssl'").Execute();
+            sshClient.CreateCommand($"{adb} push \"{osslMac}/libcrypto.so\" /data/local/tmp/ssl/libcrypto.so 2>/dev/null; {adb} push \"{osslMac}/libssl.so\" /data/local/tmp/ssl/libssl.so 2>/dev/null; true").Execute();
+
             Stop();
         }
 
@@ -58,7 +66,11 @@ namespace ft_tests.Runner
             // Launch ft inside the emulator, detached so it outlives the adb shell: nohup + background +
             // </dev/null reparents it to init (verified: survives adb's disconnect). The single quotes keep the
             // ft args - which contain double-quoted object names - intact through Mac shell -> adb -> device shell.
-            var deviceCmd = $"cd /data/local/tmp; TMPDIR=/data/local/tmp nohup {remoteExecutablePath} {args} >{outputFilename} 2>&1 </dev/null &";
+            // LD_LIBRARY_PATH=/data/local/tmp/ssl makes ft load the BUNDLED Bionic OpenSSL (libssl.so /
+            // libcrypto.so, unversioned - .NET's linux-bionic crypto shim probes the unversioned soname)
+            // instead of Android's BoringSSL, so crypto backends (S3 SigV4, HTTPS/Dropbox) work. Harmless for
+            // the plaintext backends (WebDav/FTP). The libs are pushed there by the emulator provisioning.
+            var deviceCmd = $"cd /data/local/tmp; TMPDIR=/data/local/tmp LD_LIBRARY_PATH=/data/local/tmp/ssl nohup {remoteExecutablePath} {args} >{outputFilename} 2>&1 </dev/null &";
             var command = $"{adb} shell '{deviceCmd}'";
             Debug.WriteLine(command);
             sshClient.CreateCommand(command).Execute();
