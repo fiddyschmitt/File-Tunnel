@@ -9,11 +9,11 @@ namespace ft_tests.Runner
     // running, the constructor throws and the runner is treated as unavailable (Android rows Assert.Inconclusive),
     // exactly like a down Windows VM.
     //
-    // Android is a tunnel CLIENT only, and specifically side2 (client2). The emulator's user-mode NAT gives it
-    // OUTBOUND to the LAN (so it reaches the WebDav/S3 backend on .81) but no INBOUND - and in the HttpApi
-    // topology the harness only ever connects to side1 while side2 just talks to the backend, so side2 needs no
-    // inbound. Deploy is two hops: SCP the binary dev-box -> Mac (like MacProcessRunner), then `adb push` the
-    // staged copy Mac -> emulator.
+    // Android is a tunnel CLIENT (both client1/side1 and client2/side2). The emulator is launched BRIDGED by
+    // ft_test_env (-vmnet-bridged), so its wlan0 gets a real LAN IP (DiscoverLanIp -> RunOnIP) and it is reachable
+    // inbound like any node - which is what lets it be side1, not just side2 (its user-mode eth0 NAT alone would
+    // give outbound but no inbound). Deploy is two hops: SCP the binary dev-box -> Mac (like MacProcessRunner),
+    // then `adb push` the staged copy Mac -> emulator.
     public class AndroidProcessRunner : ProcessRunner
     {
         private readonly SshClient sshClient;           // SSH to the Mac (.33)
@@ -23,7 +23,8 @@ namespace ft_tests.Runner
         private readonly string outputFilename;          // on the emulator
 
         public AndroidProcessRunner(string macHost, string username, string privateKeyPath, string localExecutablePath,
-                                    string adbPath, string serial, int instance = 1, int port = 22) : base(macHost)
+                                    string adbPath, string serial, int instance = 1, int port = 22)
+            : base(DiscoverLanIp(macHost, username, privateKeyPath, adbPath, serial, port) ?? macHost)
         {
             var keyFile = new PrivateKeyFile(privateKeyPath);
             connectionInfo = new ConnectionInfo(macHost, port, username, new PrivateKeyAuthenticationMethod(username, keyFile));
@@ -58,6 +59,24 @@ namespace ft_tests.Runner
             sshClient.CreateCommand($"{adb} push \"{osslMac}/libcrypto.so\" /data/local/tmp/ssl/libcrypto.so 2>/dev/null; {adb} push \"{osslMac}/libssl.so\" /data/local/tmp/ssl/libssl.so 2>/dev/null; true").Execute();
 
             Stop();
+        }
+
+        // The emulator, launched bridged (ft_test_env: -vmnet-bridged), gets a REAL LAN IP on wlan0 via DHCP
+        // (eth0 stays the user-mode NAT 10.0.2.15). That LAN IP becomes this runner's RunOnIP, so the harness dials
+        // the emulator directly - letting Android be side1 (client1) like any node. Falls back to the Mac's IP if
+        // wlan0 has no LAN IP (a non-bridged emulator), which is harmless for a side2-only Android.
+        private static string? DiscoverLanIp(string macHost, string username, string keyPath, string adbPath, string serial, int port)
+        {
+            try
+            {
+                var key = new PrivateKeyFile(keyPath);
+                using var ssh = new SshClient(new ConnectionInfo(macHost, port, username, new PrivateKeyAuthenticationMethod(username, key)));
+                ssh.Connect();
+                var raw = ssh.CreateCommand($"\"{adbPath}\" -s {serial} shell ip -4 addr show wlan0 2>/dev/null").Execute();
+                var m = System.Text.RegularExpressions.Regex.Match(raw, @"inet (\d+\.\d+\.\d+\.\d+)");
+                return m.Success ? m.Groups[1].Value : null;
+            }
+            catch { return null; }
         }
 
         public override void Run(string args)

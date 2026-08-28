@@ -61,28 +61,41 @@ namespace ft_test_env.Ssh
             using var ssh = new SshClient(Conn());
             ssh.Connect();
 
-            // Clear a prior instance on this port, then (re)start the adb server.
-            ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} emu kill 2>/dev/null; true").Execute();
-            ssh.CreateCommand($"\"{adb}\" start-server >/dev/null 2>&1; true").Execute();
+            // Run the whole launch + boot-wait + LAN-IP discovery as ONE staged bash script over ONE SSH channel.
+            // The bridged emulator runs as root (sudo, needed for vmnet) and only registers with adb if the session
+            // stays open through its early registration - doing the launch and the boot-poll in SEPARATE SSH.NET
+            // channels (each closing after Execute) leaves it started-but-never-registered (found the hard way; the
+            // manual OpenSSH run kept one session open). -vmnet-bridged puts wlan0 on a REAL LAN IP via DHCP, so the
+            // emulator is reachable inbound like any node (what lets Android be a tunnel side1, not only side2);
+            // -read-only uses a throwaway overlay so the AVD's userdata is never root-owned. wlan0's DHCP lands a bit
+            // AFTER sys.boot_completed, so the IP is polled too.
+            var u = cfg.Username;
+            var p = cfg.EmulatorPort;
+            var script = string.Join("\n",
+                "#!/bin/bash",
+                $"ADB=\"{adb}\"; EMU=\"{emulator}\"; S=emulator-{p}",
+                "\"$ADB\" -s \"$S\" emu kill 2>/dev/null; sleep 2",
+                $"sudo pkill -f \"emulator.*-port {p}\" 2>/dev/null; sleep 2",
+                "\"$ADB\" start-server >/dev/null 2>&1",
+                $"sudo HOME=/Users/{u} ANDROID_AVD_HOME=/Users/{u}/.android/avd ANDROID_SDK_ROOT=/Users/{u}/Library/Android/sdk ANDROID_EMULATOR_HOME=/Users/{u}/.android \\",
+                $"  \"$EMU\" -avd {cfg.AvdName} -no-window -no-audio -no-boot-anim -read-only -gpu swiftshader_indirect -port {p} -no-metrics -vmnet-bridged {cfg.BridgeInterface} >~/ft_emulator.log 2>&1 &",
+                "b=0; for i in $(seq 1 70); do st=$(\"$ADB\" -s \"$S\" get-state 2>/dev/null); [ \"$st\" = device ] && b=$(\"$ADB\" -s \"$S\" shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r'); [ \"$b\" = 1 ] && break; sleep 4; done",
+                "ip=''; for i in $(seq 1 45); do ip=$(\"$ADB\" -s \"$S\" shell ip -4 addr show wlan0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'); [ -n \"$ip\" ] && break; sleep 3; done",
+                "abi=$(\"$ADB\" -s \"$S\" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\\r ')",
+                "echo \"RESULT boot=$b ip=$ip abi=$abi\"");
+            var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
+            using var cmd = ssh.CreateCommand($"echo {b64} | base64 -d | bash");
+            cmd.CommandTimeout = TimeSpan.FromSeconds(cfg.BootTimeoutSeconds + 240);
+            var output = cmd.Execute();
 
-            // Headless launch, detached so it survives the SSH channel closing (nohup + & + </dev/null → init).
-            var launch = $"nohup \"{emulator}\" -avd {cfg.AvdName} -no-window -no-audio -no-boot-anim -no-snapshot " +
-                         $"-gpu swiftshader_indirect -port {cfg.EmulatorPort} -no-metrics >~/ft_emulator.log 2>&1 </dev/null &";
-            ssh.CreateCommand(launch).Execute();
-
-            // Poll for a fully-booted device.
-            var deadline = DateTime.UtcNow.AddSeconds(cfg.BootTimeoutSeconds);
-            while (DateTime.UtcNow < deadline)
-            {
-                var booted = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell getprop sys.boot_completed 2>/dev/null").Execute().Trim();
-                if (booted == "1")
-                {
-                    var abi = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell getprop ro.product.cpu.abi 2>/dev/null").Execute().Trim();
-                    return StepOutcome.Ok($"{cfg.Serial} booted ({abi})");
-                }
-                Thread.Sleep(4000);
-            }
-            return StepOutcome.Fail($"{cfg.Serial} did not boot within {cfg.BootTimeoutSeconds}s (see ~/ft_emulator.log on {cfg.Host})");
+            var m = System.Text.RegularExpressions.Regex.Match(output, @"RESULT boot=(\S*) ip=(\S*) abi=(\S*)");
+            var bootOk = m.Success && m.Groups[1].Value == "1";
+            var lanIp = m.Success ? m.Groups[2].Value : "";
+            if (bootOk && !string.IsNullOrEmpty(lanIp))
+                return StepOutcome.Ok($"{cfg.Serial} booted ({m.Groups[3].Value}), bridged LAN IP {lanIp}");
+            if (bootOk)
+                return StepOutcome.Fail($"{cfg.Serial} booted but wlan0 has NO LAN IP - bridge '{cfg.BridgeInterface}' failed (see ~/ft_emulator.log on {cfg.Host})");
+            return StepOutcome.Fail($"{cfg.Serial} did not boot (see ~/ft_emulator.log on {cfg.Host})");
         }
 
         /// <summary>Kills the emulator if it is running.</summary>
@@ -93,7 +106,8 @@ namespace ft_test_env.Ssh
             var state = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} get-state 2>&1").Execute().Trim();
             if (!state.EndsWith("device", StringComparison.Ordinal))
                 return StepOutcome.Skip("not running");
-            ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} emu kill 2>/dev/null; true").Execute();
+            // The bridged emulator runs as root (sudo), so fall back to a sudo pkill if `emu kill` does not take.
+            ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} emu kill 2>/dev/null; sleep 2; sudo pkill -f \"emulator.*-port {cfg.EmulatorPort}\" 2>/dev/null; true").Execute();
             return StepOutcome.Ok("emulator killed");
         }
 
@@ -108,8 +122,16 @@ namespace ft_test_env.Ssh
             var booted = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell getprop sys.boot_completed 2>/dev/null").Execute().Trim();
             var abi = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell getprop ro.product.cpu.abi 2>/dev/null").Execute().Trim();
             return booted == "1"
-                ? StepOutcome.Ok($"{cfg.Serial} up + booted ({abi})")
+                ? StepOutcome.Ok($"{cfg.Serial} up + booted ({abi}), bridged LAN IP {WlanIp(ssh) ?? "MISSING"}")
                 : StepOutcome.Fail($"{cfg.Serial} present but not booted (boot_completed='{booted}')");
+        }
+
+        /// <summary>The bridged emulator's real LAN IP (wlan0). eth0 stays the user-mode NAT 10.0.2.15.</summary>
+        private string? WlanIp(SshClient ssh)
+        {
+            var raw = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell ip -4 addr show wlan0 2>/dev/null").Execute();
+            var m = System.Text.RegularExpressions.Regex.Match(raw, @"inet (\d+\.\d+\.\d+\.\d+)");
+            return m.Success ? m.Groups[1].Value : null;
         }
 
         private static string LastLine(string s)

@@ -811,13 +811,14 @@ namespace ft_tests
         [DataRow(OS.Windows, OS.Linux)]
         [DataRow(OS.Linux, OS.Linux)]
         [DataRow(OS.Linux, OS.Android)]   // the NativeAOT bionic build in an Android emulator, as client2 (issue #45)
+        [DataRow(OS.Android, OS.Linux)]   // ...and as client1 - the BRIDGED emulator's real LAN IP is dialed like any node
         public void WebDav(OS client1OS, OS client2OS)
         {
             const string url = "http://192.168.0.81:8080/dav/";
 
             var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : client1OS == OS.Android ? android_1 : linux_x64_1;
             var side1 = new Client(client1OS, client1Runner, $"--webdav --url {url} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
 
             var readPath2 = writePath1;
