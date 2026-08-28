@@ -27,4 +27,11 @@
 	<PackageReference Include="System.IO.Hashing" Version="10.0.9" />
 	<PackageReference Include="System.Threading.RateLimiting" Version="10.0.9" />
   </ItemGroup>
+
+  <!-- NativeAOT for Android/Termux (linux-bionic-arm64, issue #45): work around a known linker
+       version-script error (see dotnet/runtime android-bionic docs). No effect on other RIDs -
+       the condition is false for them. -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux-bionic'))">
+    <LinkerArg Include="-Wl,--undefined-version" />
+  </ItemGroup>
 </Project>

@@ -83,9 +83,14 @@ namespace ft_test_env
                 {
                     if (vbox.VmExists(node.Name)) return StepOutcome.Skip("already registered");
                     vbox.CreateVm(node.Name);
-                    // The QEMU-host node runs a nested KVM guest, so it gets more RAM/CPU than a plain node.
-                    var memoryMb = node.QemuHost ? config.Linux.QemuHostMemoryMb : config.Linux.MemoryMb;
-                    var cpus = node.QemuHost ? config.Linux.QemuHostCpus : config.Linux.Cpus;
+                    // The QEMU-host and build-host nodes get more RAM/CPU than a plain node (a nested KVM guest
+                    // and the RAM-hungry NativeAOT ILC respectively).
+                    var memoryMb = node.QemuHost ? config.Linux.QemuHostMemoryMb
+                                 : node.BuildHost ? config.Linux.BuildHostMemoryMb
+                                 : config.Linux.MemoryMb;
+                    var cpus = node.QemuHost ? config.Linux.QemuHostCpus
+                             : node.BuildHost ? config.Linux.BuildHostCpus
+                             : config.Linux.Cpus;
                     vbox.ConfigureVm(node.Name, memoryMb, cpus, config.Network.BridgeAdapter);
                     vbox.EnsureSataController(node.Name);
                     vbox.AttachImmutableDisk(node.Name, config.BaseVdiPath);
@@ -98,7 +103,16 @@ namespace ft_test_env
                         vbox.EnableNestedVirt(node.Name);
                         vbox.CreateAndAttachDataDisk(node.Name, config.DataDiskPath(node), config.Linux.QemuHostDataDiskMb);
                     }
-                    return StepOutcome.Ok(node.QemuHost ? "created (QEMU host: nested virt + data disk)" : "created");
+                    else if (node.BuildHost)
+                    {
+                        // A persistent data disk (SATA port 2) holds the .NET SDK + Android NDK + build caches -
+                        // the immutable root is far too small. No nested virt: it only cross-compiles.
+                        vbox.CreateAndAttachDataDisk(node.Name, config.DataDiskPath(node), config.Linux.BuildHostDataDiskMb);
+                    }
+                    var kind = node.QemuHost ? "created (QEMU host: nested virt + data disk)"
+                             : node.BuildHost ? "created (build host: data disk)"
+                             : "created";
+                    return StepOutcome.Ok(kind);
                 });
             }
 
@@ -213,7 +227,8 @@ namespace ft_test_env
             step.Section("Bring up environment");
 
             var server = config.Nodes.FirstOrDefault(n => n.IsServer);
-            var clients = config.Nodes.Where(n => !n.IsServer).ToList();
+            // The build host is on-demand (menu 3), not part of the e2e matrix — never brought up here.
+            var clients = config.Nodes.Where(n => !n.IsServer && !n.BuildHost).ToList();
 
             // Provision the server fully first — the clients mount its NFS/SMB exports during
             // their own provisioning, so those exports must already exist.
@@ -247,13 +262,13 @@ namespace ft_test_env
 
             // Mount cross-host shares AFTER the server VM is up: the Linux SMB client mount //192.168.0.84/Shared
             // targets it. EnsureMounts is idempotent; already-mounted shares are left as-is.
-            foreach (var node in config.NodesServerFirst)
+            foreach (var node in config.NodesServerFirst.Where(n => !n.BuildHost))
             {
                 linux.EnsureMounts(step, node);
             }
 
             step.Section("Health checks");
-            foreach (var node in config.NodesServerFirst)
+            foreach (var node in config.NodesServerFirst.Where(n => !n.BuildHost))
             {
                 linux.CheckNode(step, node);
             }
@@ -444,6 +459,14 @@ namespace ft_test_env
             step.Run($"{node.Name}: wait for SSH", () => linux.WaitForSsh(node));
             step.Run($"{node.Name}: provisioning complete", () => linux.WaitForProvisioned(node));
 
+            if (node.BuildHost)
+            {
+                // The build host runs no lab services or cross-host mounts - just report SSH + toolchain state.
+                step.Section("Build host readiness");
+                linux.CheckBuildHost(step, node);
+                return Summary(step);
+            }
+
             // Mount any shares not already present (idempotent) — lets pressing this again pick up
             // a share whose host has since come online, without a reboot.
             linux.EnsureMounts(step, node);
@@ -520,7 +543,8 @@ namespace ft_test_env
 
             foreach (var node in config.NodesServerFirst)
             {
-                linux.CheckNode(step, node);
+                if (node.BuildHost) linux.CheckBuildHost(step, node);
+                else linux.CheckNode(step, node);
             }
 
             return Summary(step);

@@ -14,6 +14,7 @@ namespace ft_test_env.Cloud
         private readonly EnvConfig config;
         private readonly string setupScriptPath;
         private readonly string mountsScriptPath;
+        private readonly string buildHostScriptPath;
 
         public CloudInitSeed(EnvConfig config)
         {
@@ -21,6 +22,7 @@ namespace ft_test_env.Cloud
             // Copied next to the executable via the csproj (Cloud\*.sh).
             setupScriptPath = Path.Combine(AppContext.BaseDirectory, "Cloud", "setup_debian.sh");
             mountsScriptPath = Path.Combine(AppContext.BaseDirectory, "Cloud", "mounts.sh");
+            buildHostScriptPath = Path.Combine(AppContext.BaseDirectory, "Cloud", "build_host_setup.sh");
         }
 
         public void BuildSeedIso(NodeConfig node, string isoPath)
@@ -44,6 +46,9 @@ namespace ft_test_env.Cloud
 
         private string RenderUserData(NodeConfig node)
         {
+            // The build host runs a lean, build-only provisioning script - none of the lab services.
+            if (node.BuildHost) return RenderBuildHostUserData(node);
+
             if (!File.Exists(setupScriptPath))
             {
                 throw new FileNotFoundException($"Provisioning script not found: {setupScriptPath}");
@@ -89,6 +94,39 @@ namespace ft_test_env.Cloud
             sb.Append($"    content: {mountsB64}\n");
             sb.Append("runcmd:\n");
             sb.Append("  - [ bash, /opt/ft/setup_debian.sh ]\n");
+            return sb.ToString();
+        }
+
+        /// <summary>Cloud-init for the NativeAOT build host: none of the lab services or cross-host mounts,
+        /// just the user/networking and the lean build_host_setup.sh (which stands up the .NET SDK + Android
+        /// NDK cross-compile toolchain on the persistent data disk). See build_host_setup.sh.</summary>
+        private string RenderBuildHostUserData(NodeConfig node)
+        {
+            if (!File.Exists(buildHostScriptPath))
+                throw new FileNotFoundException($"Build-host provisioning script not found: {buildHostScriptPath}");
+
+            var scriptB64 = Convert.ToBase64String(File.ReadAllBytes(buildHostScriptPath));
+
+            var sb = new StringBuilder();
+            sb.Append("#cloud-config\n");
+            sb.Append($"hostname: {node.Hostname}\n");
+            sb.Append("preserve_hostname: false\n");
+            sb.Append("users:\n");
+            sb.Append($"  - name: {config.Linux.Username}\n");
+            sb.Append($"    plain_text_passwd: {config.Linux.Password}\n");
+            sb.Append("    lock_passwd: false\n");
+            sb.Append("    shell: /bin/bash\n");
+            sb.Append("    sudo: ALL=(ALL) NOPASSWD:ALL\n");
+            sb.Append("    groups: [sudo]\n");
+            sb.Append("ssh_pwauth: true\n");
+            sb.Append("package_update: true\n");
+            sb.Append("write_files:\n");
+            sb.Append("  - path: /opt/ft/build_host_setup.sh\n");
+            sb.Append("    permissions: '0755'\n");
+            sb.Append("    encoding: b64\n");
+            sb.Append($"    content: {scriptB64}\n");
+            sb.Append("runcmd:\n");
+            sb.Append("  - [ bash, /opt/ft/build_host_setup.sh ]\n");
             return sb.ToString();
         }
 

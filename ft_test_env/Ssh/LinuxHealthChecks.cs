@@ -98,6 +98,36 @@ namespace ft_test_env.Ssh
             }
         }
 
+        /// <summary>Build-host readiness: it runs none of the lab services or mounts, so this reports SSH, the
+        /// data disk, and whether the SDK/NDK cross-compile toolchain finished installing (build_host_setup.sh
+        /// installs it in the background, marking /var/lib/ftbuild/tools-ready or tools-failed).</summary>
+        public void CheckBuildHost(StepRunner step, NodeConfig node)
+        {
+            SshClient? client = null;
+            step.Run($"{node.Name}: SSH reachable ({node.Ip})", () =>
+            {
+                client = Connect(node, TimeSpan.FromSeconds(8));
+                return StepOutcome.Ok();
+            });
+
+            if (client is null) return;
+
+            using (client)
+            {
+                step.Run($"{node.Name}: data disk mounted (/var/lib/ftbuild)", () => Mounted(client, "/var/lib/ftbuild"));
+                step.Run($"{node.Name}: cross-compile toolchain", () =>
+                {
+                    var s = client.RunCommand(
+                        "if [ -f /var/lib/ftbuild/tools-ready ]; then echo READY; " +
+                        "elif [ -f /var/lib/ftbuild/tools-failed ]; then echo FAILED; else echo INSTALLING; fi")
+                        .Result.Trim();
+                    return s.EndsWith("READY", StringComparison.Ordinal) ? StepOutcome.Ok("SDK + NDK installed")
+                         : s.EndsWith("FAILED", StringComparison.Ordinal) ? StepOutcome.Fail("install failed (see /var/lib/ftbuild/toolchain-install.log)")
+                         : StepOutcome.Ok("still installing in the background");
+                });
+            }
+        }
+
         /// <summary>
         /// Mounts any shares that aren't already mounted on a node, by streaming the local mounts.sh
         /// over SSH and running it (it is idempotent and non-fatal). Works on any running node —

@@ -120,6 +120,14 @@ namespace ft_test_env.Config
         public int QemuHostMemoryMb { get; set; } = 3072;
         public int QemuHostCpus { get; set; } = 4;
         public int QemuHostDataDiskMb { get; set; } = 15360;
+
+        // The build host (BuildHost=true) cross-compiles the Android/Termux (linux-bionic-arm64) build with
+        // NativeAOT. The .NET SDK + Android NDK + NuGet/build caches (several GB) live on a dedicated persistent
+        // data disk (the immutable ~2.8 GB root can't hold them), and the ILC is RAM-hungry, so it gets more
+        // RAM/CPU than a plain node. Provisioned by build_host_setup.sh (NOT the shared setup_debian.sh).
+        public int BuildHostMemoryMb { get; set; } = 6144;
+        public int BuildHostCpus { get; set; } = 4;
+        public int BuildHostDataDiskMb { get; set; } = 25600;
     }
 
     public class NodeConfig
@@ -129,6 +137,7 @@ namespace ft_test_env.Config
         public string Ip { get; set; } = "";          // static IP, e.g. 192.168.0.81
         public bool IsServer { get; set; }            // true for the NFS/SMB/FTP server (.81)
         public bool QemuHost { get; set; }            // true for the node running the nested QEMU guest (virtio-fs/9p)
+        public bool BuildHost { get; set; }           // true for the NativeAOT cross-compile host (Android/Termux build - issue #45)
     }
 
     public class WindowsHostConfig
