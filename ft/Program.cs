@@ -10,6 +10,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices.ComTypes;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +24,13 @@ namespace ft
     public class Program
     {
         const string PROGRAM_NAME = "File Tunnel";
-        const string VERSION = "3.5.3";
+
+        // Version is defined once, in ft.csproj's <Version>. The SDK bakes it into the assembly's
+        // InformationalVersion attribute; read it back here so there is a single source of truth.
+        static readonly string VERSION =
+            Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion.Split('+')[0] ?? "";
 
         public const int UNIVERSAL_TIMEOUT_MS = 4000;
 
