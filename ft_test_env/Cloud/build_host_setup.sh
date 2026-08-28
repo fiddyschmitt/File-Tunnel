@@ -43,7 +43,9 @@ mkdir -p "$BUILD/apt-cache/partial"
 ln -sfn "$BUILD/apt-cache" /var/cache/apt/archives
 
 apt-get update -y
-DEBIAN_FRONTEND=noninteractive apt-get install -y git curl unzip file clang lld binutils zlib1g-dev
+# libicu is required for the .NET CLI itself to run (globalization); clang/lld/binutils/zlib for the
+# NativeAOT link step; git/curl/unzip/file for fetch + inspection.
+DEBIAN_FRONTEND=noninteractive apt-get install -y git curl unzip file clang lld binutils zlib1g-dev libicu-dev
 
 ##### 3. Persisted environment for the build script: DOTNET_ROOT / NuGet cache / build output on the data
 #####    disk, and the NDK's llvm toolchain on PATH (the NativeAOT bionic link step calls the NDK's aarch64
