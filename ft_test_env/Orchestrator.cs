@@ -17,6 +17,7 @@ namespace ft_test_env
         private readonly LinuxHealthChecks linux;
         private readonly WindowsHealthChecks windows;
         private readonly WindowsProvisioner winProvisioner;
+        private readonly MacEmulator macEmulator;
 
         public Orchestrator(EnvConfig config)
         {
@@ -26,6 +27,7 @@ namespace ft_test_env
             linux = new LinuxHealthChecks(config);
             windows = new WindowsHealthChecks(config);
             winProvisioner = new WindowsProvisioner(config);
+            macEmulator = new MacEmulator(config.MacEmulator);
         }
 
         // ---- 1. one-time prep (idempotent) ----
@@ -649,6 +651,46 @@ namespace ft_test_env
                 windows.WaitForSsh(server.Ip, config.WindowsGold.SshReadyTimeoutSeconds));
 
             windows.CheckServer(step, server);
+            return Summary(step);
+        }
+
+        // ---- Android emulator on the Mac (issue #45) ----
+
+        /// <summary>Sets up (SDK + AVD) and launches the headless Android emulator on the Mac, then confirms it
+        /// booted. The emulator hosts the ft Android (linux-bionic-arm64) e2e client rows.</summary>
+        public bool BringUpAndroidEmulator()
+        {
+            var step = new StepRunner();
+            step.Section("Android emulator (Mac)");
+            if (!config.MacEmulator.Enabled)
+            {
+                step.Run("Android emulator", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
+                return Summary(step);
+            }
+            step.Run($"{config.MacEmulator.Host}: SDK + AVD setup", () => macEmulator.Setup());
+            step.Run($"{config.MacEmulator.Host}: launch + wait for boot ({config.MacEmulator.Serial})", () => macEmulator.Launch());
+            step.Run($"{config.MacEmulator.Host}: check", () => macEmulator.Check());
+            return Summary(step);
+        }
+
+        public bool CheckAndroidEmulator()
+        {
+            var step = new StepRunner();
+            step.Section("Android emulator check (Mac)");
+            if (!config.MacEmulator.Enabled)
+            {
+                step.Run("Android emulator", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
+                return Summary(step);
+            }
+            step.Run($"{config.MacEmulator.Host}: {config.MacEmulator.Serial}", () => macEmulator.Check());
+            return Summary(step);
+        }
+
+        public bool TeardownAndroidEmulator()
+        {
+            var step = new StepRunner();
+            step.Section("Android emulator teardown (Mac)");
+            step.Run($"{config.MacEmulator.Host}: kill {config.MacEmulator.Serial}", () => macEmulator.Teardown());
             return Summary(step);
         }
 

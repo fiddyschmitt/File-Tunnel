@@ -33,6 +33,10 @@ namespace ft_test_env.Config
         /// smith/villa2001 account as the gold (WindowsGold credentials).</summary>
         public WindowsServerConfig WindowsServer { get; set; } = new();
 
+        /// <summary>The Android emulator on the Mac (.33), for the ft Android (linux-bionic-arm64) e2e client
+        /// rows (issue #45). Configured + launched over SSH (key auth); not VBox-managed. Enabled=false skips it.</summary>
+        public MacEmulatorConfig MacEmulator { get; set; } = new();
+
         /// <summary>Credentials keyed by name, supplied via user-secrets and referenced by Windows hosts.</summary>
         public Dictionary<string, Credential> Credentials { get; set; } = [];
 
@@ -245,5 +249,35 @@ namespace ft_test_env.Config
         public string VmName { get; set; } = "ft-win-server";   // VirtualBox VM name
         public string Ip { get; set; } = "192.168.0.84";        // its fixed static IP (set during the manual build)
         public string SharedSharePath { get; set; } = @"C:\Temp\ft\Shared";
+    }
+
+    /// <summary>The Android emulator on the Mac (.33): an arm64-v8a AVD launched headless over SSH (key auth) for the
+    /// ft Android (linux-bionic-arm64) e2e client rows (issue #45). The Mac is not VBox/cloud-init managed - MacEmulator
+    /// drives it entirely over SSH: stage + run mac_android_setup.sh (installs the SDK + AVD into ~/Library/Android/sdk),
+    /// launch the emulator, wait for boot. Reuses the same 'smith' key auth as the Mac ft_tests runners.</summary>
+    public class MacEmulatorConfig
+    {
+        public bool Enabled { get; set; }
+        public string Host { get; set; } = "192.168.0.33";
+        public string Username { get; set; } = "smith";
+
+        /// <summary>Private key for SSH to the Mac. Empty -> %USERPROFILE%\.ssh\id_ed25519 (the key ft_tests uses too).</summary>
+        public string KeyPath { get; set; } = "";
+        public int SshPort { get; set; } = 22;
+
+        public string AvdName { get; set; } = "ft_android";
+        public string SystemImage { get; set; } = "system-images;android-34;default;arm64-v8a";
+
+        /// <summary>Emulator console port; the adb serial is emulator-&lt;port&gt;. Kept distinct from a default 5554 AVD.</summary>
+        public int EmulatorPort { get; set; } = 5556;
+
+        public int SetupTimeoutSeconds { get; set; } = 1200;   // first-run SDK + system-image download (~1.5 GB)
+        public int BootTimeoutSeconds { get; set; } = 240;
+
+        public string Serial => $"emulator-{EmulatorPort}";
+
+        public string ResolvedKeyPath => string.IsNullOrWhiteSpace(KeyPath)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519")
+            : Environment.ExpandEnvironmentVariables(KeyPath);
     }
 }

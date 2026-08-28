@@ -26,6 +26,13 @@ namespace ft_tests
         const string LINUX_X64_EXE = @"R:\Temp\ft release\linux-x64\ft";
         const string OSX_ARM64_EXE = @"R:\Temp\ft release\osx-arm64\ft";
 
+        // The Android/Termux build (issue #45): the NativeAOT linux-bionic-arm64 binary, run inside an Android
+        // emulator on the Mac (.33) via adb. The emulator is launched by ft_test_env; ANDROID_SERIAL is its adb
+        // serial (console port 5556), ANDROID_ADB the adb path on the Mac. Android is a CLIENT only (side2).
+        const string BIONIC_ARM64_EXE = @"R:\Temp\ft release\linux-bionic-arm64\ft";
+        const string ANDROID_ADB = "/Users/smith/Library/Android/sdk/platform-tools/adb";
+        const string ANDROID_SERIAL = "emulator-5556";
+
         // The Mac mounts the SMB shares in userspace under here (assumes the 'smith' login on .33).
         const string MAC_SMB_ROOT = "/Users/smith/mnt/smb";
 
@@ -75,6 +82,8 @@ namespace ft_tests
 
         static ProcessRunner mac_1;   // the Mac (.33) — side-1 ft (unique exe ft-1)
         static ProcessRunner mac_2;   // the Mac (.33) — side-2 ft (unique exe ft-2), so Mac can be on both sides
+
+        static ProcessRunner android_1;   // Android emulator on the Mac (.33) — bionic ft, tunnel CLIENT (side2) only
 
         // Mac SMB client-mount credentials (set in ClassInit). Fields, not locals, so RefreshMacClientMount
         // can re-establish a Mac mount that idle-dropped - see that method and [[test-lab-mount-quirks]].
@@ -160,6 +169,11 @@ namespace ft_tests
             var macKey = config["mac_ssh_keypath"] ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519");
             mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log", instance: 1);
             mac_2 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac2.log", instance: 2);
+
+            // The Android emulator on the Mac (bionic ft over adb). Only up when ft_test_env has launched it,
+            // so tolerate its absence: a null runner makes the Android rows skip (Assert.Inconclusive).
+            try { android_1 = new AndroidProcessRunner("192.168.0.33", macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL, instance: 1); }
+            catch (Exception ex) { Console.WriteLine($"WARN: android_1 (emulator) unavailable: {ex.Message}"); android_1 = null!; }
             // Client mounts of the remote SMB servers (idempotent, as the user - no sudo). See
             // RefreshMacClientMount for the mount details and why these are re-established per cell.
             macSmbUser = config["win10_vm_username"] ?? "";
@@ -793,6 +807,12 @@ namespace ft_tests
         [DataRow(OS.Windows, OS.Windows)]
         [DataRow(OS.Windows, OS.Linux)]
         [DataRow(OS.Linux, OS.Linux)]
+        // The NativeAOT bionic build (issue #45) in an Android emulator, as client2. WebDav is the Android backend
+        // precisely because it needs NO crypto: a bare emulator ships Android's BoringSSL, which lacks the OpenSSL
+        // symbols .NET's System.Security.Cryptography binds ("Cannot get required symbol a2d_ASN1_OBJECT from
+        // libssl"), so SigV4-signed S3 (and other signed/HTTPS backends) fail there. A real Termux user can
+        // `pkg install openssl` for those; the bare emulator can't, so only WebDav gets an Android row.
+        [DataRow(OS.Linux, OS.Android)]
         public void WebDav(OS client1OS, OS client2OS)
         {
             const string url = "http://192.168.0.81:8080/dav/";
@@ -804,7 +824,9 @@ namespace ft_tests
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : linux_x64_3;
+            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : client2OS == OS.Android ? android_1 : linux_x64_3;
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (WebDav {client1OS}-{client2OS}).");
             var side2 = new Client(client2OS, client2Runner, $"--webdav --url {url} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.WebDav), side2, readPath1, writePath1, readPath2, writePath2);
@@ -819,6 +841,8 @@ namespace ft_tests
         [DataRow(OS.Windows, OS.Windows)]
         [DataRow(OS.Windows, OS.Linux)]
         [DataRow(OS.Linux, OS.Linux)]
+        // No Android row: SigV4 signing needs crypto, and a bare Android emulator's BoringSSL lacks the OpenSSL
+        // symbols .NET binds (see the WebDav method's note), so S3 can't run there. WebDav covers Android.
         public void S3(OS client1OS, OS client2OS)
         {
             const string s3Args = "--s3 --bucket fttest --endpoint http://192.168.0.81:9000 --access-key ftaccess --secret-key ftsecret";
@@ -1526,7 +1550,8 @@ namespace ft_tests
     {
         Windows,
         Linux,
-        Mac
+        Mac,
+        Android
     }
 
     public enum FileShareType

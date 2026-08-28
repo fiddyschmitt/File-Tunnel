@@ -32,6 +32,9 @@ while (true)
     Console.WriteLine("  7) Check gold image readiness");
     Console.WriteLine("  8) Reboot a Windows machine (client clone or the server VM) to clear tiring");
     Console.WriteLine("  9) Bring up a single Windows client node (finish/repair a partial bring-up)");
+    Console.WriteLine(" 10) Android emulator (Mac): set up + launch");
+    Console.WriteLine(" 11) Android emulator (Mac): check");
+    Console.WriteLine(" 12) Android emulator (Mac): tear down");
     Console.WriteLine("  0) Exit");
     Console.WriteLine("==================================================");
     Console.Write("Choose: ");
@@ -71,6 +74,15 @@ while (true)
             case "9":
                 var winNodeUp = PromptForWindowsNode(config);
                 if (winNodeUp != null) orchestrator.BringUpWindowsNode(winNodeUp);
+                break;
+            case "10":
+                orchestrator.BringUpAndroidEmulator();
+                break;
+            case "11":
+                orchestrator.CheckAndroidEmulator();
+                break;
+            case "12":
+                orchestrator.TeardownAndroidEmulator();
                 break;
             case "0":
             case "q":
