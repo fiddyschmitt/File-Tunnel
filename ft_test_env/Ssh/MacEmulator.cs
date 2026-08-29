@@ -55,8 +55,9 @@ namespace ft_test_env.Ssh
                 : StepOutcome.Fail($"setup did not finish: {LastLine(output)}");
         }
 
-        /// <summary>Kills any prior emulators, launches BOTH (emu1 bridged, emu2 plain NAT), waits for both to boot,
-        /// roots adbd on both, and returns emu1's bridged LAN IP. Two REAL emulators are the two Android tunnel
+        /// <summary>Ensures BOTH emulators are up (emu1 bridged, emu2 plain NAT), roots adbd on both, and returns
+        /// emu1's bridged LAN IP. IDEMPOTENT: if both are already booted it leaves them alone (only kills + relaunches
+        /// when they are not), so re-running BringUpAll doesn't disrupt working emulators. Two REAL emulators are the two Android tunnel
         /// clients: emu1 (bridged, real LAN IP) is client1/side1 - the only role needing inbound reachability - and
         /// emu2 (NAT, outbound-only) is client2/side2. macOS vmnet can't give a SECOND concurrent bridged emulator a
         /// working default network (Android's connectivity framework only makes wlan0 the default on the first), so
@@ -80,22 +81,30 @@ namespace ft_test_env.Ssh
             var script = string.Join("\n",
                 "#!/bin/bash",
                 $"ADB=\"{adb}\"; EMU=\"{emulator}\"; S1=emulator-{p1}; S2=emulator-{p2}",
-                "\"$ADB\" -s \"$S1\" emu kill 2>/dev/null; \"$ADB\" -s \"$S2\" emu kill 2>/dev/null; sleep 2",
-                $"sudo pkill -f \"qemu-system.*-port {p1}\" 2>/dev/null; sudo pkill -f \"qemu-system.*-port {p2}\" 2>/dev/null",
-                $"sudo pkill -f \"emulator.*-port {p1}\" 2>/dev/null; sudo pkill -f \"emulator.*-port {p2}\" 2>/dev/null; sleep 2",
-                "\"$ADB\" kill-server >/dev/null 2>&1; sleep 1; \"$ADB\" start-server >/dev/null 2>&1; sleep 2",
+                // booted(serial): true iff it is a fully-booted adb device (get-state=device AND boot_completed=1).
+                // tr -dc 0-9 strips any adb warning text so the compare is exact, never a stray value.
+                "booted() { [ \"$(\"$ADB\" -s \"$1\" get-state 2>/dev/null)\" = device ] && [ \"$(\"$ADB\" -s \"$1\" shell getprop sys.boot_completed 2>/dev/null | tr -dc 0-9)\" = 1 ]; }",
+                // IDEMPOTENT: only kill + relaunch if they are NOT both already up, so re-running the bring-up (the
+                // Launch is folded into BringUpAll) doesn't tear down working emulators.
+                "if booted \"$S1\" && booted \"$S2\"; then echo already-up; else",
+                "  \"$ADB\" -s \"$S1\" emu kill 2>/dev/null; \"$ADB\" -s \"$S2\" emu kill 2>/dev/null; sleep 2",
+                $"  sudo pkill -f \"qemu-system.*-port {p1}\" 2>/dev/null; sudo pkill -f \"qemu-system.*-port {p2}\" 2>/dev/null",
+                $"  sudo pkill -f \"emulator.*-port {p1}\" 2>/dev/null; sudo pkill -f \"emulator.*-port {p2}\" 2>/dev/null; sleep 2",
+                "  \"$ADB\" kill-server >/dev/null 2>&1; sleep 1; \"$ADB\" start-server >/dev/null 2>&1; sleep 2",
                 // emu1: BRIDGED (sudo, for vmnet) -> real LAN IP, reachable inbound (client1/side1).
-                $"sudo {envs} \\",
-                $"  \"$EMU\" -avd {cfg.AvdName} {common} -port {p1} -vmnet-bridged {cfg.BridgeInterface} >~/ft_emulator.log 2>&1 &",
+                $"  sudo {envs} \\",
+                $"    \"$EMU\" -avd {cfg.AvdName} {common} -port {p1} -vmnet-bridged {cfg.BridgeInterface} >~/ft_emulator.log 2>&1 &",
                 // emu2: PLAIN NAT (no sudo, no bridge) -> normal working default network, outbound to the LAN (client2/side2).
-                $"{envs} \\",
-                $"  nohup \"$EMU\" -avd {cfg.AvdName} {common} -port {p2} >~/ft_emulator2.log 2>&1 &",
-                "wb() { b=0; for i in $(seq 1 80); do st=$(\"$ADB\" -s \"$1\" get-state 2>/dev/null); [ \"$st\" = device ] && b=$(\"$ADB\" -s \"$1\" shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r'); [ \"$b\" = 1 ] && break; sleep 4; done; echo $b; }",
-                "b1=$(wb \"$S1\"); b2=$(wb \"$S2\")",
+                $"  {envs} \\",
+                $"    nohup \"$EMU\" -avd {cfg.AvdName} {common} -port {p2} >~/ft_emulator2.log 2>&1 &",
+                "  for i in $(seq 1 90); do booted \"$S1\" && booted \"$S2\" && break; sleep 4; done",
+                "fi",
                 // Root adbd on both (userdebug): sshfs rows (issue #45) need root for SELinux-permissive + the FUSE
                 // mount, and ft then runs as root. adb root drops+reopens the connection, so wait for each device.
                 "\"$ADB\" -s \"$S1\" root >/dev/null 2>&1 || true; \"$ADB\" -s \"$S1\" wait-for-device",
                 "\"$ADB\" -s \"$S2\" root >/dev/null 2>&1 || true; \"$ADB\" -s \"$S2\" wait-for-device",
+                // Final state - b1/b2 are ALWAYS 0 or 1 (never empty), so the RESULT line parses cleanly.
+                "b1=0; booted \"$S1\" && b1=1; b2=0; booted \"$S2\" && b2=1",
                 // emu1's bridged LAN IP (DHCP lands a bit after boot); emu2 has none (NAT).
                 "ip1=''; for i in $(seq 1 45); do ip1=$(\"$ADB\" -s \"$S1\" shell ip -4 addr show wlan0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'); [ -n \"$ip1\" ] && break; sleep 3; done",
                 "abi=$(\"$ADB\" -s \"$S1\" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\\r ')",
