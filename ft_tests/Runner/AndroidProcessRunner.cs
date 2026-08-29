@@ -102,7 +102,10 @@ namespace ft_tests.Runner
             // libcrypto.so, unversioned - .NET's linux-bionic crypto shim probes the unversioned soname)
             // instead of Android's BoringSSL, so crypto backends (S3 SigV4, HTTPS/Dropbox) work. Harmless for
             // the plaintext backends (WebDav/FTP). The libs are pushed there by the emulator provisioning.
-            var deviceCmd = $"cd /data/local/tmp; TMPDIR=/data/local/tmp LD_LIBRARY_PATH=/data/local/tmp/ssl nohup {remoteExecutablePath} {args} >{outputFilename} 2>&1 </dev/null &";
+            // SSL_CERT_DIR points .NET/OpenSSL at Android's own 134-cert CA store so TLS cert validation works
+            // (an HTTPS backend like Dropbox otherwise fails with "The SSL connection could not be established" -
+            // the bundled OpenSSL ships no CA bundle). /system is read-only so this survives every -read-only relaunch.
+            var deviceCmd = $"cd /data/local/tmp; TMPDIR=/data/local/tmp LD_LIBRARY_PATH=/data/local/tmp/ssl SSL_CERT_DIR=/system/etc/security/cacerts nohup {remoteExecutablePath} {args} >{outputFilename} 2>&1 </dev/null &";
             var command = $"{adb} shell '{deviceCmd}'";
             Debug.WriteLine(command);
             sshClient.CreateCommand(command).Execute();
