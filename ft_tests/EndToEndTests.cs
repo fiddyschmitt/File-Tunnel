@@ -480,26 +480,26 @@ namespace ft_tests
         }
 
         [DataTestMethod]
-        [DataRow(OS.Windows, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedReads)]
-        [DataRow(OS.Windows, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedReads)]
-        [DataRow(OS.Linux, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Windows, Mode.IsolatedReads)]
-        [DataRow(OS.Linux, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Windows, Mode.Normal, DisplayName = "Nfs Windows-Linux-Windows Normal")]
+        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Windows-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Windows, OS.Linux, Mode.Normal, DisplayName = "Nfs Windows-Linux-Linux Normal")]
+        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Windows-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Linux, OS.Windows, Mode.Normal, DisplayName = "Nfs Linux-Linux-Windows Normal")]
+        [DataRow(OS.Linux, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Linux-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Linux, OS.Linux, Mode.Normal, DisplayName = "Nfs Linux-Linux-Linux Normal")]
+        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Linux-Linux-Linux IsolatedReads")]
         // The Mac (.33) as an NFS client of the .81 export (macOS mounts it via sudo + resvport; ft's
         // MacDirectRefresh handles read coherency). Completes the client1 x client2 matrix over {W,L,M}.
-        [DataRow(OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Nfs Mac-Linux Normal")]
-        [DataRow(OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux IsolatedReads")]
-        [DataRow(OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Nfs Linux-Mac Normal")]
-        [DataRow(OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Linux-Mac IsolatedReads")]
-        [DataRow(OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Nfs Mac-Windows Normal")]
-        [DataRow(OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Mac-Windows IsolatedReads")]
-        [DataRow(OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Nfs Windows-Mac Normal")]
-        [DataRow(OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Windows-Mac IsolatedReads")]
-        [DataRow(OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Nfs Mac-Mac Normal")]
-        [DataRow(OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Mac-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Nfs Mac-Linux-Linux Normal")]
+        [DataRow(OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Nfs Linux-Linux-Mac Normal")]
+        [DataRow(OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Linux-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Nfs Mac-Linux-Windows Normal")]
+        [DataRow(OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Nfs Windows-Linux-Mac Normal")]
+        [DataRow(OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Windows-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Nfs Mac-Linux-Mac Normal")]
+        [DataRow(OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux-Mac IsolatedReads")]
         public void Nfs(OS client1OS, OS client2OS, Mode mode)
         {
             var nfsServer = new NfsServer(linux_x64_2);
@@ -558,7 +558,7 @@ namespace ft_tests
             select new object[] { c1, c2, mode };
 
         [DataTestMethod]
-        [DynamicData(nameof(SshfsClientCombos))]
+        [DynamicData(nameof(SshfsClientCombos), DynamicDataDisplayName = nameof(ServerNamedRow))]
         public void Sshfs(OS client1OS, OS client2OS, Mode mode)
         {
             var sshfsServer = new SshfsServer(linux_x64_2); // .81 — hosts sshd + /srv/sshfs
@@ -631,8 +631,8 @@ namespace ft_tests
         // into another Android, who writes to their local fs". Needs BOTH emulators: emu1 (bridged, reachable) is the
         // server AND side1; emu2 (NAT) is the mounting client/side2. Key auth via the lab keypair, port 8022.
         [DataTestMethod]
-        [DataRow(Mode.Normal)]
-        [DataRow(Mode.IsolatedReads)]
+        [DataRow(Mode.Normal, DisplayName = "Sshfs Android-Android direct Normal")]
+        [DataRow(Mode.IsolatedReads, DisplayName = "Sshfs Android-Android direct IsolatedReads")]
         public void SshfsAndroidDirect(Mode mode)
         {
             if (android_1 is null || android_2 is null)
@@ -665,9 +665,9 @@ namespace ft_tests
         // sshfs SERVER (the SSH host they both mount) varies. Linux (.81, password) + Mac (.33, key) validate now;
         // Windows (.84, OpenSSH) needs the batched full-lab run. ft auto-enables IsolatedReads over each FUSE mount.
         [DataTestMethod]
-        [DataRow(OS.Linux)]
-        [DataRow(OS.Mac)]
-        [DataRow(OS.Windows)]
+        [DataRow(OS.Linux, DisplayName = "Sshfs Android-Linux-Android")]
+        [DataRow(OS.Mac, DisplayName = "Sshfs Android-Mac-Android")]
+        [DataRow(OS.Windows, DisplayName = "Sshfs Android-Windows-Android")]
         public void SshfsServerMatrix(OS serverOS)
         {
             if (android_1 is null || android_2 is null)
@@ -719,7 +719,7 @@ namespace ft_tests
         // out-of-order reorder buffer it reassembles 9P's out-of-order file delivery correctly. So 9P is
         // supported only via --upload-download; that is the one mode tested here.
         [DataTestMethod]
-        [DataRow(Mode.UploadDownload)]
+        [DataRow(Mode.UploadDownload, DisplayName = "9P Linux-Linux-Linux UploadDownload")]
         public void NineP(Mode mode)
         {
             var ninePServer = new NinePServer(linux_x64_2); // .81 — hosts diod + /srv/9p
@@ -933,6 +933,17 @@ namespace ft_tests
             from c2 in new[] { OS.Windows, OS.Linux, OS.Mac, OS.Android }
             select new object[] { c1, c2 };
 
+        // DynamicData row name in the SMB rows' "<Backend> <client1>-<server>-<client2>[ <mode>]" convention, naming
+        // the single fixed server the backend uses (which its name alone doesn't reveal): Sshfs/WebDav/S3/FTP all go
+        // through the .81 Linux node, Dropbox through the cloud. (SshfsAndroidDirect is exempt - there one Android IS
+        // the server, so there is no separate server node to name.)
+        public static string ServerNamedRow(System.Reflection.MethodInfo methodInfo, object[] data)
+        {
+            var server = methodInfo.Name == "Dropbox" ? "cloud" : "Linux";
+            var mode = data.Length > 2 ? $" {data[2]}" : "";
+            return $"{methodInfo.Name} {data[0]}-{server}-{data[1]}{mode}";
+        }
+
         // side1 runs on client1's node, side2 on client2's. Android uses the one emulator's two ft instances
         // (android_1/android_2) and the Mac its two (mac_1/mac_2), so both sides can share one physical device.
         static ProcessRunner Client1Runner(OS os) => os switch
@@ -941,7 +952,7 @@ namespace ft_tests
         { OS.Windows => win10_x64_3, OS.Mac => mac_2, OS.Android => android_2, _ => linux_x64_3 };
 
         [DataTestMethod]
-        [DynamicData(nameof(AllClientCombos))]
+        [DynamicData(nameof(AllClientCombos), DynamicDataDisplayName = nameof(ServerNamedRow))]
         public void FTP(OS client1OS, OS client2OS)
         {
             var writePath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
@@ -964,7 +975,7 @@ namespace ft_tests
         // Program.cs applies a 50ms pace floor so idle absent-slot polling doesn't hammer
         // billable/rate-limited endpoints (~270 req/s unpaced on a LAN; ~7 req/s with the floor).
         [DataTestMethod]
-        [DynamicData(nameof(AllClientCombos))]
+        [DynamicData(nameof(AllClientCombos), DynamicDataDisplayName = nameof(ServerNamedRow))]
         public void WebDav(OS client1OS, OS client2OS)
         {
             const string url = "http://192.168.0.81:8080/dav/";
@@ -993,7 +1004,7 @@ namespace ft_tests
         // OpenSSL that AndroidProcessRunner puts on LD_LIBRARY_PATH (Android's own BoringSSL lacks the symbols .NET
         // binds - "a2d_ASN1_OBJECT"; real Termux: `pkg install openssl`).
         [DataTestMethod]
-        [DynamicData(nameof(AllClientCombos))]
+        [DynamicData(nameof(AllClientCombos), DynamicDataDisplayName = nameof(ServerNamedRow))]
         public void S3(OS client1OS, OS client2OS)
         {
             const string s3Args = "--s3 --bucket fttest --endpoint http://192.168.0.81:9000 --access-key ftaccess --secret-key ftsecret";
@@ -1023,7 +1034,7 @@ namespace ft_tests
         // (a 2 MB round-trip measured ~25s). ft auto-applies its Dropbox tuning. NOTE: the credentials appear on
         // the ft command line here (fine for a throwaway, app-folder-scoped, revocable test token).
         [DataTestMethod]
-        [DynamicData(nameof(AllClientCombos))]
+        [DynamicData(nameof(AllClientCombos), DynamicDataDisplayName = nameof(ServerNamedRow))]
         public void Dropbox(OS client1OS, OS client2OS)
         {
             if (string.IsNullOrEmpty(dropboxAppKey) || string.IsNullOrEmpty(dropboxAppSecret) || string.IsNullOrEmpty(dropboxRefreshToken))
