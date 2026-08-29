@@ -268,11 +268,19 @@ namespace ft_test_env.Config
         public string AvdName { get; set; } = "ft_android";
         public string SystemImage { get; set; } = "system-images;android-34;default;arm64-v8a";
 
-        /// <summary>Emulator console port; the adb serial is emulator-&lt;port&gt;. Kept distinct from a default 5554 AVD.</summary>
+        /// <summary>Console port of emulator 1 (client1/side1); the adb serial is emulator-&lt;port&gt;. This one is
+        /// launched BRIDGED so it gets a real LAN IP and is reachable inbound (side1 is dialed by the dev box).</summary>
         public int EmulatorPort { get; set; } = 5556;
 
-        /// <summary>Host NIC to bridge the emulator onto (emulator -vmnet-bridged) so its wlan0 gets a REAL LAN IP,
-        /// making the emulator reachable inbound like any node (so Android can be a tunnel client1, not just client2).
+        /// <summary>Console port of emulator 2 (client2/side2). Two REAL emulators (not two ft instances on one) act
+        /// as the two Android tunnel clients. This one is launched PLAIN NAT (non-bridged): macOS vmnet can't give a
+        /// SECOND concurrent bridged emulator a working default network (Android's connectivity framework only makes
+        /// wlan0 the default on the first), so emu2 uses the normal user-mode NAT - outbound to the LAN works (all
+        /// side2 needs), it just has no inbound LAN IP (side2 is never dialed).</summary>
+        public int SecondEmulatorPort { get; set; } = 5558;
+
+        /// <summary>Host NIC to bridge emulator 1 onto (emulator -vmnet-bridged) so its wlan0 gets a REAL LAN IP,
+        /// making it reachable inbound like any node (so Android can be a tunnel client1, not just client2).
         /// The Mac's active LAN interface - typically en0.</summary>
         public string BridgeInterface { get; set; } = "en0";
 
@@ -280,6 +288,7 @@ namespace ft_test_env.Config
         public int BootTimeoutSeconds { get; set; } = 240;
 
         public string Serial => $"emulator-{EmulatorPort}";
+        public string SecondSerial => $"emulator-{SecondEmulatorPort}";
 
         public string ResolvedKeyPath => string.IsNullOrWhiteSpace(KeyPath)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519")

@@ -1,5 +1,6 @@
 using Renci.SshNet;
 using System.Diagnostics;
+using System.Text;
 
 namespace ft_tests.Runner
 {
@@ -19,8 +20,17 @@ namespace ft_tests.Runner
         private readonly SshClient sshClient;           // SSH to the Mac (.33)
         private readonly ConnectionInfo connectionInfo;
         private readonly string adb;                     // "<adbPath>" -s <serial>  (all adb runs on the Mac)
+        private readonly int instance;
+        private readonly string serial;
         private readonly string remoteExecutablePath;    // on the emulator: /data/local/tmp/ft-<instance>
         private readonly string outputFilename;          // on the emulator
+        private readonly string sshfsPrefixMac;          // Termux sshfs prefix staged on the Mac by mac_android_setup.sh
+
+        // The Termux prefix on the device: staging the sshfs toolchain here (its exact `pkg install`
+        // location) makes the binaries' baked-in rpaths/config resolve, so sshfs/ssh "just work".
+        private const string TermuxPrefixDevice = "/data/data/com.termux/files/usr";
+        // Push the ~86MB toolchain only once per emulator session (the -read-only overlay resets on relaunch).
+        private static readonly HashSet<string> sshfsToolchainReady = new();
 
         public AndroidProcessRunner(string macHost, string username, string privateKeyPath, string localExecutablePath,
                                     string adbPath, string serial, int instance = 1, int port = 22)
@@ -32,8 +42,11 @@ namespace ft_tests.Runner
             sshClient.Connect();
 
             adb = $"\"{adbPath}\" -s {serial}";
+            this.instance = instance;
+            this.serial = serial;
             remoteExecutablePath = $"/data/local/tmp/ft-{instance}";
             outputFilename = $"/data/local/tmp/ft-{instance}.log";
+            sshfsPrefixMac = $"/Users/{username}/Library/Android/ft-sshfs/usr";
 
             // Fail fast if the emulator is not up, so a row that needs it is skipped rather than hanging.
             var state = sshClient.CreateCommand($"{adb} get-state 2>&1").Execute().Trim();
@@ -120,6 +133,133 @@ namespace ft_tests.Runner
             using var sshCommand = sshClient.CreateCommand($"{adb} shell '{command}'");
             var stdout = sshCommand.Execute();
             return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
+        }
+
+        // ---- sshfs (issue #45): let the emulator be an sshfs client, exactly like a Termux user who runs
+        // `pkg install sshfs`. The Termux sshfs toolchain (sshfs + fuse3 + openssh + openssl, staged on the Mac
+        // by mac_android_setup.sh) is pushed to the device's Termux prefix, then sshfs mounts the lab export.
+        // The resulting mount is a real FUSE filesystem (statfs f_type == 0x65735546), so bionic ft auto-enables
+        // IsolatedReads over it just like on Linux. Used by AndroidSshfsClient.
+
+        /// <summary>Push the Termux sshfs toolchain to the device once per emulator session (idempotent).</summary>
+        public void EnsureSshfsToolchain()
+        {
+            lock (sshfsToolchainReady)
+            {
+                if (sshfsToolchainReady.Contains(serial)) return;
+                // Ensure root adbd (userdebug image): the FUSE mount needs SELinux-permissive + the mount syscall.
+                // `adb root` is idempotent - a no-op (no adbd restart) if already root, else it restarts adbd, so
+                // wait for the device to reappear. MacEmulator.Launch also roots at boot; this covers other paths.
+                sshClient.CreateCommand($"{adb} root").Execute();
+                sshClient.CreateCommand($"{adb} wait-for-device").Execute();
+                var present = sshClient.CreateCommand(
+                    $"{adb} shell 'test -x {TermuxPrefixDevice}/bin/sshfs && echo READY'").Execute();
+                if (!present.Contains("READY", StringComparison.Ordinal))
+                {
+                    sshClient.CreateCommand($"{adb} shell 'mkdir -p /data/data/com.termux/files'").Execute();
+                    // adb push <macPrefix> <devicePrefix> lands the contents at the exact Termux prefix path.
+                    var push = sshClient.CreateCommand($"{adb} push \"{sshfsPrefixMac}\" {TermuxPrefixDevice}");
+                    push.CommandTimeout = TimeSpan.FromMinutes(3);
+                    push.Execute();
+                    var recheck = sshClient.CreateCommand(
+                        $"{adb} shell 'test -x {TermuxPrefixDevice}/bin/sshfs && echo READY'").Execute();
+                    if (!recheck.Contains("READY", StringComparison.Ordinal))
+                        throw new InvalidOperationException(
+                            $"sshfs toolchain not staged on {serial}: is '{sshfsPrefixMac}' present on the Mac " +
+                            $"(run mac_android_setup.sh / ft_test_env menu 10)? push said: {push.Result}");
+                }
+                sshfsToolchainReady.Add(serial);
+            }
+        }
+
+        /// <summary>Mount an sshfs export at <paramref name="mountPoint"/> on the device (idempotent remount).
+        /// Auth is password_stdin when <paramref name="password"/> is set, else key auth with the private key already
+        /// on the device at <paramref name="deviceKeyPath"/> (push it first with <see cref="PushFile"/>). The server
+        /// varies (Linux .81 / Mac .33 / Windows .84 / another emulator's Termux sshd on 8022) - hence the port.</summary>
+        public void MountSshfs(string user, string server, string exportDir, string mountPoint,
+                               int port = 22, string? password = null, string? deviceKeyPath = null)
+        {
+            // password_stdin is sshfs's reliable non-interactive password auth; for key auth, pin the key on both the
+            // -o IdentityFile and the ssh_command. idmap=user maps the remote uid to root (which owns the mount);
+            // ssh_command pins Termux's own ssh; StrictHostKeyChecking off avoids a first-connect prompt that hangs.
+            var keyAuth = string.IsNullOrEmpty(password);
+            var authOpt = keyAuth ? $"IdentityFile={deviceKeyPath}" : "password_stdin";
+            var sshCmd = keyAuth ? $"$PREFIX/bin/ssh -i {deviceKeyPath} -p {port}" : $"$PREFIX/bin/ssh -p {port}";
+            var feed = keyAuth ? "" : $"echo {password} | ";
+            var script = string.Join("\n",
+                $"PREFIX={TermuxPrefixDevice}",
+                "export PATH=$PREFIX/bin:/system/bin:/system/xbin",
+                "export LD_LIBRARY_PATH=$PREFIX/lib",
+                "export HOME=/data/data/com.termux/files/home",
+                "export TMPDIR=/data/local/tmp",
+                $"mkdir -p $HOME {mountPoint}",
+                "setenforce 0 2>/dev/null",             // FUSE mount from the su domain needs SELinux permissive
+                $"fusermount3 -u {mountPoint} 2>/dev/null; umount -l {mountPoint} 2>/dev/null",
+                $"{feed}sshfs {user}@{server}:{exportDir} {mountPoint} -p {port} " +
+                $"-o {authOpt},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,reconnect,ServerAliveInterval=15,idmap=user,ssh_command=\"{sshCmd}\"");
+            RunDeviceScript(script, $"ft-sshfs-mount-{instance}");
+        }
+
+        /// <summary>Run Termux sshd on this emulator (Android2 = the sshfs server for the "direct" row): stage host
+        /// keys + an authorized_keys (the pubkey text) + a config, and start sshd on 8022 with a local export dir.</summary>
+        public void StartSshdServer(string authorizedKeyText, string exportDir, int port = 8022)
+        {
+            var script = string.Join("\n",
+                $"PREFIX={TermuxPrefixDevice}",
+                "export PATH=$PREFIX/bin:/system/bin:/system/xbin",
+                "export LD_LIBRARY_PATH=$PREFIX/lib",
+                "export HOME=/data/data/com.termux/files/home",
+                "export TMPDIR=/data/local/tmp",
+                "mkdir -p $HOME $PREFIX/etc/ssh $PREFIX/var/empty /data/local/tmp/sshd " + exportDir,
+                "chmod 755 $PREFIX/var/empty",          // sshd privilege-separation dir
+                "chmod 777 " + exportDir,
+                "setenforce 0 2>/dev/null",
+                // sshd rejects a login whose passwd shell does not exist; Termux openssh resolves root's shell to
+                // $PREFIX/bin/bash, which the sshfs toolchain closure omits. sshfs only uses the sftp SUBSYSTEM (not
+                // the login shell), so a symlink to the system sh is enough to get past the shell-exists check.
+                "[ -e $PREFIX/bin/bash ] || ln -sf /system/bin/sh $PREFIX/bin/bash",
+                "[ -f $PREFIX/etc/ssh/ssh_host_ed25519_key ] || $PREFIX/bin/ssh-keygen -A >/dev/null 2>&1",
+                $"echo '{authorizedKeyText}' > /data/local/tmp/authorized_keys; chmod 600 /data/local/tmp/authorized_keys",
+                "printf '%s\\n' " +
+                    $"'Port {port}' 'ListenAddress 0.0.0.0' 'HostKey '$PREFIX'/etc/ssh/ssh_host_ed25519_key' " +
+                    "'PidFile /data/local/tmp/sshd/sshd.pid' 'PermitRootLogin yes' 'PubkeyAuthentication yes' " +
+                    "'PasswordAuthentication no' 'AuthorizedKeysFile /data/local/tmp/authorized_keys' 'StrictModes no' " +
+                    "'Subsystem sftp '$PREFIX'/libexec/sftp-server' > /data/local/tmp/sshd_config",
+                "pkill -f 'sshd -f /data/local/tmp/sshd_config' 2>/dev/null; sleep 1",
+                "$PREFIX/bin/sshd -f /data/local/tmp/sshd_config",
+                "sleep 1; echo sshd-started");
+            RunDeviceScript(script, $"ft-sshd-{instance}");
+        }
+
+        /// <summary>SCP a local file to the Mac then adb-push it onto the device (mode 600) - used to place a private
+        /// key on a client emulator for key-auth sshfs mounts.</summary>
+        public void PushFile(string localPath, string devicePath)
+        {
+            var macStaging = $"/tmp/ft-android/{Path.GetFileName(localPath)}-{instance}";
+            sshClient.CreateCommand("mkdir -p /tmp/ft-android").Execute();
+            using (var scp = new ScpClient(connectionInfo)) { scp.Connect(); scp.Upload(new FileInfo(localPath), macStaging); }
+            sshClient.CreateCommand($"{adb} push \"{macStaging}\" \"{devicePath}\"").Execute();
+            sshClient.CreateCommand($"{adb} shell chmod 600 \"{devicePath}\"").Execute();
+        }
+
+        /// <summary>The bridged emulator's real LAN IP (wlan0) - where another emulator dials it for the "direct" row.</summary>
+        public string? LanIp()
+        {
+            var raw = sshClient.CreateCommand($"{adb} shell ip -4 addr show wlan0 2>/dev/null").Execute();
+            var m = System.Text.RegularExpressions.Regex.Match(raw, @"inet (\d+\.\d+\.\d+\.\d+)");
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
+        /// <summary>Read a small file from the device (e.g. a generated public key).</summary>
+        public string ReadDeviceFile(string devicePath) =>
+            sshClient.CreateCommand($"{adb} shell cat \"{devicePath}\" 2>/dev/null").Execute().Trim();
+
+        /// <summary>Stage a multi-line shell script on the device (base64, to dodge adb/sh quoting) and run it.</summary>
+        private void RunDeviceScript(string script, string name)
+        {
+            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script.Replace("\r", "")));
+            var path = $"/data/local/tmp/{name}.sh";
+            sshClient.CreateCommand($"{adb} shell 'echo {b64} | base64 -d > {path} && sh {path}'").Execute();
         }
     }
 }

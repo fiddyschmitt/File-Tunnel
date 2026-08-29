@@ -55,81 +55,109 @@ namespace ft_test_env.Ssh
                 : StepOutcome.Fail($"setup did not finish: {LastLine(output)}");
         }
 
-        /// <summary>Kills any prior emulator on the port, launches this AVD headless, and waits for it to boot.</summary>
+        /// <summary>Kills any prior emulators, launches BOTH (emu1 bridged, emu2 plain NAT), waits for both to boot,
+        /// roots adbd on both, and returns emu1's bridged LAN IP. Two REAL emulators are the two Android tunnel
+        /// clients: emu1 (bridged, real LAN IP) is client1/side1 - the only role needing inbound reachability - and
+        /// emu2 (NAT, outbound-only) is client2/side2. macOS vmnet can't give a SECOND concurrent bridged emulator a
+        /// working default network (Android's connectivity framework only makes wlan0 the default on the first), so
+        /// emu2 is left on the normal user-mode NAT, whose default network reaches the LAN outbound - all side2 needs.</summary>
         public StepOutcome Launch()
         {
             using var ssh = new SshClient(Conn());
             ssh.Connect();
 
-            // Run the whole launch + boot-wait + LAN-IP discovery as ONE staged bash script over ONE SSH channel.
-            // The bridged emulator runs as root (sudo, needed for vmnet) and only registers with adb if the session
-            // stays open through its early registration - doing the launch and the boot-poll in SEPARATE SSH.NET
-            // channels (each closing after Execute) leaves it started-but-never-registered (found the hard way; the
-            // manual OpenSSH run kept one session open). -vmnet-bridged puts wlan0 on a REAL LAN IP via DHCP, so the
-            // emulator is reachable inbound like any node (what lets Android be a tunnel side1, not only side2);
-            // -read-only uses a throwaway overlay so the AVD's userdata is never root-owned. wlan0's DHCP lands a bit
-            // AFTER sys.boot_completed, so the IP is polled too.
+            // The whole launch + boot-wait + LAN-IP discovery runs as ONE staged bash script over ONE SSH channel:
+            // the emulators only register with adb if the session stays open through their early registration (found
+            // the hard way - separate SSH.NET channels each close and leave them started-but-unregistered).
+            // Teardown must reap the qemu CHILD (its cmdline carries `-port <p>`; killing only the `emulator` launcher
+            // orphans it and holds the port), then reset the adb server to drop any stale registration. -read-only
+            // uses a throwaway overlay (so two emulators can share one AVD, and userdata is never root-owned).
             var u = cfg.Username;
-            var p = cfg.EmulatorPort;
+            var p1 = cfg.EmulatorPort;         // emu1: bridged
+            var p2 = cfg.SecondEmulatorPort;   // emu2: NAT
+            var envs = $"HOME=/Users/{u} ANDROID_AVD_HOME=/Users/{u}/.android/avd ANDROID_SDK_ROOT=/Users/{u}/Library/Android/sdk ANDROID_EMULATOR_HOME=/Users/{u}/.android";
+            var common = "-no-window -no-audio -no-boot-anim -read-only -gpu swiftshader_indirect -no-metrics";
             var script = string.Join("\n",
                 "#!/bin/bash",
-                $"ADB=\"{adb}\"; EMU=\"{emulator}\"; S=emulator-{p}",
-                "\"$ADB\" -s \"$S\" emu kill 2>/dev/null; sleep 2",
-                $"sudo pkill -f \"emulator.*-port {p}\" 2>/dev/null; sleep 2",
-                "\"$ADB\" start-server >/dev/null 2>&1",
-                $"sudo HOME=/Users/{u} ANDROID_AVD_HOME=/Users/{u}/.android/avd ANDROID_SDK_ROOT=/Users/{u}/Library/Android/sdk ANDROID_EMULATOR_HOME=/Users/{u}/.android \\",
-                $"  \"$EMU\" -avd {cfg.AvdName} -no-window -no-audio -no-boot-anim -read-only -gpu swiftshader_indirect -port {p} -no-metrics -vmnet-bridged {cfg.BridgeInterface} >~/ft_emulator.log 2>&1 &",
-                "b=0; for i in $(seq 1 70); do st=$(\"$ADB\" -s \"$S\" get-state 2>/dev/null); [ \"$st\" = device ] && b=$(\"$ADB\" -s \"$S\" shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r'); [ \"$b\" = 1 ] && break; sleep 4; done",
-                "ip=''; for i in $(seq 1 45); do ip=$(\"$ADB\" -s \"$S\" shell ip -4 addr show wlan0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'); [ -n \"$ip\" ] && break; sleep 3; done",
-                "abi=$(\"$ADB\" -s \"$S\" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\\r ')",
-                "echo \"RESULT boot=$b ip=$ip abi=$abi\"");
+                $"ADB=\"{adb}\"; EMU=\"{emulator}\"; S1=emulator-{p1}; S2=emulator-{p2}",
+                "\"$ADB\" -s \"$S1\" emu kill 2>/dev/null; \"$ADB\" -s \"$S2\" emu kill 2>/dev/null; sleep 2",
+                $"sudo pkill -f \"qemu-system.*-port {p1}\" 2>/dev/null; sudo pkill -f \"qemu-system.*-port {p2}\" 2>/dev/null",
+                $"sudo pkill -f \"emulator.*-port {p1}\" 2>/dev/null; sudo pkill -f \"emulator.*-port {p2}\" 2>/dev/null; sleep 2",
+                "\"$ADB\" kill-server >/dev/null 2>&1; sleep 1; \"$ADB\" start-server >/dev/null 2>&1; sleep 2",
+                // emu1: BRIDGED (sudo, for vmnet) -> real LAN IP, reachable inbound (client1/side1).
+                $"sudo {envs} \\",
+                $"  \"$EMU\" -avd {cfg.AvdName} {common} -port {p1} -vmnet-bridged {cfg.BridgeInterface} >~/ft_emulator.log 2>&1 &",
+                // emu2: PLAIN NAT (no sudo, no bridge) -> normal working default network, outbound to the LAN (client2/side2).
+                $"{envs} \\",
+                $"  nohup \"$EMU\" -avd {cfg.AvdName} {common} -port {p2} >~/ft_emulator2.log 2>&1 &",
+                "wb() { b=0; for i in $(seq 1 80); do st=$(\"$ADB\" -s \"$1\" get-state 2>/dev/null); [ \"$st\" = device ] && b=$(\"$ADB\" -s \"$1\" shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r'); [ \"$b\" = 1 ] && break; sleep 4; done; echo $b; }",
+                "b1=$(wb \"$S1\"); b2=$(wb \"$S2\")",
+                // Root adbd on both (userdebug): sshfs rows (issue #45) need root for SELinux-permissive + the FUSE
+                // mount, and ft then runs as root. adb root drops+reopens the connection, so wait for each device.
+                "\"$ADB\" -s \"$S1\" root >/dev/null 2>&1 || true; \"$ADB\" -s \"$S1\" wait-for-device",
+                "\"$ADB\" -s \"$S2\" root >/dev/null 2>&1 || true; \"$ADB\" -s \"$S2\" wait-for-device",
+                // emu1's bridged LAN IP (DHCP lands a bit after boot); emu2 has none (NAT).
+                "ip1=''; for i in $(seq 1 45); do ip1=$(\"$ADB\" -s \"$S1\" shell ip -4 addr show wlan0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'); [ -n \"$ip1\" ] && break; sleep 3; done",
+                "abi=$(\"$ADB\" -s \"$S1\" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\\r ')",
+                "echo \"RESULT boot1=$b1 boot2=$b2 ip1=$ip1 abi=$abi\"");
             var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
             using var cmd = ssh.CreateCommand($"echo {b64} | base64 -d | bash");
-            cmd.CommandTimeout = TimeSpan.FromSeconds(cfg.BootTimeoutSeconds + 240);
+            cmd.CommandTimeout = TimeSpan.FromSeconds(cfg.BootTimeoutSeconds + 420);
             var output = cmd.Execute();
 
-            var m = System.Text.RegularExpressions.Regex.Match(output, @"RESULT boot=(\S*) ip=(\S*) abi=(\S*)");
-            var bootOk = m.Success && m.Groups[1].Value == "1";
-            var lanIp = m.Success ? m.Groups[2].Value : "";
-            if (bootOk && !string.IsNullOrEmpty(lanIp))
-                return StepOutcome.Ok($"{cfg.Serial} booted ({m.Groups[3].Value}), bridged LAN IP {lanIp}");
-            if (bootOk)
-                return StepOutcome.Fail($"{cfg.Serial} booted but wlan0 has NO LAN IP - bridge '{cfg.BridgeInterface}' failed (see ~/ft_emulator.log on {cfg.Host})");
-            return StepOutcome.Fail($"{cfg.Serial} did not boot (see ~/ft_emulator.log on {cfg.Host})");
+            var m = System.Text.RegularExpressions.Regex.Match(output, @"RESULT boot1=(\S*) boot2=(\S*) ip1=(\S*) abi=(\S*)");
+            var boot1 = m.Success && m.Groups[1].Value == "1";
+            var boot2 = m.Success && m.Groups[2].Value == "1";
+            var lanIp = m.Success ? m.Groups[3].Value : "";
+            if (boot1 && boot2 && !string.IsNullOrEmpty(lanIp))
+                return StepOutcome.Ok($"{cfg.Serial} (bridged {lanIp}, {m.Groups[4].Value}) + {cfg.SecondSerial} (NAT) booted");
+            if (!boot1 || !boot2)
+                return StepOutcome.Fail($"emulator(s) did not boot (boot1={m.Groups[1].Value} boot2={m.Groups[2].Value}); see ~/ft_emulator*.log on {cfg.Host}");
+            return StepOutcome.Fail($"{cfg.Serial} booted but no bridged LAN IP - bridge '{cfg.BridgeInterface}' failed (see ~/ft_emulator.log on {cfg.Host})");
         }
 
-        /// <summary>Kills the emulator if it is running.</summary>
+        /// <summary>Kills both emulators if running (reaping the qemu children so no orphan holds a console port).</summary>
         public StepOutcome Teardown()
         {
             using var ssh = new SshClient(Conn());
             ssh.Connect();
-            var state = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} get-state 2>&1").Execute().Trim();
-            if (!state.EndsWith("device", StringComparison.Ordinal))
-                return StepOutcome.Skip("not running");
-            // The bridged emulator runs as root (sudo), so fall back to a sudo pkill if `emu kill` does not take.
-            ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} emu kill 2>/dev/null; sleep 2; sudo pkill -f \"emulator.*-port {cfg.EmulatorPort}\" 2>/dev/null; true").Execute();
-            return StepOutcome.Ok("emulator killed");
+            var script = string.Join("\n",
+                $"\"{adb}\" -s {cfg.Serial} emu kill 2>/dev/null; \"{adb}\" -s {cfg.SecondSerial} emu kill 2>/dev/null; sleep 2",
+                $"sudo pkill -f \"qemu-system.*-port {cfg.EmulatorPort}\" 2>/dev/null; sudo pkill -f \"qemu-system.*-port {cfg.SecondEmulatorPort}\" 2>/dev/null",
+                $"sudo pkill -f \"emulator.*-port {cfg.EmulatorPort}\" 2>/dev/null; sudo pkill -f \"emulator.*-port {cfg.SecondEmulatorPort}\" 2>/dev/null; true");
+            var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
+            ssh.CreateCommand($"echo {b64} | base64 -d | bash").Execute();
+            return StepOutcome.Ok("emulators killed");
         }
 
-        /// <summary>Reports whether the emulator is up + fully booted.</summary>
+        /// <summary>Reports whether BOTH emulators are up + fully booted (emu1 bridged with a LAN IP, emu2 on NAT).</summary>
         public StepOutcome Check()
         {
             using var ssh = new SshClient(Conn());
             ssh.Connect();
-            var state = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} get-state 2>&1").Execute().Trim();
+            var (ok1, msg1) = CheckOne(ssh, cfg.Serial, bridged: true);
+            var (ok2, msg2) = CheckOne(ssh, cfg.SecondSerial, bridged: false);
+            return (ok1 && ok2) ? StepOutcome.Ok($"{msg1}; {msg2}") : StepOutcome.Fail($"{msg1}; {msg2}");
+        }
+
+        private (bool ok, string msg) CheckOne(SshClient ssh, string serial, bool bridged)
+        {
+            var state = ssh.CreateCommand($"\"{adb}\" -s {serial} get-state 2>&1").Execute().Trim();
             if (!state.EndsWith("device", StringComparison.Ordinal))
-                return StepOutcome.Fail($"{cfg.Serial} not available (adb get-state = '{state}')");
-            var booted = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell getprop sys.boot_completed 2>/dev/null").Execute().Trim();
-            var abi = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell getprop ro.product.cpu.abi 2>/dev/null").Execute().Trim();
-            return booted == "1"
-                ? StepOutcome.Ok($"{cfg.Serial} up + booted ({abi}), bridged LAN IP {WlanIp(ssh) ?? "MISSING"}")
-                : StepOutcome.Fail($"{cfg.Serial} present but not booted (boot_completed='{booted}')");
+                return (false, $"{serial} not available (get-state='{state}')");
+            var booted = ssh.CreateCommand($"\"{adb}\" -s {serial} shell getprop sys.boot_completed 2>/dev/null").Execute().Trim();
+            if (booted != "1")
+                return (false, $"{serial} present but not booted");
+            var abi = ssh.CreateCommand($"\"{adb}\" -s {serial} shell getprop ro.product.cpu.abi 2>/dev/null").Execute().Trim();
+            return bridged
+                ? (true, $"{serial} booted ({abi}), bridged LAN IP {WlanIp(ssh, serial) ?? "MISSING"}")
+                : (true, $"{serial} booted ({abi}), NAT");
         }
 
         /// <summary>The bridged emulator's real LAN IP (wlan0). eth0 stays the user-mode NAT 10.0.2.15.</summary>
-        private string? WlanIp(SshClient ssh)
+        private string? WlanIp(SshClient ssh, string serial)
         {
-            var raw = ssh.CreateCommand($"\"{adb}\" -s {cfg.Serial} shell ip -4 addr show wlan0 2>/dev/null").Execute();
+            var raw = ssh.CreateCommand($"\"{adb}\" -s {serial} shell ip -4 addr show wlan0 2>/dev/null").Execute();
             var m = System.Text.RegularExpressions.Regex.Match(raw, @"inet (\d+\.\d+\.\d+\.\d+)");
             return m.Success ? m.Groups[1].Value : null;
         }

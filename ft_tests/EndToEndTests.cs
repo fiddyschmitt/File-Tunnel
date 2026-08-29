@@ -26,12 +26,15 @@ namespace ft_tests
         const string LINUX_X64_EXE = @"R:\Temp\ft release\linux-x64\ft";
         const string OSX_ARM64_EXE = @"R:\Temp\ft release\osx-arm64\ft";
 
-        // The Android/Termux build (issue #45): the NativeAOT linux-bionic-arm64 binary, run inside an Android
-        // emulator on the Mac (.33) via adb. The emulator is launched by ft_test_env; ANDROID_SERIAL is its adb
-        // serial (console port 5556), ANDROID_ADB the adb path on the Mac. Android is a CLIENT only (side2).
+        // The Android/Termux build (issue #45): the NativeAOT linux-bionic-arm64 binary, run inside Android
+        // emulators on the Mac (.33) via adb. ft_test_env launches TWO real emulators as the two Android tunnel
+        // clients: emu1 (serial emulator-5556) is BRIDGED - a real LAN IP, reachable inbound - so it is client1/
+        // side1; emu2 (emulator-5558) is plain NAT (outbound only) so it is client2/side2. ANDROID_ADB is the adb
+        // path on the Mac. Android is a CLIENT in both positions (never a server, except the sshfs "direct" row).
         const string BIONIC_ARM64_EXE = @"R:\Temp\ft release\linux-bionic-arm64\ft";
         const string ANDROID_ADB = "/Users/smith/Library/Android/sdk/platform-tools/adb";
-        const string ANDROID_SERIAL = "emulator-5556";
+        const string ANDROID_SERIAL_1 = "emulator-5556";   // emu1: bridged (client1/side1)
+        const string ANDROID_SERIAL_2 = "emulator-5558";   // emu2: NAT (client2/side2)
 
         // The Mac mounts the SMB shares in userspace under here (assumes the 'smith' login on .33).
         const string MAC_SMB_ROOT = "/Users/smith/mnt/smb";
@@ -83,7 +86,8 @@ namespace ft_tests
         static ProcessRunner mac_1;   // the Mac (.33) — side-1 ft (unique exe ft-1)
         static ProcessRunner mac_2;   // the Mac (.33) — side-2 ft (unique exe ft-2), so Mac can be on both sides
 
-        static ProcessRunner android_1;   // Android emulator on the Mac (.33) — bionic ft, tunnel CLIENT (side2) only
+        static ProcessRunner android_1;   // Android emulator on the Mac (.33) — bionic ft, client1/side1 (instance 1, bridged)
+        static ProcessRunner android_2;   // ...and client2/side2 (instance 2), so the one emulator can be on both sides (like the Mac)
 
         // Mac SMB client-mount credentials (set in ClassInit). Fields, not locals, so RefreshMacClientMount
         // can re-establish a Mac mount that idle-dropped - see that method and [[test-lab-mount-quirks]].
@@ -170,10 +174,15 @@ namespace ft_tests
             mac_1 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac.log", instance: 1);
             mac_2 = new MacProcessRunner("192.168.0.33", macUser, macKey, OSX_ARM64_EXE, "/tmp/ft-mac2.log", instance: 2);
 
-            // The Android emulator on the Mac (bionic ft over adb). Only up when ft_test_env has launched it,
-            // so tolerate its absence: a null runner makes the Android rows skip (Assert.Inconclusive).
-            try { android_1 = new AndroidProcessRunner("192.168.0.33", macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL, instance: 1); }
-            catch (Exception ex) { Console.WriteLine($"WARN: android_1 (emulator) unavailable: {ex.Message}"); android_1 = null!; }
+            // The two Android emulators on the Mac (bionic ft over adb). Only up when ft_test_env has launched them,
+            // so tolerate absence: a null runner makes the Android rows skip (Assert.Inconclusive). TWO REAL emulators
+            // (not two instances on one): android_1 = emu1 emulator-5556 (bridged, reachable) = client1/side1;
+            // android_2 = emu2 emulator-5558 (NAT, outbound) = client2/side2. So Android is a genuine distinct device
+            // on each tunnel side (incl. Android-Android).
+            try { android_1 = new AndroidProcessRunner("192.168.0.33", macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL_1, instance: 1); }
+            catch (Exception ex) { Console.WriteLine($"WARN: android_1 (emulator-5556) unavailable: {ex.Message}"); android_1 = null!; }
+            try { android_2 = new AndroidProcessRunner("192.168.0.33", macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL_2, instance: 2); }
+            catch (Exception ex) { Console.WriteLine($"WARN: android_2 (emulator-5558) unavailable: {ex.Message}"); android_2 = null!; }
             // Client mounts of the remote SMB servers (idempotent, as the user - no sudo). See
             // RefreshMacClientMount for the mount details and why these are re-established per cell.
             macSmbUser = config["win10_vm_username"] ?? "";
@@ -534,34 +543,171 @@ namespace ft_tests
             return basePath + fileName;
         }
 
-        // sshfs is Linux-only here (a FUSE filesystem over SSH). Both clients (.80, .82) mount the
-        // same export on the SSH server (.81), exactly mirroring the NFS topology: client1 - server
-        // - client2. The mount point is identical on each client, so a single path lookup serves
-        // both sides — whatever client1 writes appears to client2 through the shared server export.
+        // sshfs (a FUSE filesystem over SSH), client1 - server(.81) - client2, mirroring the NFS topology:
+        // both clients mount the same .81:/srv/sshfs export and see each other's writes through the server.
+        // Clients are the FUSE-capable platforms: Linux (.80/.82) and Android (issue #45) - the emulator runs
+        // the real Termux sshfs toolchain (see AndroidSshfsClient), so bionic ft reads/writes a genuine FUSE
+        // mount (statfs f_type 0x65735546) and auto-enables IsolatedReads over it exactly like Linux. (Windows
+        // has no native sshfs and this lab's Mac has no macFUSE, so both sit this row out.) The mount point is
+        // per-client - identical on the two Linux nodes, per-instance on the one shared emulator - so the path
+        // PREFIX is per-client while the underlying server file is shared.
+        public static IEnumerable<object[]> SshfsClientCombos =>
+            from c1 in new[] { OS.Linux, OS.Android }
+            from c2 in new[] { OS.Linux, OS.Android }
+            from mode in new[] { Mode.Normal, Mode.IsolatedReads }
+            select new object[] { c1, c2, mode };
+
         [DataTestMethod]
-        [DataRow(Mode.Normal)]
-        [DataRow(Mode.IsolatedReads)]
-        public void Sshfs(Mode mode)
+        [DynamicData(nameof(SshfsClientCombos))]
+        public void Sshfs(OS client1OS, OS client2OS, Mode mode)
         {
             var sshfsServer = new SshfsServer(linux_x64_2); // .81 — hosts sshd + /srv/sshfs
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            var writePath1 = SshfsPathLookup(filename1);
-            var readPath1 = SshfsPathLookup(filename2);
-            var side1 = new SshfsClient(OS.Linux, linux_x64_1, $"-w {writePath1} -r {readPath1} --verbose"); // .80
+            var writePath1 = SshfsPath(client1OS, 1, filename1);
+            var readPath1 = SshfsPath(client1OS, 1, filename2);
+            var side1 = MakeSshfsClient(client1OS, 1, $"-w {writePath1} -r {readPath1} --verbose"); // .80 / emulator
 
-            var readPath2 = SshfsPathLookup(filename1);
-            var writePath2 = SshfsPathLookup(filename2);
-            var side2 = new SshfsClient(OS.Linux, linux_x64_3, $"-r {readPath2} -w {writePath2} --verbose"); // .82
+            var readPath2 = SshfsPath(client2OS, 2, filename1);
+            var writePath2 = SshfsPath(client2OS, 2, filename2);
+            var side2 = MakeSshfsClient(client2OS, 2, $"-r {readPath2} -w {writePath2} --verbose"); // .82 / emulator
+
+            if (side1 is null || side2 is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (Sshfs {client1OS}-{client2OS}).");
 
             ConductTunnelTests(mode, side1, sshfsServer, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        private static string SshfsPathLookup(string fileName)
+        // Resolve a shared server file to its absolute path through THIS client's own sshfs mount point.
+        private static string SshfsPath(OS os, int side, string fileName)
         {
-            return $"{SshfsClient.MountPoint}/{fileName.TrimStart('/')}";
+            var mount = os == OS.Android ? AndroidSshfsClient.MountPoint(side) : SshfsClient.MountPoint;
+            return $"{mount}/{fileName.TrimStart('/')}";
+        }
+
+        // The right sshfs client for the OS: Linux nodes (.80 side1 / .82 side2), or the emulator's two ft
+        // instances. Returns null when the needed node is down, so the row self-skips (Assert.Inconclusive).
+        private static Client? MakeSshfsClient(OS os, int side, string args)
+        {
+            if (os == OS.Android)
+            {
+                var r = side == 1 ? android_1 : android_2;
+                return r is null ? null : new AndroidSshfsClient((AndroidProcessRunner)r, side, LinuxSshfsSpec, args);
+            }
+            var lr = side == 1 ? linux_x64_1 : linux_x64_3;
+            return lr is null ? null : new SshfsClient(OS.Linux, lr, args);
+        }
+
+        // The .81 Linux sshfs server (user/live over its standard sshd) - the baseline both Linux and Android
+        // clients mount. See the server-varying rows (SshfsServerMatrix) + the Android-direct row below.
+        static readonly SshfsMountSpec LinuxSshfsSpec = new(SshfsServer.ServerIp, 22, "user", SshfsServer.ExportDir, "live", null);
+
+        // A throwaway ed25519 keypair for the key-auth sshfs servers (the Android-direct emu1 sshd; the Mac). Made
+        // once on the dev box with ssh-keygen; the public text is authorized in each server, the private key is
+        // pushed to the client emulator. NOT the user's personal key.
+        static string? _sshfsKeyPriv;
+        static string? _sshfsKeyPub;
+        static (string privPath, string pubText) LabSshfsKey()
+        {
+            if (_sshfsKeyPriv != null) return (_sshfsKeyPriv, _sshfsKeyPub!);
+            var dir = Path.Combine(Path.GetTempPath(), "ft_sshfs_key");
+            Directory.CreateDirectory(dir);
+            var priv = Path.Combine(dir, "id_ed25519");
+            if (!File.Exists(priv))
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("ssh-keygen", $"-t ed25519 -N \"\" -f \"{priv}\" -q")
+                { UseShellExecute = false, CreateNoWindow = true };
+                System.Diagnostics.Process.Start(psi)!.WaitForExit();
+            }
+            _sshfsKeyPriv = priv;
+            _sshfsKeyPub = File.ReadAllText(priv + ".pub").Trim();
+            return (priv, _sshfsKeyPub);
+        }
+
+        // The "direct" Android-to-Android sshfs row (issue #45): emu1 runs Termux sshd + a local export dir; emu2
+        // sshfs-mounts emu1 and tunnels ft over it, while emu1 reads/writes that export LOCALLY - "one Android SSHs
+        // into another Android, who writes to their local fs". Needs BOTH emulators: emu1 (bridged, reachable) is the
+        // server AND side1; emu2 (NAT) is the mounting client/side2. Key auth via the lab keypair, port 8022.
+        [DataTestMethod]
+        [DataRow(Mode.Normal)]
+        [DataRow(Mode.IsolatedReads)]
+        public void SshfsAndroidDirect(Mode mode)
+        {
+            if (android_1 is null || android_2 is null)
+                Assert.Inconclusive("Skipped: the sshfs-direct row needs BOTH Android emulators.");
+
+            var (privKey, pubText) = LabSshfsKey();
+            var server = new AndroidSshfsServer((AndroidProcessRunner)android_1, pubText);
+            var host = server.Host;
+            if (host is null)
+                Assert.Inconclusive("Skipped: emu1 (sshfs-direct server) has no bridged LAN IP.");
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+
+            // side1 = emu1: reads/writes the export dir LOCALLY (it IS the server).
+            var writePath1 = $"{AndroidSshfsServer.ExportDir}/{filename1}";
+            var readPath1 = $"{AndroidSshfsServer.ExportDir}/{filename2}";
+            var side1 = new Client(OS.Android, android_1, $"-w {writePath1} -r {readPath1} --verbose");
+
+            // side2 = emu2: sshfs-mounts emu1's export (key auth on port 8022).
+            var spec = new SshfsMountSpec(host, AndroidSshfsServer.SshdPort, AndroidSshfsServer.SshUser, AndroidSshfsServer.ExportDir, null, privKey);
+            var readPath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename1}";
+            var writePath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename2}";
+            var side2 = new AndroidSshfsClient((AndroidProcessRunner)android_2, 2, spec, $"-r {readPath2} -w {writePath2} --verbose");
+
+            ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        // Android1 - {Windows|Linux|Mac} - Android2 (issue #45): BOTH tunnel clients are the two real emulators; the
+        // sshfs SERVER (the SSH host they both mount) varies. Linux (.81, password) + Mac (.33, key) validate now;
+        // Windows (.84, OpenSSH) needs the batched full-lab run. ft auto-enables IsolatedReads over each FUSE mount.
+        [DataTestMethod]
+        [DataRow(OS.Linux)]
+        [DataRow(OS.Mac)]
+        [DataRow(OS.Windows)]
+        public void SshfsServerMatrix(OS serverOS)
+        {
+            if (android_1 is null || android_2 is null)
+                Assert.Inconclusive("Skipped: the Android sshfs server matrix needs BOTH emulators.");
+            var (server, spec) = MakeSshfsServer(serverOS);
+            if (server is null || spec is null)
+                Assert.Inconclusive($"Skipped: sshfs server node {serverOS} unavailable.");
+
+            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            var writePath1 = $"{AndroidSshfsClient.MountPoint(1)}/{filename1}";
+            var readPath1 = $"{AndroidSshfsClient.MountPoint(1)}/{filename2}";
+            var side1 = new AndroidSshfsClient((AndroidProcessRunner)android_1, 1, spec, $"-w {writePath1} -r {readPath1} --verbose");
+
+            var readPath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename1}";
+            var writePath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename2}";
+            var side2 = new AndroidSshfsClient((AndroidProcessRunner)android_2, 2, spec, $"-r {readPath2} -w {writePath2} --verbose");
+
+            ConductTunnelTests(Mode.Normal, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
+        }
+
+        // Builds the sshfs server + the mount spec both emulators use, for a given server OS.
+        private static (Server?, SshfsMountSpec?) MakeSshfsServer(OS serverOS)
+        {
+            switch (serverOS)
+            {
+                case OS.Linux:
+                    return linux_x64_2 is null ? (null, null) : (new SshfsServer(linux_x64_2), LinuxSshfsSpec);
+                case OS.Mac:
+                    if (mac_1 is null) return (null, null);
+                    var (priv, pub) = LabSshfsKey();
+                    return (new MacSshfsServer(mac_1, pub),
+                            new SshfsMountSpec(MacSshfsServer.Host, 22, MacSshfsServer.SshUser, MacSshfsServer.ExportDir, null, priv));
+                case OS.Windows:
+                    return win10_x64_2 is null ? (null, null)
+                        : (new WindowsSshfsServer(win10_x64_2),
+                           new SshfsMountSpec(WindowsSshfsServer.Host, 22, win10Username ?? "", WindowsSshfsServer.ExportDir, win10Password, null));
+                default:
+                    return (null, null);
+            }
         }
 
         // 9P (Plan 9 protocol) served by diod over TCP - Linux-only, same client1 - server - client2
@@ -780,23 +926,34 @@ namespace ft_tests
             ConductTunnelTests(mode, side1, new Server(OS.Windows, FileShareType.VirtualBoxSharedFolder), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
+        // The full client permutation matrix for the network-backend rows (FTP/WebDav/S3/Dropbox): every
+        // (client1, client2) over {Windows, Linux, Mac, Android}. A row whose node is down self-skips (guard below).
+        public static IEnumerable<object[]> AllClientCombos =>
+            from c1 in new[] { OS.Windows, OS.Linux, OS.Mac, OS.Android }
+            from c2 in new[] { OS.Windows, OS.Linux, OS.Mac, OS.Android }
+            select new object[] { c1, c2 };
+
+        // side1 runs on client1's node, side2 on client2's. Android uses the one emulator's two ft instances
+        // (android_1/android_2) and the Mac its two (mac_1/mac_2), so both sides can share one physical device.
+        static ProcessRunner Client1Runner(OS os) => os switch
+        { OS.Windows => win10_x64_1, OS.Mac => mac_1, OS.Android => android_1, _ => linux_x64_1 };
+        static ProcessRunner Client2Runner(OS os) => os switch
+        { OS.Windows => win10_x64_3, OS.Mac => mac_2, OS.Android => android_2, _ => linux_x64_3 };
+
         [DataTestMethod]
-        [DataRow(OS.Windows, OS.Windows)]
-        [DataRow(OS.Windows, OS.Linux)]
-        [DataRow(OS.Linux, OS.Linux)]
-        [DataRow(OS.Linux, OS.Android)]   // bionic ft as client2 - plain FTP needs no crypto (issue #45)
+        [DynamicData(nameof(AllClientCombos))]
         public void FTP(OS client1OS, OS client2OS)
         {
             var writePath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
             var readPath1 = $"uploads/{Random.Shared.Next(int.MaxValue)}.dat";
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var client1Runner = Client1Runner(client1OS);
+            var client2Runner = Client2Runner(client2OS);
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (FTP {client1OS}-{client2OS}).");
             var side1 = new Client(client1OS, client1Runner, $"--ftp -u anonymous -h 192.168.0.81 -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : client2OS == OS.Android ? android_1 : linux_x64_3;
-            if (client1Runner is null || client2Runner is null)
-                Assert.Inconclusive($"Skipped: a required node is unavailable (FTP {client1OS}-{client2OS}).");
             var side2 = new Client(client2OS, client2Runner, $"--ftp -u anonymous -h 192.168.0.81 -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.FTP, side1, new Server(OS.Linux, FileShareType.FTP), side2, readPath1, writePath1, readPath2, writePath2);
@@ -807,25 +964,21 @@ namespace ft_tests
         // Program.cs applies a 50ms pace floor so idle absent-slot polling doesn't hammer
         // billable/rate-limited endpoints (~270 req/s unpaced on a LAN; ~7 req/s with the floor).
         [DataTestMethod]
-        [DataRow(OS.Windows, OS.Windows)]
-        [DataRow(OS.Windows, OS.Linux)]
-        [DataRow(OS.Linux, OS.Linux)]
-        [DataRow(OS.Linux, OS.Android)]   // the NativeAOT bionic build in an Android emulator, as client2 (issue #45)
-        [DataRow(OS.Android, OS.Linux)]   // ...and as client1 - the BRIDGED emulator's real LAN IP is dialed like any node
+        [DynamicData(nameof(AllClientCombos))]
         public void WebDav(OS client1OS, OS client2OS)
         {
             const string url = "http://192.168.0.81:8080/dav/";
 
             var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : client1OS == OS.Android ? android_1 : linux_x64_1;
+            var client1Runner = Client1Runner(client1OS);
+            var client2Runner = Client2Runner(client2OS);
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (WebDav {client1OS}-{client2OS}).");
             var side1 = new Client(client1OS, client1Runner, $"--webdav --url {url} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : client2OS == OS.Android ? android_1 : linux_x64_3;
-            if (client1Runner is null || client2Runner is null)
-                Assert.Inconclusive($"Skipped: a required node is unavailable (WebDav {client1OS}-{client2OS}).");
             var side2 = new Client(client2OS, client2Runner, $"--webdav --url {url} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.WebDav), side2, readPath1, writePath1, readPath2, writePath2);
@@ -836,43 +989,42 @@ namespace ft_tests
         // AWS S3; `rclone serve s3` is NOT (its VFS caches object presence for minutes, deadlocking
         // ft's single-slot rapid write/delete handoff mid-transfer). Bucket names must be >= 3 chars,
         // hence 'fttest'. Throwaway lab-only keys, same convention as the other lab credentials.
+        // Android S3 rows exercise SigV4 crypto: works because the emulator provisioning bundles a real Bionic
+        // OpenSSL that AndroidProcessRunner puts on LD_LIBRARY_PATH (Android's own BoringSSL lacks the symbols .NET
+        // binds - "a2d_ASN1_OBJECT"; real Termux: `pkg install openssl`).
         [DataTestMethod]
-        [DataRow(OS.Windows, OS.Windows)]
-        [DataRow(OS.Windows, OS.Linux)]
-        [DataRow(OS.Linux, OS.Linux)]
-        // bionic ft as client2 (issue #45). SigV4 crypto works because the emulator provisioning bundles a real
-        // Bionic OpenSSL (libssl.so/libcrypto.so) that AndroidProcessRunner puts on LD_LIBRARY_PATH - Android's
-        // own BoringSSL lacks the OpenSSL symbols .NET binds ("a2d_ASN1_OBJECT"). Real Termux: `pkg install openssl`.
-        [DataRow(OS.Linux, OS.Android)]
+        [DynamicData(nameof(AllClientCombos))]
         public void S3(OS client1OS, OS client2OS)
         {
             const string s3Args = "--s3 --bucket fttest --endpoint http://192.168.0.81:9000 --access-key ftaccess --secret-key ftsecret";
 
             var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-            var client1Runner = client1OS == OS.Windows ? win10_x64_1 : linux_x64_1;
+            var client1Runner = Client1Runner(client1OS);
+            var client2Runner = Client2Runner(client2OS);
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (S3 {client1OS}-{client2OS}).");
             var side1 = new Client(client1OS, client1Runner, $"{s3Args} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var client2Runner = client2OS == OS.Windows ? win10_x64_3 : client2OS == OS.Android ? android_1 : linux_x64_3;
-            if (client1Runner is null || client2Runner is null)
-                Assert.Inconclusive($"Skipped: a required node is unavailable (S3 {client1OS}-{client2OS}).");
             var side2 = new Client(client2OS, client2Runner, $"{s3Args} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.S3), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        // Dropbox (native --dropbox client) against a REAL Dropbox account. There is no local Dropbox
-        // emulator, so this test is opt-in: it self-skips (Assert.Inconclusive) unless dropbox_app_key /
-        // dropbox_app_secret / dropbox_refresh_token are set in user-secrets, so it never breaks a normal
-        // run. Linux-Linux only (no Windows-remote runner needed); both ends share one Dropbox app folder.
-        // A small payload is used because Dropbox's per-request latency makes the default 5 MB transfer far
-        // too slow for the 180s per-test budget (a 2 MB round-trip measured ~25s). ft auto-applies its
-        // Dropbox tuning. NOTE: the credentials appear on the ft command line here (fine for a throwaway,
-        // app-folder-scoped, revocable test token).
-        [TestMethod]
-        public void Dropbox()
+        // Dropbox (native --dropbox client) against a REAL Dropbox account, across the full client matrix
+        // (every client1/client2 over Windows/Linux/Mac/Android - the Android rows exercise the bundled Bionic
+        // OpenSSL like S3, since Dropbox is HTTPS). There is no local Dropbox emulator, so this test is opt-in:
+        // it self-skips (Assert.Inconclusive) unless dropbox_app_key / dropbox_app_secret / dropbox_refresh_token
+        // are set in user-secrets, so it never breaks a normal run. Both ends share one Dropbox app folder; each
+        // row uses random path names so concurrent/sequential rows never collide. A small payload is used because
+        // Dropbox's per-request latency makes the default 5 MB transfer far too slow for the 180s per-test budget
+        // (a 2 MB round-trip measured ~25s). ft auto-applies its Dropbox tuning. NOTE: the credentials appear on
+        // the ft command line here (fine for a throwaway, app-folder-scoped, revocable test token).
+        [DataTestMethod]
+        [DynamicData(nameof(AllClientCombos))]
+        public void Dropbox(OS client1OS, OS client2OS)
         {
             if (string.IsNullOrEmpty(dropboxAppKey) || string.IsNullOrEmpty(dropboxAppSecret) || string.IsNullOrEmpty(dropboxRefreshToken))
             {
@@ -884,11 +1036,15 @@ namespace ft_tests
 
             var writePath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var readPath1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-            var side1 = new Client(OS.Linux, linux_x64_1, $"{dbArgs} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
+            var client1Runner = Client1Runner(client1OS);
+            var client2Runner = Client2Runner(client2OS);
+            if (client1Runner is null || client2Runner is null)
+                Assert.Inconclusive($"Skipped: a required node is unavailable (Dropbox {client1OS}-{client2OS}).");
+            var side1 = new Client(client1OS, client1Runner, $"{dbArgs} -w \"{writePath1}\" -r \"{readPath1}\" --verbose");
 
             var readPath2 = writePath1;
             var writePath2 = readPath1;
-            var side2 = new Client(OS.Linux, linux_x64_3, $"{dbArgs} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
+            var side2 = new Client(client2OS, client2Runner, $"{dbArgs} -r \"{readPath2}\" -w \"{writePath2}\" --verbose");
 
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.Dropbox), side2, readPath1, writePath1, readPath2, writePath2, bytesToSend: 128 * 1024);
         }
