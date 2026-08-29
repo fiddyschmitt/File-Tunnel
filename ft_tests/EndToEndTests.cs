@@ -543,41 +543,49 @@ namespace ft_tests
             return basePath + fileName;
         }
 
-        // sshfs (a FUSE filesystem over SSH), client1 - server(.81) - client2, mirroring the NFS topology:
-        // both clients mount the same .81:/srv/sshfs export and see each other's writes through the server.
-        // Clients are the FUSE-capable platforms: Linux (.80/.82) and Android (issue #45) - the emulator runs
-        // the real Termux sshfs toolchain (see AndroidSshfsClient), so bionic ft reads/writes a genuine FUSE
-        // mount (statfs f_type 0x65735546) and auto-enables IsolatedReads over it exactly like Linux. (Windows
-        // has no native sshfs and this lab's Mac has no macFUSE, so both sit this row out.) The mount point is
-        // per-client - identical on the two Linux nodes, per-instance on the one shared emulator - so the path
-        // PREFIX is per-client while the underlying server file is shared.
-        public static IEnumerable<object[]> SshfsClientCombos =>
+        // sshfs (a FUSE filesystem over SSH), client1 - server - client2, mirroring the NFS topology: both clients
+        // sshfs-mount the same export on the server and see each other's writes through it. The clients are the
+        // FUSE-capable platforms - Linux (.80/.82) and Android (issue #45; the emulator runs the real Termux sshfs
+        // toolchain, so bionic ft reads/writes a genuine FUSE mount, statfs f_type 0x65735546, and auto-enables
+        // IsolatedReads just like Linux). Android is just another client permutation here, not a special case.
+        // The SERVER axis is the full {Windows, Linux, Mac} set: Windows has no native sshfs and this lab's Mac has
+        // no macFUSE, so neither can be an sshfs CLIENT, but any OS can be the sshfs SERVER (it just runs sshd). The
+        // mount point is per-client (identical on the two Linux nodes, per-instance on the shared emulator), so the
+        // path PREFIX is per-client while the underlying server file is shared.
+        public static IEnumerable<object[]> SshfsMatrixCombos =>
             from c1 in new[] { OS.Linux, OS.Android }
             from c2 in new[] { OS.Linux, OS.Android }
+            from serverOS in new[] { OS.Windows, OS.Linux, OS.Mac }
             from mode in new[] { Mode.Normal, Mode.IsolatedReads }
-            select new object[] { c1, c2, mode };
+            select new object[] { c1, c2, serverOS, mode };
+
+        // "Sshfs {client1}-{server}-{client2} {mode}", e.g. "Sshfs Android-Linux-Linux Normal".
+        public static string SshfsRow(System.Reflection.MethodInfo methodInfo, object[] data)
+            => $"Sshfs {data[0]}-{data[2]}-{data[1]} {data[3]}";
 
         [DataTestMethod]
-        [DynamicData(nameof(SshfsClientCombos), DynamicDataDisplayName = nameof(ServerNamedRow))]
-        public void Sshfs(OS client1OS, OS client2OS, Mode mode)
+        [DynamicData(nameof(SshfsMatrixCombos), DynamicDataDisplayName = nameof(SshfsRow))]
+        public void Sshfs(OS client1OS, OS client2OS, OS serverOS, Mode mode)
         {
-            var sshfsServer = new SshfsServer(linux_x64_2); // .81 — hosts sshd + /srv/sshfs
+            var (server, spec, _, _) = MakeSshfsServer(serverOS);
+            if (server is null || spec is null)
+                Assert.Inconclusive($"Skipped: sshfs server node {serverOS} unavailable.");
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
             var writePath1 = SshfsPath(client1OS, 1, filename1);
             var readPath1 = SshfsPath(client1OS, 1, filename2);
-            var side1 = MakeSshfsClient(client1OS, 1, $"-w {writePath1} -r {readPath1} --verbose"); // .80 / emulator
+            var side1 = MakeSshfsClient(client1OS, 1, spec, $"-w {writePath1} -r {readPath1} --verbose"); // .80 / emulator
 
             var readPath2 = SshfsPath(client2OS, 2, filename1);
             var writePath2 = SshfsPath(client2OS, 2, filename2);
-            var side2 = MakeSshfsClient(client2OS, 2, $"-r {readPath2} -w {writePath2} --verbose"); // .82 / emulator
+            var side2 = MakeSshfsClient(client2OS, 2, spec, $"-r {readPath2} -w {writePath2} --verbose"); // .82 / emulator
 
             if (side1 is null || side2 is null)
-                Assert.Inconclusive($"Skipped: a required node is unavailable (Sshfs {client1OS}-{client2OS}).");
+                Assert.Inconclusive($"Skipped: a required client node is unavailable (Sshfs {client1OS}-{serverOS}-{client2OS}).");
 
-            ConductTunnelTests(mode, side1, sshfsServer, side2, readPath1, writePath1, readPath2, writePath2);
+            ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
         // Resolve a shared server file to its absolute path through THIS client's own sshfs mount point.
@@ -587,21 +595,20 @@ namespace ft_tests
             return $"{mount}/{fileName.TrimStart('/')}";
         }
 
-        // The right sshfs client for the OS: Linux nodes (.80 side1 / .82 side2), or the emulator's two ft
-        // instances. Returns null when the needed node is down, so the row self-skips (Assert.Inconclusive).
-        private static Client? MakeSshfsClient(OS os, int side, string args)
+        // The right sshfs client for the OS, mounting the server named by the spec: a Linux node (.80 side1 / .82
+        // side2), or the emulator's two ft instances. Returns null when the needed node is down, so the row self-skips.
+        private static Client? MakeSshfsClient(OS os, int side, SshfsMountSpec spec, string args)
         {
             if (os == OS.Android)
             {
                 var r = side == 1 ? android_1 : android_2;
-                return r is null ? null : new AndroidSshfsClient((AndroidProcessRunner)r, side, LinuxSshfsSpec, args);
+                return r is null ? null : new AndroidSshfsClient((AndroidProcessRunner)r, side, spec, args);
             }
             var lr = side == 1 ? linux_x64_1 : linux_x64_3;
-            return lr is null ? null : new SshfsClient(OS.Linux, lr, args);
+            return lr is null ? null : new SshfsClient(lr, spec, args);
         }
 
-        // The .81 Linux sshfs server (user/live over its standard sshd) - the baseline both Linux and Android
-        // clients mount. See the server-varying rows (SshfsServerMatrix) + the Android-direct row below.
+        // The .81 Linux sshfs server spec (user/live over its standard sshd) - the password baseline.
         static readonly SshfsMountSpec LinuxSshfsSpec = new(SshfsServer.ServerIp, 22, "user", SshfsServer.ExportDir, "live", null);
 
         // A throwaway ed25519 keypair for the key-auth sshfs servers (the Android-direct emu1 sshd; the Mac). Made
@@ -626,87 +633,96 @@ namespace ft_tests
             return (priv, _sshfsKeyPub);
         }
 
-        // The "direct" Android-to-Android sshfs row (issue #45): emu1 runs Termux sshd + a local export dir; emu2
-        // sshfs-mounts emu1 and tunnels ft over it, while emu1 reads/writes that export LOCALLY - "one Android SSHs
-        // into another Android, who writes to their local fs". Needs BOTH emulators: emu1 (bridged, reachable) is the
-        // server AND side1; emu2 (NAT) is the mounting client/side2. Key auth via the lab keypair, port 8022.
-        [DataTestMethod]
-        [DataRow(Mode.Normal, DisplayName = "Sshfs Android-Android direct Normal")]
-        [DataRow(Mode.IsolatedReads, DisplayName = "Sshfs Android-Android direct IsolatedReads")]
-        public void SshfsAndroidDirect(Mode mode)
-        {
-            if (android_1 is null || android_2 is null)
-                Assert.Inconclusive("Skipped: the sshfs-direct row needs BOTH Android emulators.");
+        // The "direct" sshfs rows (issue #45): Android SSHs into a target that IS the other tunnel endpoint - the
+        // target reads/writes the shared export on its OWN local fs, so there is no third server node. "One Android
+        // SSHs into X, who writes to their local fs", for X in {Android, Windows, Linux, Mac}. side1 is always emu1
+        // (bridged, reachable inbound from .31 - which ConductTunnelTests requires of side1). For X in {Linux, Mac,
+        // Windows} emu1 mounts the LAN target and the target node is side2 (reads its export locally). For X = Android
+        // the target is emu2, which is NAT (unreachable inbound) and so must be the MOUNTING side: emu1 hosts Termux
+        // sshd + reads its export locally (server + side1) and emu2 mounts emu1 (side2). Either way it is an Android
+        // SSHing into an Android. Key/password auth per target; ft auto-enables IsolatedReads over the FUSE mount.
+        public static IEnumerable<object[]> SshfsDirectCombos =>
+            from target in new[] { OS.Android, OS.Windows, OS.Linux, OS.Mac }
+            from mode in new[] { Mode.Normal, Mode.IsolatedReads }
+            select new object[] { target, mode };
 
-            var (privKey, pubText) = LabSshfsKey();
-            var server = new AndroidSshfsServer((AndroidProcessRunner)android_1, pubText);
-            var host = server.Host;
-            if (host is null)
-                Assert.Inconclusive("Skipped: emu1 (sshfs-direct server) has no bridged LAN IP.");
+        // "Sshfs Android-{target} direct {mode}", e.g. "Sshfs Android-Linux direct Normal".
+        public static string SshfsDirectRow(System.Reflection.MethodInfo methodInfo, object[] data)
+            => $"Sshfs Android-{data[0]} direct {data[1]}";
+
+        [DataTestMethod]
+        [DynamicData(nameof(SshfsDirectCombos), DynamicDataDisplayName = nameof(SshfsDirectRow))]
+        public void SshfsDirect(OS targetOS, Mode mode)
+        {
+            if (android_1 is null)
+                Assert.Inconclusive("Skipped: the sshfs-direct rows need emu1 (the Android client).");
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
 
-            // side1 = emu1: reads/writes the export dir LOCALLY (it IS the server).
-            var writePath1 = $"{AndroidSshfsServer.ExportDir}/{filename1}";
-            var readPath1 = $"{AndroidSshfsServer.ExportDir}/{filename2}";
-            var side1 = new Client(OS.Android, android_1, $"-w {writePath1} -r {readPath1} --verbose");
+            if (targetOS == OS.Android)
+            {
+                // emu1 = server + side1 (reads its export LOCALLY); emu2 (NAT) mounts emu1 = side2. Key auth, port 8022.
+                if (android_2 is null)
+                    Assert.Inconclusive("Skipped: Android-Android direct needs BOTH emulators.");
+                var (privKey, pubText) = LabSshfsKey();
+                var androidServer = new AndroidSshfsServer((AndroidProcessRunner)android_1, pubText);
+                var host = androidServer.Host;
+                if (host is null)
+                    Assert.Inconclusive("Skipped: emu1 (sshfs-direct server) has no bridged LAN IP.");
 
-            // side2 = emu2: sshfs-mounts emu1's export (key auth on port 8022).
-            var spec = new SshfsMountSpec(host, AndroidSshfsServer.SshdPort, AndroidSshfsServer.SshUser, AndroidSshfsServer.ExportDir, null, privKey);
-            var readPath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename1}";
-            var writePath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename2}";
-            var side2 = new AndroidSshfsClient((AndroidProcessRunner)android_2, 2, spec, $"-r {readPath2} -w {writePath2} --verbose");
+                var aw1 = $"{AndroidSshfsServer.ExportDir}/{filename1}";
+                var ar1 = $"{AndroidSshfsServer.ExportDir}/{filename2}";
+                var as1 = new Client(OS.Android, android_1, $"-w {aw1} -r {ar1} --verbose");
 
-            ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
-        }
+                var androidSpec = new SshfsMountSpec(host, AndroidSshfsServer.SshdPort, AndroidSshfsServer.SshUser, AndroidSshfsServer.ExportDir, null, privKey);
+                var ar2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename1}";
+                var aw2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename2}";
+                var as2 = new AndroidSshfsClient((AndroidProcessRunner)android_2, 2, androidSpec, $"-r {ar2} -w {aw2} --verbose");
 
-        // Android1 - {Windows|Linux|Mac} - Android2 (issue #45): BOTH tunnel clients are the two real emulators; the
-        // sshfs SERVER (the SSH host they both mount) varies. Linux (.81, password) + Mac (.33, key) validate now;
-        // Windows (.84, OpenSSH) needs the batched full-lab run. ft auto-enables IsolatedReads over each FUSE mount.
-        [DataTestMethod]
-        [DataRow(OS.Linux, DisplayName = "Sshfs Android-Linux-Android")]
-        [DataRow(OS.Mac, DisplayName = "Sshfs Android-Mac-Android")]
-        [DataRow(OS.Windows, DisplayName = "Sshfs Android-Windows-Android")]
-        public void SshfsServerMatrix(OS serverOS)
-        {
-            if (android_1 is null || android_2 is null)
-                Assert.Inconclusive("Skipped: the Android sshfs server matrix needs BOTH emulators.");
-            var (server, spec) = MakeSshfsServer(serverOS);
-            if (server is null || spec is null)
-                Assert.Inconclusive($"Skipped: sshfs server node {serverOS} unavailable.");
+                ConductTunnelTests(mode, as1, androidServer, as2, ar1, aw1, ar2, aw2);
+                return;
+            }
 
-            var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
-            var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
+            // target in {Linux, Mac, Windows}: emu1 (side1) sshfs-mounts the LAN target; the target node reads its
+            // export LOCALLY (side2). Only one mount (emu1); the target accesses the same files directly on disk.
+            var (server, spec, targetRunner, localExport) = MakeSshfsServer(targetOS);
+            if (server is null || spec is null || targetRunner is null || localExport is null)
+                Assert.Inconclusive($"Skipped: sshfs-direct target {targetOS} unavailable.");
+
             var writePath1 = $"{AndroidSshfsClient.MountPoint(1)}/{filename1}";
             var readPath1 = $"{AndroidSshfsClient.MountPoint(1)}/{filename2}";
             var side1 = new AndroidSshfsClient((AndroidProcessRunner)android_1, 1, spec, $"-w {writePath1} -r {readPath1} --verbose");
 
-            var readPath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename1}";
-            var writePath2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename2}";
-            var side2 = new AndroidSshfsClient((AndroidProcessRunner)android_2, 2, spec, $"-r {readPath2} -w {writePath2} --verbose");
+            var readPath2 = $"{localExport}/{filename1}";
+            var writePath2 = $"{localExport}/{filename2}";
+            var side2 = new Client(targetOS, targetRunner, $"-r {readPath2} -w {writePath2} --verbose");
 
-            ConductTunnelTests(Mode.Normal, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
+            ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        // Builds the sshfs server + the mount spec both emulators use, for a given server OS.
-        private static (Server?, SshfsMountSpec?) MakeSshfsServer(OS serverOS)
+        // Builds the sshfs server + the mount spec its clients use, plus (for the direct rows) the server node's own
+        // runner and the LOCAL path of the export on that node. Returns nulls when the node is down (row self-skips).
+        private static (Server?, SshfsMountSpec?, ProcessRunner?, string?) MakeSshfsServer(OS serverOS)
         {
             switch (serverOS)
             {
                 case OS.Linux:
-                    return linux_x64_2 is null ? (null, null) : (new SshfsServer(linux_x64_2), LinuxSshfsSpec);
+                    return linux_x64_2 is null ? default
+                        : (new SshfsServer(linux_x64_2), LinuxSshfsSpec, linux_x64_2, SshfsServer.ExportDir);
                 case OS.Mac:
-                    if (mac_1 is null) return (null, null);
+                    if (mac_1 is null) return default;
                     var (priv, pub) = LabSshfsKey();
                     return (new MacSshfsServer(mac_1, pub),
-                            new SshfsMountSpec(MacSshfsServer.Host, 22, MacSshfsServer.SshUser, MacSshfsServer.ExportDir, null, priv));
+                            new SshfsMountSpec(MacSshfsServer.Host, 22, MacSshfsServer.SshUser, MacSshfsServer.ExportDir, null, priv),
+                            mac_1, MacSshfsServer.ExportDir);
                 case OS.Windows:
-                    return win10_x64_2 is null ? (null, null)
+                    return win10_x64_2 is null ? default
                         : (new WindowsSshfsServer(win10_x64_2),
-                           new SshfsMountSpec(WindowsSshfsServer.Host, 22, win10Username ?? "", WindowsSshfsServer.ExportDir, win10Password, null));
+                           new SshfsMountSpec(WindowsSshfsServer.Host, 22, win10Username ?? "", WindowsSshfsServer.ExportDir, win10Password, null),
+                           win10_x64_2, WindowsSshfsServer.LocalExportDir);
                 default:
-                    return (null, null);
+                    return default;
             }
         }
 
@@ -934,9 +950,8 @@ namespace ft_tests
             select new object[] { c1, c2 };
 
         // DynamicData row name in the SMB rows' "<Backend> <client1>-<server>-<client2>[ <mode>]" convention, naming
-        // the single fixed server the backend uses (which its name alone doesn't reveal): Sshfs/WebDav/S3/FTP all go
-        // through the .81 Linux node, Dropbox through the cloud. (SshfsAndroidDirect is exempt - there one Android IS
-        // the server, so there is no separate server node to name.)
+        // the single fixed server the backend uses (which its name alone doesn't reveal): WebDav/S3/FTP all go
+        // through the .81 Linux node, Dropbox through the cloud. (Sshfs has its own varying-server axis -> SshfsRow.)
         public static string ServerNamedRow(System.Reflection.MethodInfo methodInfo, object[] data)
         {
             var server = methodInfo.Name == "Dropbox" ? "cloud" : "Linux";

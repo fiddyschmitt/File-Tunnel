@@ -1,48 +1,65 @@
-using ft_tests.FileShares.Servers;
+using System;
+using System.IO;
 using ft_tests.Runner;
 
 namespace ft_tests.FileShares.Clients
 {
     /// <summary>
-    /// Mounts the <see cref="SshfsServer"/>'s export over sshfs (Linux clients only). The sshfs
-    /// package itself is installed by provisioning (ft_test_env/Cloud/setup_debian.sh), not here —
-    /// Restart only performs the runtime (re)mount, mirroring <see cref="NfsClient"/>:
+    /// Mounts an sshfs export over sshfs on a Linux node (.80 side1 / .82 side2). The server it mounts is not fixed:
+    /// a <see cref="SshfsMountSpec"/> names the host/port/user/export/auth, so the same client mounts the Linux (.81,
+    /// password), Mac (.33, key) or Windows (.84, OpenSSH password) server - exactly like <see cref="AndroidSshfsClient"/>.
+    /// The sshfs package is installed by provisioning (ft_test_env/Cloud/setup_debian.sh); Restart only does the
+    /// runtime (re)mount, mirroring <see cref="NfsClient"/>:
     ///   1. tear down any stale/hung mount (fusermount -uz, then a lazy umount),
-    ///   2. (re)mount user@.81:/srv/sshfs at a fixed local mount point.
+    ///   2. (re)mount user@host:export at a fixed local mount point.
     ///
-    /// Auth: sshfs's reliable non-interactive method is "-o password_stdin" fed the SSH password on
-    /// stdin (sshpass is unreliable with sshfs because it forks ssh without a tty). The whole thing
-    /// runs under sudo (ft also runs as root), so root owns the FUSE mount and can read/write it
-    /// without allow_other. StrictHostKeyChecking=no + UserKnownHostsFile=/dev/null avoid a
-    /// first-connect host-key prompt that would otherwise hang the mount.
+    /// Auth: for a password server, sshfs's reliable non-interactive method is "-o password_stdin" fed the password on
+    /// stdin (sshpass is unreliable with sshfs - it forks ssh without a tty). For a key server (the Mac), the private
+    /// key is written onto the node (600 via umask) and passed as IdentityFile. The whole thing runs under sudo (ft
+    /// also runs as root), so root owns the FUSE mount and reads/writes it without allow_other. StrictHostKeyChecking=no
+    /// + UserKnownHostsFile=/dev/null avoid a first-connect host-key prompt that would otherwise hang the mount.
     /// </summary>
     public class SshfsClient : Client
     {
-        // Mirrors the NFS client's /media/<type>/<server>/<share> convention.
-        public const string MountPoint = "/media/sshfs/192.168.0.81/export";
+        // Server-agnostic mount point: a run mounts one server here, and Restart unmounts any stale mount first.
+        public const string MountPoint = "/media/sshfs/export";
 
-        private const string SshUser = "user";
-        private const string SshPassword = "live";
+        // Where a key-auth private key is staged on the node (each Linux node writes its own copy).
+        private const string NodeKeyPath = "/tmp/ft_sshfs_key";
 
         private readonly ProcessRunner runner;
+        private readonly SshfsMountSpec spec;
 
-        public SshfsClient(OS os, ProcessRunner runner, string args) : base(os, runner, args)
+        public SshfsClient(ProcessRunner runner, SshfsMountSpec spec, string args) : base(OS.Linux, runner, args)
         {
             this.runner = runner;
+            this.spec = spec;
         }
 
         public override void Restart()
         {
-            if (OS != OS.Linux) return; // sshfs is Linux-only by design for these tests
+            var remote = $"{spec.User}@{spec.Host}:{spec.ExportDir}";
+            var common = "StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,reconnect,ServerAliveInterval=15";
+            var portOpt = spec.Port == 22 ? "" : $" -p {spec.Port}";
 
-            var remote = $"{SshUser}@{SshfsServer.ServerIp}:{SshfsServer.ExportDir}";
-            var mountOpts = "password_stdin,StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,reconnect,ServerAliveInterval=15";
+            string mount;
+            if (!string.IsNullOrEmpty(spec.Password))
+            {
+                mount = $"echo {spec.Password} | sshfs {remote} {MountPoint}{portOpt} -o password_stdin,{common}";
+            }
+            else
+            {
+                // Key auth: stage the private key on the node (600), then mount with IdentityFile.
+                var b64 = Convert.ToBase64String(File.ReadAllBytes(spec.LocalKeyPath!));
+                runner.Run("bash", $"-c 'umask 077; echo {b64} | base64 -d > {NodeKeyPath}'");
+                mount = $"sshfs {remote} {MountPoint}{portOpt} -o IdentityFile={NodeKeyPath},IdentitiesOnly=yes,{common}";
+            }
 
             var script =
                 $"fusermount -uz {MountPoint} 2>/dev/null || true; " +
                 $"umount -l {MountPoint} 2>/dev/null || true; " +
                 $"mkdir -p {MountPoint}; " +
-                $"echo {SshPassword} | sshfs {remote} {MountPoint} -o {mountOpts}";
+                mount;
 
             runner.Run("bash", $"-c '{script}'");
         }
