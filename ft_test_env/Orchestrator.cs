@@ -119,6 +119,7 @@ namespace ft_test_env
             }
 
             PrepWindowsNodes(step);
+            PrepAndroidEmulators(step);
 
             return Summary(step);
         }
@@ -269,6 +270,9 @@ namespace ft_test_env
                 linux.EnsureMounts(step, node);
             }
 
+            // Launch the Mac Android emulators (issue #45) as part of the test-run bring-up, like any other node.
+            BringUpAndroidEmulators(step);
+
             step.Section("Health checks");
             foreach (var node in config.NodesServerFirst.Where(n => !n.BuildHost))
             {
@@ -285,6 +289,7 @@ namespace ft_test_env
             {
                 windows.CheckServer(step, config.WindowsServer);
             }
+            CheckAndroidEmulators(step);
 
             return Summary(step);
         }
@@ -532,6 +537,7 @@ namespace ft_test_env
                     return StepOutcome.Ok();
                 });
             }
+            TeardownAndroidEmulators(step);
 
             return Summary(step);
         }
@@ -654,44 +660,46 @@ namespace ft_test_env
             return Summary(step);
         }
 
-        // ---- Android emulator on the Mac (issue #45) ----
+        // ---- Android emulators on the Mac (issue #45) ----
+        // Folded into the standard lifecycle: Setup is part of Prep, Launch part of BringUpAll, Check part of
+        // BringUpAll's health checks, Teardown part of Teardown - so the two emulators (emu1 bridged / emu2 NAT)
+        // come up and go down with the rest of the lab, gated on MacEmulator:Enabled.
 
-        /// <summary>Sets up (SDK + AVD) and launches the headless Android emulator on the Mac, then confirms it
-        /// booted. The emulator hosts the ft Android (linux-bionic-arm64) e2e client rows.</summary>
-        public bool BringUpAndroidEmulator()
+        /// <summary>One-time SDK + AVD setup (part of Prep). Idempotent; the ~1.5 GB download happens once.</summary>
+        private void PrepAndroidEmulators(StepRunner step)
         {
-            var step = new StepRunner();
-            step.Section("Android emulator (Mac)");
             if (!config.MacEmulator.Enabled)
             {
-                step.Run("Android emulator", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
-                return Summary(step);
+                step.Run("Android emulators", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
+                return;
             }
-            step.Run($"{config.MacEmulator.Host}: SDK + AVD setup", () => macEmulator.Setup());
-            step.Run($"{config.MacEmulator.Host}: launch + wait for boot ({config.MacEmulator.Serial})", () => macEmulator.Launch());
-            step.Run($"{config.MacEmulator.Host}: check", () => macEmulator.Check());
-            return Summary(step);
+            step.Run($"{config.MacEmulator.Host}: Android SDK + AVD setup", () => macEmulator.Setup());
         }
 
-        public bool CheckAndroidEmulator()
+        /// <summary>Launch both emulators + wait for boot (part of BringUpAll).</summary>
+        private void BringUpAndroidEmulators(StepRunner step)
         {
-            var step = new StepRunner();
-            step.Section("Android emulator check (Mac)");
             if (!config.MacEmulator.Enabled)
             {
-                step.Run("Android emulator", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
-                return Summary(step);
+                step.Run("Android emulators", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
+                return;
             }
-            step.Run($"{config.MacEmulator.Host}: {config.MacEmulator.Serial}", () => macEmulator.Check());
-            return Summary(step);
+            step.Run($"{config.MacEmulator.Host}: launch Android emulators ({config.MacEmulator.Serial} bridged + {config.MacEmulator.SecondSerial} NAT)", () => macEmulator.Launch());
         }
 
-        public bool TeardownAndroidEmulator()
+        /// <summary>Confirm both emulators are up (part of BringUpAll's health checks; silent when disabled -
+        /// the launch step already reported the skip).</summary>
+        private void CheckAndroidEmulators(StepRunner step)
         {
-            var step = new StepRunner();
-            step.Section("Android emulator teardown (Mac)");
-            step.Run($"{config.MacEmulator.Host}: kill {config.MacEmulator.Serial}", () => macEmulator.Teardown());
-            return Summary(step);
+            if (!config.MacEmulator.Enabled) return;
+            step.Run($"{config.MacEmulator.Host}: Android emulators ({config.MacEmulator.Serial} + {config.MacEmulator.SecondSerial})", () => macEmulator.Check());
+        }
+
+        /// <summary>Kill both emulators (part of Teardown).</summary>
+        private void TeardownAndroidEmulators(StepRunner step)
+        {
+            if (!config.MacEmulator.Enabled) return;
+            step.Run($"{config.MacEmulator.Host}: kill Android emulators ({config.MacEmulator.Serial} + {config.MacEmulator.SecondSerial})", () => macEmulator.Teardown());
         }
 
         private static bool Summary(StepRunner step)

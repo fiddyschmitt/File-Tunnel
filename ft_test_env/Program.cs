@@ -18,6 +18,8 @@ if (config.WindowsGold.Enabled)
     Console.WriteLine($"Windows clients: {string.Join(", ", config.WindowsNodes.Select(n => $"{n.CloneName} ({n.Ip})"))}  [gold {config.WindowsGold.GoldVmName} @ {config.WindowsGold.SourceIp}]");
 if (config.WindowsServer.Enabled)
     Console.WriteLine($"Windows server: {config.WindowsServer.VmName} ({config.WindowsServer.Ip})  [hand-built, distinct SID]");
+if (config.MacEmulator.Enabled)
+    Console.WriteLine($"Android emulators (Mac {config.MacEmulator.Host}): {config.MacEmulator.Serial} bridged + {config.MacEmulator.SecondSerial} NAT  [set up in prep, launched at bring-up]");
 
 while (true)
 {
@@ -32,9 +34,6 @@ while (true)
     Console.WriteLine("  7) Check gold image readiness");
     Console.WriteLine("  8) Reboot a Windows machine (client clone or the server VM) to clear tiring");
     Console.WriteLine("  9) Bring up a single Windows client node (finish/repair a partial bring-up)");
-    Console.WriteLine(" 10) Android emulator (Mac): set up + launch");
-    Console.WriteLine(" 11) Android emulator (Mac): check");
-    Console.WriteLine(" 12) Android emulator (Mac): tear down");
     Console.WriteLine("  0) Exit");
     Console.WriteLine("==================================================");
     Console.Write("Choose: ");
@@ -74,15 +73,6 @@ while (true)
             case "9":
                 var winNodeUp = PromptForWindowsNode(config);
                 if (winNodeUp != null) orchestrator.BringUpWindowsNode(winNodeUp);
-                break;
-            case "10":
-                orchestrator.BringUpAndroidEmulator();
-                break;
-            case "11":
-                orchestrator.CheckAndroidEmulator();
-                break;
-            case "12":
-                orchestrator.TeardownAndroidEmulator();
                 break;
             case "0":
             case "q":
