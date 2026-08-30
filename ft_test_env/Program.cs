@@ -19,7 +19,7 @@ if (config.WindowsGold.Enabled)
 if (config.WindowsServer.Enabled)
     Console.WriteLine($"Windows server: {config.WindowsServer.VmName} ({config.WindowsServer.Ip})  [hand-built, distinct SID]");
 if (config.MacEmulator.Enabled)
-    Console.WriteLine($"Android emulators (Mac {config.MacEmulator.Host}): {config.MacEmulator.Serial} bridged + {config.MacEmulator.SecondSerial} NAT  [set up in prep, launched at bring-up]");
+    Console.WriteLine($"Android emulators (Mac {config.MacEmulator.Host}): {config.MacEmulator.Serial} + {config.MacEmulator.SecondSerial} (both bridged, sequential launch)  [set up in prep, launched at bring-up]");
 
 while (true)
 {

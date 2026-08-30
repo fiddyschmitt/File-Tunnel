@@ -662,7 +662,7 @@ namespace ft_test_env
 
         // ---- Android emulators on the Mac (issue #45) ----
         // Folded into the standard lifecycle: Setup is part of Prep, Launch part of BringUpAll, Check part of
-        // BringUpAll's health checks, Teardown part of Teardown - so the two emulators (emu1 bridged / emu2 NAT)
+        // BringUpAll's health checks, Teardown part of Teardown - so the two emulators (both bridged, real LAN IPs)
         // come up and go down with the rest of the lab, gated on MacEmulator:Enabled.
 
         /// <summary>One-time SDK + AVD setup (part of Prep). Idempotent; the ~1.5 GB download happens once.</summary>
@@ -684,7 +684,7 @@ namespace ft_test_env
                 step.Run("Android emulators", () => StepOutcome.Skip("disabled (MacEmulator:Enabled=false)"));
                 return;
             }
-            step.Run($"{config.MacEmulator.Host}: launch Android emulators ({config.MacEmulator.Serial} bridged + {config.MacEmulator.SecondSerial} NAT)", () => macEmulator.Launch());
+            step.Run($"{config.MacEmulator.Host}: launch Android emulators ({config.MacEmulator.Serial} + {config.MacEmulator.SecondSerial}, both bridged)", () => macEmulator.Launch());
         }
 
         /// <summary>Confirm both emulators are up (part of BringUpAll's health checks; silent when disabled -

@@ -98,7 +98,7 @@ namespace ft_test_env.Ssh
                 "waitip() { local i x=''; for i in $(seq 1 45); do x=$(wlanip \"$1\"); [ -n \"$x\" ] && { echo \"$x\"; return 0; }; sleep 3; done; return 1; }",
                 // launch1(port logfile): a BRIDGED emulator (sudo, for vmnet -> real LAN IP). The env assignments are
                 // literal tokens here (C#-interpolated) so sudo applies them; a bare "$envs cmd" would NOT expand them.
-                $"launch1() {{ sudo {envs} \"$EMU\" -avd {cfg.AvdName} {common} -port \"$1\" -vmnet-bridged {iface} >\"$2\" 2>&1 & }}",
+                $"launch1() {{ nohup sudo {envs} \"$EMU\" -avd {cfg.AvdName} {common} -port \"$1\" -vmnet-bridged {iface} >\"$2\" 2>&1 </dev/null & }}",
                 // HEALTH-AWARE IDEMPOTENCE: leave the pair alone only if BOTH are booted AND healthy (emu2 reaches
                 // emu1) - so re-running the bring-up doesn't disrupt a working pair, but a degraded-but-booted pair
                 // (stale networking) gets refreshed, which a pure `booted` check misses.
@@ -129,11 +129,22 @@ namespace ft_test_env.Ssh
                 "b1=0; booted \"$S1\" && b1=1; b2=0; booted \"$S2\" && b2=1",
                 "ip1=$(wlanip \"$S1\"); ip2=$(wlanip \"$S2\")",
                 "abi=$(\"$ADB\" -s \"$S1\" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\\r ')",
-                "echo \"RESULT boot1=$b1 boot2=$b2 ip1=$ip1 ip2=$ip2 abi=$abi\"");
+                "echo \"RESULT boot1=$b1 boot2=$b2 ip1=$ip1 ip2=$ip2 abi=$abi\" > ~/ft_emu_result.txt");
             var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
-            using var cmd = ssh.CreateCommand($"echo {b64} | base64 -d | bash");
-            cmd.CommandTimeout = TimeSpan.FromSeconds(cfg.BootTimeoutSeconds + 600);
-            var output = cmd.Execute();
+            // Run the launch DETACHED (nohup, own log + no stdin) so it survives THIS SSH channel closing. SSH.NET's
+            // Execute() can return before a long backgrounded script finishes, and disposing the client would then
+            // SIGHUP a session-bound script mid-launch - leaving the emulators unregistered (see the note above). The
+            // script writes RESULT to a file when done; poll for that with short commands instead of holding one
+            // long-running Execute (also why launch1 nohup's each emulator - they must outlive the launch script too).
+            ssh.CreateCommand($"echo {b64} | base64 -d > ~/ft_emu_launch.sh; rm -f ~/ft_emu_result.txt; nohup bash ~/ft_emu_launch.sh >~/ft_emu_launch.log 2>&1 </dev/null &").Execute();
+            var deadline = DateTime.UtcNow.AddSeconds(cfg.BootTimeoutSeconds + 600);
+            var output = "";
+            while (DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(5));
+                output = ssh.CreateCommand("cat ~/ft_emu_result.txt 2>/dev/null").Execute();
+                if (output.Contains("RESULT ", StringComparison.Ordinal)) break;
+            }
 
             var m = System.Text.RegularExpressions.Regex.Match(output, @"RESULT boot1=(\S*) boot2=(\S*) ip1=(\S*) ip2=(\S*) abi=(\S*)");
             var boot1 = m.Success && m.Groups[1].Value == "1";
