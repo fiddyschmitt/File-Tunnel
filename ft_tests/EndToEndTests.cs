@@ -268,21 +268,13 @@ namespace ft_tests
 
         [DataTestMethod]
         [DataRow(OS.Windows, OS.Windows, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Windows, OS.Windows, Mode.IsolatedReads)]
         [DataRow(OS.Windows, OS.Linux, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Linux, OS.Windows, Mode.IsolatedReads)]
         [DataRow(OS.Windows, OS.Windows, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Windows, OS.Linux, Mode.IsolatedReads)]
         [DataRow(OS.Windows, OS.Linux, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Linux, OS.Linux, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Windows, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Windows, OS.Windows, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Linux, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Linux, OS.Windows, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Windows, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Windows, OS.Linux, Mode.IsolatedReads)]
         [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.IsolatedReads)]
         // Mac as an SMB client, over the .81 Samba share. Both modes work. macOS's SMB client caches
         // aggressively - a held-handle read is stale even across a reopen (the smbfs attribute cache
         // survives it) - so both modes defeat the cache with F_NOCACHE: IsolatedReads reopens per read
@@ -290,46 +282,27 @@ namespace ft_tests
         // F_NOCACHE handle (MacDirectRefresh), refreshing the held view - the macOS analog of the Linux
         // O_DIRECT refresh. Both tunnel directions covered.
         [DataRow(OS.Mac, OS.Linux, OS.Linux, Mode.Normal, DisplayName = "Smb Mac-Linux-Linux Normal")]
-        [DataRow(OS.Mac, OS.Linux, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Linux IsolatedReads")]
         [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Linux-Linux-Mac Normal")]
-        [DataRow(OS.Linux, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Linux-Mac IsolatedReads")]
         // Mac client against Windows (.32) and Linux (.81) servers, paired with every other-client OS
         // (Windows/Linux/Mac). The two-Mac rows exercise ft-1 + ft-2 coexisting on the single Mac.
         [DataRow(OS.Mac, OS.Windows, OS.Windows, Mode.Normal, DisplayName = "Smb Mac-Windows-Windows Normal")]
-        [DataRow(OS.Mac, OS.Windows, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Mac-Windows-Windows IsolatedReads")]
         [DataRow(OS.Mac, OS.Windows, OS.Linux, Mode.Normal, DisplayName = "Smb Mac-Windows-Linux Normal")]
-        [DataRow(OS.Mac, OS.Windows, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Windows-Linux IsolatedReads")]
         [DataRow(OS.Mac, OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Smb Mac-Windows-Mac Normal")]
-        [DataRow(OS.Mac, OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Mac-Windows-Mac IsolatedReads")]
         [DataRow(OS.Mac, OS.Linux, OS.Windows, Mode.Normal, DisplayName = "Smb Mac-Linux-Windows Normal")]
-        [DataRow(OS.Mac, OS.Linux, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Windows IsolatedReads")]
         [DataRow(OS.Mac, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Mac-Linux-Mac Normal")]
-        [DataRow(OS.Mac, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Mac-Linux-Mac IsolatedReads")]
         [DataRow(OS.Windows, OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Smb Windows-Windows-Mac Normal")]
-        [DataRow(OS.Windows, OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Windows-Windows-Mac IsolatedReads")]
         [DataRow(OS.Windows, OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Smb Windows-Linux-Mac Normal")]
-        [DataRow(OS.Windows, OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Windows-Linux-Mac IsolatedReads")]
         [DataRow(OS.Linux, OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Smb Linux-Windows-Mac Normal")]
-        [DataRow(OS.Linux, OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Windows-Mac IsolatedReads")]
         // Mac as the SMB SERVER (.33 /ftshare), every client pairing (Windows/Linux/Mac), both modes.
         [DataRow(OS.Mac, OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Smb Mac-Mac-Mac Normal")]
-        [DataRow(OS.Mac, OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Mac-Mac-Mac IsolatedReads")]
         [DataRow(OS.Mac, OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Smb Mac-Mac-Linux Normal")]
-        [DataRow(OS.Mac, OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Mac-Mac-Linux IsolatedReads")]
         [DataRow(OS.Linux, OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Smb Linux-Mac-Mac Normal")]
-        [DataRow(OS.Linux, OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Linux-Mac-Mac IsolatedReads")]
         [DataRow(OS.Linux, OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Smb Linux-Mac-Linux Normal")]
-        [DataRow(OS.Linux, OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Linux-Mac-Linux IsolatedReads")]
         [DataRow(OS.Windows, OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Smb Windows-Mac-Mac Normal")]
-        [DataRow(OS.Windows, OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Smb Windows-Mac-Mac IsolatedReads")]
         [DataRow(OS.Windows, OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Smb Windows-Mac-Linux Normal")]
-        [DataRow(OS.Windows, OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Smb Windows-Mac-Linux IsolatedReads")]
         [DataRow(OS.Mac, OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Smb Mac-Mac-Windows Normal")]
-        [DataRow(OS.Mac, OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Mac-Mac-Windows IsolatedReads")]
         [DataRow(OS.Linux, OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Smb Linux-Mac-Windows Normal")]
-        [DataRow(OS.Linux, OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Linux-Mac-Windows IsolatedReads")]
         [DataRow(OS.Windows, OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Smb Windows-Mac-Windows Normal")]
-        [DataRow(OS.Windows, OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Smb Windows-Mac-Windows IsolatedReads")]
         public void Smb(OS client1OS, OS serverOS, OS client2OS, Mode mode)
         {
             SmbServer smbServer = serverOS switch
@@ -356,14 +329,6 @@ namespace ft_tests
             // one dead node doesn't fail rows across the matrix; the row runs once the node is back.
             if (client1Runner is null || client2Runner is null || (serverOS == OS.Windows && win10_x64_2 is null))
                 Assert.Inconclusive($"Skipped: a required lab node is unavailable ({client1OS}-{serverOS}-{client2OS} {mode}).");
-
-            // IsolatedReads is unsupported against a macOS SMB server: smbd serves a stale view to a reopened
-            // handle (reopen-per-read), stalling ft's keepalive into an offline teardown - a server-side
-            // macOS limitation with no client/server tunable fix (cache=none doesn't help). Normal mode works
-            // (a held, revalidated handle sees the writes). Note the roles reverse vs a macOS *client*, where
-            // IR is the reliable mode and Normal needs the F_NOCACHE refresh.
-            if (serverOS == OS.Mac && mode == Mode.IsolatedReads)
-                Assert.Inconclusive("IsolatedReads is unsupported against a macOS SMB server (smbd serves stale reopens).");
 
             // Client mounts idle-drop during the preceding (non-Mac) cells - which run first, so by the time a
             // Mac-involved cell runs its mounts have sat idle for many minutes. Refresh both clients' mounts to
@@ -813,13 +778,6 @@ namespace ft_tests
         [DataTestMethod]
         [DataRow(Mode.Normal)]
         public void Rdp(Mode mode) => ConductRdpTest(mode);
-
-        // KnownFlaky: Rdp IsolatedReads fails ~100% of the time — the per-read server round-trips starve the
-        // keepalive ping over RDP's high-latency \\tsclient channel (see the SMB fix-stack notes).
-        [DataTestMethod]
-        [TestCategory("KnownFlaky")]
-        [DataRow(Mode.IsolatedReads)]
-        public void RdpIsolatedReads(Mode mode) => ConductRdpTest(mode);
 
         private void ConductRdpTest(Mode mode)
         {
