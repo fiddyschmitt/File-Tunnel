@@ -37,18 +37,18 @@ namespace ft.Listeners
         ToggleReader? isPurgeComplete;
 
         public int PurgeSizeInBytes { get; }
-        public bool IsolatedReads { get; }
+        public bool IsolatedIo { get; }
 
         public ReusableFile(
                     string readFromFilename,
                     string writeToFilename,
                     int purgeSizeInBytes,
                     int tunnelTimeoutMilliseconds,
-                    bool isolatedReads,
+                    bool isolatedIo,
                     bool verbose) : base(readFromFilename, writeToFilename, tunnelTimeoutMilliseconds, verbose)
         {
             PurgeSizeInBytes = purgeSizeInBytes;
-            IsolatedReads = isolatedReads;
+            IsolatedIo = isolatedIo;
 
             //FPS 11/11/2025: This class can write multiple commands to the file.
             //But there doesn't seem to be a performance improvement, so leaving as 1 for now.
@@ -91,15 +91,25 @@ namespace ft.Listeners
 
             while (true)
             {
-                FileStream fileStream;
+                Stream fileStream;
 
                 try
                 {
-                    //buffer must comfortably hold a full purge cycle, capped at 1 GB
-                    var bufferSize = (int)Math.Clamp(PurgeSizeInBytes * 2L, 1024 * 1024, 1024 * 1024 * 1024);
+                    if (IsolatedIo)
+                    {
+                        //No held handle: each write opens/writes/closes (IsolatedWritesFileStream), so a
+                        //counterpart can read the file between our writes - required for a server whose files
+                        //open exclusively. The SetLength(MESSAGE_WRITE_POS) below truncates it to a fresh session.
+                        fileStream = new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds);
+                    }
+                    else
+                    {
+                        //buffer must comfortably hold a full purge cycle, capped at 1 GB
+                        var bufferSize = (int)Math.Clamp(PurgeSizeInBytes * 2L, 1024 * 1024, 1024 * 1024 * 1024);
 
-                    //the writer always creates the file
-                    fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize, FileOptions.WriteThrough); //large buffer to prevent FileStream from autoflushing
+                        //the writer always creates the file
+                        fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize, FileOptions.WriteThrough); //large buffer to prevent FileStream from autoflushing
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -124,14 +134,18 @@ namespace ft.Listeners
                         Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
                     }
 
-                    var setReadyForPurgeStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
+                    Stream setReadyForPurgeStream = IsolatedIo
+                        ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
+                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
                     setReadyForPurge = new ToggleWriter(
                         new BinaryWriter(setReadyForPurgeStream),
                         READY_FOR_PURGE_FLAG,
                         TunnelTimeoutMilliseconds,
                         Verbose);
 
-                    var setPurgeCompleteStream = new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
+                    Stream setPurgeCompleteStream = IsolatedIo
+                        ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
+                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
                     setPurgeComplete = new ToggleWriter(
                         new BinaryWriter(setPurgeCompleteStream),
                         PURGE_COMPLETE_FLAG,
@@ -291,7 +305,7 @@ namespace ft.Listeners
             // coherent in steady state, but under load it intermittently can't reveal the writer's
             // post-purge appends before the offline timeout - the reader stalls, the tunnel is declared
             // offline and every carried connection is torn down mid-transfer. Reopening the handle at the
-            // purge boundary re-syncs the smbfs client cache reliably (exactly what --isolated-reads does
+            // purge boundary re-syncs the smbfs client cache reliably (exactly what --isolated-io does
             // on every read, which is why IR never hits this). macOS-only: other platforms read a purged
             // file coherently, and an extra open there is pure cost. Measured: LMM 6/12 -> 12/12, 0 timeouts.
             var reopenReadHandleAfterPurge = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
@@ -304,7 +318,7 @@ namespace ft.Listeners
             // (smbfs is fixed in place by MacDirectRefresh's F_NOCACHE read, not by a reopen), and IR already
             // reopens per read - so reopening in either case only interferes (both regressed when this was
             // macOS-wide).
-            var reopenReadHandleWhenStalled = Extensions.IsMacNfsMount(ReadFromFilename) && !IsolatedReads;
+            var reopenReadHandleWhenStalled = Extensions.IsMacNfsMount(ReadFromFilename) && !IsolatedIo;
             const int stallReopenMillis = 2000;
 
             while (true)
@@ -326,8 +340,8 @@ namespace ft.Listeners
                             Delay.Wait(200);
                         }
 
-                        fileStream = IsolatedReads ?
-                                        new IsolatedReadsFileStream(ReadFromFilename) :
+                        fileStream = IsolatedIo ?
+                                        new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
                                         new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                         fileStream.DisableReadAheadIfMacNfs();
 
@@ -366,10 +380,10 @@ namespace ft.Listeners
                         // reopens + F_NOCACHE-reads on every read. The bulk data read stays the fast reopen-
                         // when-stalled FileStream; only these flags pay the per-read cost. NFS-gated: smbfs
                         // Normal reads the flags fine in place via MacDirectRefresh, so leave it untouched.
-                        var freshFlagReads = IsolatedReads || Extensions.IsMacNfsMount(ReadFromFilename);
+                        var freshFlagReads = IsolatedIo || Extensions.IsMacNfsMount(ReadFromFilename);
 
                         Stream isReadyForPurgeStream = freshFlagReads ?
-                                                            new IsolatedReadsFileStream(ReadFromFilename) :
+                                                            new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
                                                             new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
@@ -378,7 +392,7 @@ namespace ft.Listeners
                             Verbose);
 
                         Stream isPurgeCompleteStream = freshFlagReads ?
-                                                            new IsolatedReadsFileStream(ReadFromFilename) :
+                                                            new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
                                                             new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
@@ -424,8 +438,8 @@ namespace ft.Listeners
                             {
                                 var resumePos = fileStream.Position;
                                 binaryReader.Dispose();
-                                fileStream = IsolatedReads
-                                    ? new IsolatedReadsFileStream(ReadFromFilename)
+                                fileStream = IsolatedIo
+                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
                                     : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                                 fileStream.Seek(resumePos, SeekOrigin.Begin);
                                 fileStream.DisableReadAheadIfMacNfs();
@@ -586,8 +600,8 @@ namespace ft.Listeners
                             if (reopenReadHandleAfterPurge)
                             {
                                 binaryReader.Dispose();   // disposes the wrapping HashingStream + fileStream
-                                fileStream = IsolatedReads
-                                    ? new IsolatedReadsFileStream(ReadFromFilename)
+                                fileStream = IsolatedIo
+                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
                                     : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                                 fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                                 binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);

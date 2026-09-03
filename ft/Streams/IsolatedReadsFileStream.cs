@@ -40,9 +40,12 @@ namespace ft.Streams
             }
         }
 
-        public IsolatedReadsFileStream(string filename)
+        readonly int retryTimeoutMilliseconds;
+
+        public IsolatedReadsFileStream(string filename, int retryTimeoutMilliseconds)
         {
             Filename = filename;
+            this.retryTimeoutMilliseconds = retryTimeoutMilliseconds;
         }
 
         public override bool CanRead => true;
@@ -55,8 +58,13 @@ namespace ft.Streams
         {
             get
             {
-                using var fileStream = new FileStream(Filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                return fileStream.Length;
+                long length = 0;
+                IsolatedFileIo.WithRetry(retryTimeoutMilliseconds, () =>
+                {
+                    using var fileStream = new FileStream(Filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    length = fileStream.Length;
+                });
+                return length;
             }
         }
 
@@ -67,11 +75,14 @@ namespace ft.Streams
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            using var fileStream = new FileStream(Filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            BypassCacheOnMac(fileStream.SafeFileHandle);
-            fileStream.Seek(Position, SeekOrigin.Begin);
-
-            var read = fileStream.Read(buffer, offset, count);
+            var read = 0;
+            IsolatedFileIo.WithRetry(retryTimeoutMilliseconds, () =>
+            {
+                using var fileStream = new FileStream(Filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                BypassCacheOnMac(fileStream.SafeFileHandle);
+                fileStream.Seek(Position, SeekOrigin.Begin);
+                read = fileStream.Read(buffer, offset, count);
+            });
 
             Position += read;
             return read;

@@ -14,8 +14,12 @@ namespace ft.CLI
         [Option('m', "max-size", Required = false, HelpText = @"The maximum size (in bytes) the file can grow to before restarting. Default 10485760 (10 MB)")]
         public int MaxFileSizeBytes { get; set; } = DEFAULT_MAX_SIZE_BYTES;
 
-        [Option("isolated-reads", Required = false, HelpText = @"For read operations, the file is opened, read and closed in quick succession. This significantly reduces the tunnel responsiveness.")]
-        public bool IsolatedReads { get; set; } = false;
+        [Option("isolated-io", Required = false, HelpText = @"Every read AND write opens, operates on, and closes the file in quick succession, never holding a handle. Needed for filesystems that serve a stale view to a held handle, or that refuse a second concurrent open while a handle is held (e.g. the Win32-OpenSSH sftp server behind an sshfs mount). Reduces throughput.")]
+        public bool IsolatedIo { get; set; } = false;
+
+        // Deprecated alias for --isolated-io (which now also isolates writes). Hidden; merged into IsolatedIo at startup.
+        [Option("isolated-reads", Required = false, Hidden = true, HelpText = @"Deprecated alias for --isolated-io.")]
+        public bool IsolatedReadsLegacy { get; set; } = false;
 
         [Option("upload-download", Required = false, HelpText = @"In this mode, the program will write to a file then wait for it to be deleted by the counterpart (signaling it was processed).")]
         public bool UploadDownload { get; set; } = false;

@@ -493,22 +493,24 @@ namespace ft
 
         // The mount's statfs f_type spots filesystems that serve a stale view to a held read handle
         // (a mount can't change type, so cache it per path). FUSE/sshfs and vboxsf both do, and only
-        // refresh on a fresh open(), so they default to the reopen-per-read of --isolated-reads
+        // refresh on a fresh open(), so they default to the reopen-per-read of --isolated-io
         // (enabled in Program.cs). The O_DIRECT refresh below (TryDirectRefresh) is a retained in-place
         // alternative for a FUSE mount run in Normal mode - it keeps Normal-mode speed, but on sshfs
         // under load it can occasionally fail to recover a stale read before the tunnel-offline timeout,
-        // which is why IsolatedReads is the default. CIFS/NFS need neither (an O_DIRECT round-trip on
+        // which is why IsolatedIo is the default. CIFS/NFS need neither (an O_DIRECT round-trip on
         // CIFS starved the keepalive ping, regressing SMB-Linux Normal).
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> MountMagicCache = new();
 
         private static int MountMagic(string path)
         {
-            // statfs is meaningful (and safe) only on Linux here. The magics we look for are Linux fs types,
-            // and the 256-byte buffer below is sized for Linux's ~120-byte struct statfs. On macOS struct
-            // statfs is ~2KB (it embeds two 1024-byte path fields), so calling it there would overflow the
-            // managed buffer and corrupt the heap. Non-Linux platforms have coherent local filesystems, so
-            // returning 0 (-> MountKind.Other) correctly selects Normal mode.
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            // statfs shares the Linux kernel ABI on Android/bionic as well as on Linux (f_type at offset 0,
+            // struct ~120 bytes), so it is meaningful and safe on both. A linux-bionic build does NOT report as
+            // OSPlatform.Linux, so the old !IsOSPlatform(Linux) guard skipped auto-detection on Android - leaving
+            // an sshfs mount there in Normal mode (held writes), which fails against a server that opens files
+            // exclusively (Win32-OpenSSH sftp). Only macOS (struct statfs ~2KB, embedding two 1024-byte path
+            // fields, would overflow the 256-byte buffer and corrupt the heap) and Windows (no statfs) must be
+            // excluded; both have coherent local filesystems, so returning 0 (-> Normal) is correct there.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 return 0;
             }
@@ -517,9 +519,15 @@ namespace ft
             {
                 try
                 {
-                    // The read file may not exist yet (the counterpart creates it), so fall back to its
-                    // directory — which is on the same mount and present from the start.
-                    var target = File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p);
+                    // Always statfs the CONTAINING DIRECTORY, never the file itself. statfs returns the same
+                    // filesystem magic for either (they are on the same mount), but a Win32-OpenSSH sftp server
+                    // refuses statfs on a file a peer holds open (EPERM) - and the read file is exactly what the
+                    // counterpart holds - so statfs'ing the file mis-detects the mount as coherent (-> Normal
+                    // mode, held handles, which then fail against that same exclusive-open server). The
+                    // directory (the mount root) is never exclusively held, so its statfs always succeeds. It is
+                    // also present from the start, whereas the file may not exist yet (the counterpart creates it).
+                    var dir = Path.GetDirectoryName(p);
+                    var target = string.IsNullOrEmpty(dir) ? p : dir;
                     var buf = new byte[256]; // Linux struct statfs is ~120 bytes; f_type magic is at offset 0
                     return statfs(target, buf) == 0 ? BitConverter.ToInt32(buf, 0) : 0;
                 }
@@ -529,7 +537,33 @@ namespace ft
 
         // True when the path is on a VirtualBox shared folder (vboxsf) / an sshfs (FUSE) mount. Both
         // serve a stale view to a held read handle and only refresh on a fresh open(), so they default
-        // to the reopen-per-read of --isolated-reads (enabled in Program.cs).
+        // to the reopen-per-read of --isolated-io (enabled in Program.cs).
+        // Diagnostic only (--verbose): a fresh, uncached statfs magic + mountinfo fstype for the path, so the
+        // auto-detect decision can be traced. Mirrors MountMagic's file-or-directory target and platform guard.
+        public static string DescribeMount(string path)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return "(macOS/Windows: statfs skipped)";
+            }
+            var exists = File.Exists(path);
+            var dir = Path.GetDirectoryName(path);
+            var target = string.IsNullOrEmpty(dir) ? path : dir;
+            int magic = 0, rc = -1, err = 0;
+            try
+            {
+                var buf = new byte[256];
+                rc = statfs(target, buf);
+                err = rc == 0 ? 0 : Marshal.GetLastPInvokeError();
+                if (rc == 0) magic = BitConverter.ToInt32(buf, 0);
+            }
+            catch (Exception ex)
+            {
+                return $"fileExists={exists} target={target} statfs threw {ex.GetType().Name}: {ex.Message}";
+            }
+            return $"fileExists={exists} target={target} statfsRc={rc} errno={err} magic=0x{magic:X8} kind={ClassifyMountMagic(magic)} fstype='{MountFsType(path)}'";
+        }
+
         public static bool IsVboxsfMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.Vboxsf;
         public static bool IsFuseMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.Fuse;
 
@@ -558,8 +592,11 @@ namespace ft
             {
                 try
                 {
-                    // The read file may not exist yet, so fall back to its directory (same mount).
-                    var target = File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p);
+                    // Always statfs the containing directory, never the file (same mount, same f_fstypename):
+                    // the file may not exist yet, and a server that opens files exclusively refuses statfs on a
+                    // peer-held file - the directory (mount root) is never held. See MountMagic for the detail.
+                    var dir = Path.GetDirectoryName(p);
+                    var target = string.IsNullOrEmpty(dir) ? p : dir;
                     var buf = new byte[4096]; // macOS struct statfs ~2168 bytes; f_fstypename[16] at offset 72
                     if (statfs(target, buf) != 0) return false;
                     var end = 72;
@@ -582,7 +619,7 @@ namespace ft
         }
 
         // statfs reports plain FUSE for ALL fuse mounts, so it can't separate sshfs (held handle stays
-        // stale / Normal is unreliable -> IsolatedReads) from virtio-fs (held handle refreshes on an fstat,
+        // stale / Normal is unreliable -> IsolatedIo) from virtio-fs (held handle refreshes on an fstat,
         // measured ~2.4x faster than reopen -> Normal). The mount's fstype string does: "virtiofs" vs
         // "fuse.sshfs". Read it from /proc/self/mountinfo (the longest mountpoint that prefixes the path).
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MountFsTypeCache = new();
@@ -622,11 +659,11 @@ namespace ft
             IsFuseMount(path) && string.Equals(MountFsType(path), "virtiofs", StringComparison.Ordinal);
 
         // The read strategies a tunnel can use, fastest first.
-        public enum TunnelMode { Normal, IsolatedReads, UploadDownload }
+        public enum TunnelMode { Normal, IsolatedIo, UploadDownload }
 
         public static string ModeFlag(this TunnelMode mode) => mode switch
         {
-            TunnelMode.IsolatedReads => "--isolated-reads",
+            TunnelMode.IsolatedIo => "--isolated-io",
             TunnelMode.UploadDownload => "--upload-download",
             _ => "--normal",
         };
@@ -638,8 +675,8 @@ namespace ft
             public bool Supports(TunnelMode mode) => Array.IndexOf(KnownGood, mode) >= 0;
         }
 
-        private static readonly TunnelMode[] AllModes = [TunnelMode.Normal, TunnelMode.IsolatedReads, TunnelMode.UploadDownload];
-        private static readonly TunnelMode[] ReopenOnly = [TunnelMode.IsolatedReads, TunnelMode.UploadDownload];
+        private static readonly TunnelMode[] AllModes = [TunnelMode.Normal, TunnelMode.IsolatedIo, TunnelMode.UploadDownload];
+        private static readonly TunnelMode[] ReopenOnly = [TunnelMode.IsolatedIo, TunnelMode.UploadDownload];
         private static readonly TunnelMode[] UploadOnly = [TunnelMode.UploadDownload];
 
         // THE single source of truth for ft's per-filesystem read-mode knowledge: which modes work on the
@@ -652,9 +689,9 @@ namespace ft
             // than reopen-per-read. All three modes work.
             IsVirtioFsMount(path) ? new("a virtio-fs mount", TunnelMode.Normal, AllModes) :
             // vboxsf: a held handle stays stale even after dropping caches; only a fresh open() sees new data.
-            IsVboxsfMount(path) ? new("a VirtualBox shared folder (vboxsf)", TunnelMode.IsolatedReads, ReopenOnly) :
+            IsVboxsfMount(path) ? new("a VirtualBox shared folder (vboxsf)", TunnelMode.IsolatedIo, ReopenOnly) :
             // sshfs / other FUSE: a held handle is stale and an in-place refresh is unreliable under load.
-            IsFuseMount(path) ? new("an sshfs / FUSE mount", TunnelMode.IsolatedReads, ReopenOnly) :
+            IsFuseMount(path) ? new("an sshfs / FUSE mount", TunnelMode.IsolatedIo, ReopenOnly) :
             // 9P (diod over TCP): cache-coherent but delivers whole files out of order -> whole-file transfer only.
             IsNinePMount(path) ? new("a 9P mount", TunnelMode.UploadDownload, UploadOnly) :
             // Coherent local/network filesystems (ext4, NFS, CIFS, and QEMU virtio-9p, which reports its ext

@@ -288,17 +288,23 @@ namespace ft
 
         private static void RunReusableFileSession(ReusableFileOptions o)
         {
-            if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !o.IsolatedReads)
+            //--isolated-reads is the deprecated alias for --isolated-io (which now isolates writes too).
+            if (o.IsolatedReadsLegacy)
+            {
+                o.IsolatedIo = true;
+            }
+
+            if (Path.GetFullPath(o.ReadFrom).Contains("thinclient_drives") && !o.IsolatedIo)
             {
                 Log($"Warning: It appears the Read file is stored in xrdp's Drive Redirection folder.", ConsoleColor.Yellow);
                 Log($"This can result in the File Tunnel not achieving synchronisation.", ConsoleColor.Yellow);
-                Log($"Recommendation: Run File Tunnel using an extra arg --isolated-reads", ConsoleColor.Yellow);
+                Log($"Recommendation: Run File Tunnel using an extra arg --isolated-io", ConsoleColor.Yellow);
                 Log($"Continuing.", ConsoleColor.Yellow);
             }
 
             if (Options.Citrix)
             {
-                o.IsolatedReads = true;
+                o.IsolatedIo = true;
 
                 if (Options.PaceMilliseconds < 400)
                 {
@@ -313,15 +319,19 @@ namespace ft
             // WebDAV, S3, Dropbox - never reach here; they are dispatched to their own sessions in Main.)
             {
                 var fs = Extensions.ModesForReadFile(o.ReadFrom);
+                if (o.Verbose)
+                {
+                    Log($"[mount-diag] {Extensions.DescribeMount(o.ReadFrom)} => Description='{fs.Description}' Preferred={fs.Preferred}", ConsoleColor.Cyan);
+                }
                 Extensions.TunnelMode? requested =
                     o.Normal ? Extensions.TunnelMode.Normal :
-                    o.IsolatedReads ? Extensions.TunnelMode.IsolatedReads :
+                    o.IsolatedIo ? Extensions.TunnelMode.IsolatedIo :
                     o.UploadDownload ? Extensions.TunnelMode.UploadDownload :
                     null;
 
                 if (requested is null)
                 {
-                    o.IsolatedReads = fs.Preferred == Extensions.TunnelMode.IsolatedReads;
+                    o.IsolatedIo = fs.Preferred == Extensions.TunnelMode.IsolatedIo;
                     o.UploadDownload = fs.Preferred == Extensions.TunnelMode.UploadDownload;
                     if (fs.Description.Length > 0)
                     {
@@ -337,7 +347,7 @@ namespace ft
                 }
             }
 
-            if (o.IsolatedReads && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
+            if (o.IsolatedIo && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
             {
                 o.MaxFileSizeBytes = 1024 * 1024;
                 Log($"Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
@@ -387,7 +397,7 @@ namespace ft
                                             o.WriteTo.Trim(),
                                             o.MaxFileSizeBytes,
                                             Options.TunnelTimeoutMilliseconds,
-                                            o.IsolatedReads,
+                                            o.IsolatedIo,
                                             o.Verbose);
             }
 
