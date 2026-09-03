@@ -12,7 +12,7 @@ namespace ft_tests.FileShares.Clients
     /// mounting a remote directory and running ft over it. <see cref="AndroidProcessRunner"/> stages the Termux
     /// sshfs toolchain onto the device and mounts the server named by the <see cref="SshfsMountSpec"/> at a
     /// per-instance mount point (each of the two emulators mounts independently, exactly like the Linux nodes).
-    /// The mount is a real FUSE filesystem (statfs f_type == 0x65735546), so bionic ft auto-enables IsolatedReads
+    /// The mount is a real FUSE filesystem (statfs f_type == 0x65735546), so bionic ft auto-enables IsolatedIo
     /// over it just as for Linux sshfs - no ft change was needed for Android.
     /// </summary>
     public class AndroidSshfsClient : Client

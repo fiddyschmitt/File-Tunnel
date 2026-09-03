@@ -10,7 +10,7 @@ namespace ft_tests
     /// Fast, hermetic unit tests for ft's core primitives — no lab, no network peers, no published
     /// binaries. These cover logic that previously was only ever exercised indirectly through the
     /// full end-to-end suite: the ToggleReader/ToggleWriter purge-handshake primitive (the byte-flag
-    /// signalling at the heart of the SMB/IsolatedReads work) and the endpoint parser's error paths.
+    /// signalling at the heart of the SMB/IsolatedIo work) and the endpoint parser's error paths.
     /// </summary>
     [TestClass]
     [TestCategory("Unit")]

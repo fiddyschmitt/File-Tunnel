@@ -142,7 +142,7 @@ namespace ft_tests.Runner
         // `pkg install sshfs`. The Termux sshfs toolchain (sshfs + fuse3 + openssh + openssl, staged on the Mac
         // by mac_android_setup.sh) is pushed to the device's Termux prefix, then sshfs mounts the lab export.
         // The resulting mount is a real FUSE filesystem (statfs f_type == 0x65735546), so bionic ft auto-enables
-        // IsolatedReads over it just like on Linux. Used by AndroidSshfsClient.
+        // IsolatedIo over it just like on Linux. Used by AndroidSshfsClient.
 
         /// <summary>Push the Termux sshfs toolchain to the device once per emulator session (idempotent).</summary>
         public void EnsureSshfsToolchain()

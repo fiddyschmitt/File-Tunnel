@@ -6,6 +6,7 @@ using ft_tests.FileShares.Servers;
 using ft_tests.Runner;
 using ft_tests.Utilities;
 using Microsoft.Extensions.Configuration;
+using Renci.SshNet;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
@@ -277,7 +278,7 @@ namespace ft_tests
         [DataRow(OS.Linux, OS.Linux, OS.Linux, Mode.Normal)]
         // Mac as an SMB client, over the .81 Samba share. Both modes work. macOS's SMB client caches
         // aggressively - a held-handle read is stale even across a reopen (the smbfs attribute cache
-        // survives it) - so both modes defeat the cache with F_NOCACHE: IsolatedReads reopens per read
+        // survives it) - so both modes defeat the cache with F_NOCACHE: IsolatedIo reopens per read
         // (IsolatedReadsFileStream), and Normal's ForceRead reads the awaited page through a separate
         // F_NOCACHE handle (MacDirectRefresh), refreshing the held view - the macOS analog of the Linux
         // O_DIRECT refresh. Both tunnel directions covered.
@@ -446,25 +447,25 @@ namespace ft_tests
 
         [DataTestMethod]
         [DataRow(OS.Windows, OS.Windows, Mode.Normal, DisplayName = "Nfs Windows-Linux-Windows Normal")]
-        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Windows-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedIo, DisplayName = "Nfs Windows-Linux-Windows IsolatedIo")]
         [DataRow(OS.Windows, OS.Linux, Mode.Normal, DisplayName = "Nfs Windows-Linux-Linux Normal")]
-        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Windows-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedIo, DisplayName = "Nfs Windows-Linux-Linux IsolatedIo")]
         [DataRow(OS.Linux, OS.Windows, Mode.Normal, DisplayName = "Nfs Linux-Linux-Windows Normal")]
-        [DataRow(OS.Linux, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Linux-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Linux, OS.Windows, Mode.IsolatedIo, DisplayName = "Nfs Linux-Linux-Windows IsolatedIo")]
         [DataRow(OS.Linux, OS.Linux, Mode.Normal, DisplayName = "Nfs Linux-Linux-Linux Normal")]
-        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Linux-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedIo, DisplayName = "Nfs Linux-Linux-Linux IsolatedIo")]
         // The Mac (.33) as an NFS client of the .81 export (macOS mounts it via sudo + resvport; ft's
         // MacDirectRefresh handles read coherency). Completes the client1 x client2 matrix over {W,L,M}.
         [DataRow(OS.Mac, OS.Linux, Mode.Normal, DisplayName = "Nfs Mac-Linux-Linux Normal")]
-        [DataRow(OS.Mac, OS.Linux, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux-Linux IsolatedReads")]
+        [DataRow(OS.Mac, OS.Linux, Mode.IsolatedIo, DisplayName = "Nfs Mac-Linux-Linux IsolatedIo")]
         [DataRow(OS.Linux, OS.Mac, Mode.Normal, DisplayName = "Nfs Linux-Linux-Mac Normal")]
-        [DataRow(OS.Linux, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Linux-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Linux, OS.Mac, Mode.IsolatedIo, DisplayName = "Nfs Linux-Linux-Mac IsolatedIo")]
         [DataRow(OS.Mac, OS.Windows, Mode.Normal, DisplayName = "Nfs Mac-Linux-Windows Normal")]
-        [DataRow(OS.Mac, OS.Windows, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux-Windows IsolatedReads")]
+        [DataRow(OS.Mac, OS.Windows, Mode.IsolatedIo, DisplayName = "Nfs Mac-Linux-Windows IsolatedIo")]
         [DataRow(OS.Windows, OS.Mac, Mode.Normal, DisplayName = "Nfs Windows-Linux-Mac Normal")]
-        [DataRow(OS.Windows, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Windows-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Windows, OS.Mac, Mode.IsolatedIo, DisplayName = "Nfs Windows-Linux-Mac IsolatedIo")]
         [DataRow(OS.Mac, OS.Mac, Mode.Normal, DisplayName = "Nfs Mac-Linux-Mac Normal")]
-        [DataRow(OS.Mac, OS.Mac, Mode.IsolatedReads, DisplayName = "Nfs Mac-Linux-Mac IsolatedReads")]
+        [DataRow(OS.Mac, OS.Mac, Mode.IsolatedIo, DisplayName = "Nfs Mac-Linux-Mac IsolatedIo")]
         public void Nfs(OS client1OS, OS client2OS, Mode mode)
         {
             var nfsServer = new NfsServer(linux_x64_2);
@@ -512,7 +513,7 @@ namespace ft_tests
         // sshfs-mount the same export on the server and see each other's writes through it. The clients are the
         // FUSE-capable platforms - Linux (.80/.82) and Android (issue #45; the emulator runs the real Termux sshfs
         // toolchain, so bionic ft reads/writes a genuine FUSE mount, statfs f_type 0x65735546, and auto-enables
-        // IsolatedReads just like Linux). Android is just another client permutation here, not a special case.
+        // IsolatedIo just like Linux). Android is just another client permutation here, not a special case.
         // The SERVER axis is the full {Windows, Linux, Mac} set: Windows has no native sshfs and this lab's Mac has
         // no macFUSE, so neither can be an sshfs CLIENT, but any OS can be the sshfs SERVER (it just runs sshd). The
         // mount point is per-client (identical on the two Linux nodes, per-instance on the shared emulator), so the
@@ -521,7 +522,7 @@ namespace ft_tests
             from c1 in new[] { OS.Linux, OS.Android }
             from c2 in new[] { OS.Linux, OS.Android }
             from serverOS in new[] { OS.Windows, OS.Linux, OS.Mac }
-            from mode in new[] { Mode.Normal, Mode.IsolatedReads }
+            from mode in new[] { Mode.Normal, Mode.IsolatedIo }
             select new object[] { c1, c2, serverOS, mode };
 
         // "Sshfs {client1}-{server}-{client2} {mode}", e.g. "Sshfs Android-Linux-Linux Normal".
@@ -605,10 +606,18 @@ namespace ft_tests
         // Windows} emu1 mounts the LAN target and the target node is side2 (reads its export locally). For X = Android
         // the target is emu2, which is NAT (unreachable inbound) and so must be the MOUNTING side: emu1 hosts Termux
         // sshd + reads its export locally (server + side1) and emu2 mounts emu1 (side2). Either way it is an Android
-        // SSHing into an Android. Key/password auth per target; ft auto-enables IsolatedReads over the FUSE mount.
+        // SSHing into an Android. Key/password auth per target; ft auto-enables IsolatedIo over the FUSE mount.
         public static IEnumerable<object[]> SshfsDirectCombos =>
             from target in new[] { OS.Android, OS.Windows, OS.Linux, OS.Mac }
-            from mode in new[] { Mode.Normal, Mode.IsolatedReads }
+            from mode in new[] { Mode.Normal, Mode.IsolatedIo }
+            // The Windows direct target is IsolatedIo-only. It reads its export on its own LOCAL disk, whose
+            // coherent fs auto-detects to Normal mode (held handles) - but the counterpart reaches the same
+            // files through Windows's OWN OpenSSH sftp server, which opens files exclusively, so a held local
+            // handle blocks the counterpart's sftp access. Only --isolated-io (no held handle) works, and ft
+            // cannot auto-select it: it has no way to know a local file is also served over an exclusive-open
+            // sftp server. (Windows as a plain sshfs SERVER in the matrix works in both modes - there the
+            // counterparts reach it only over sftp, never locally.)
+            where !(target == OS.Windows && mode == Mode.Normal)
             select new object[] { target, mode };
 
         // "Sshfs Android-{target} direct {mode}", e.g. "Sshfs Android-Linux direct Normal".
@@ -695,7 +704,7 @@ namespace ft_tests
         // topology as NFS/sshfs: both clients mount the .81 diod export at an identical mount point.
         //
         // 9P (diod) is cross-client INCOHERENT for the append-and-tail-read pattern: a client never sees
-        // another client's writes to a file it has open/cached (proven), so Normal and IsolatedReads
+        // another client's writes to a file it has open/cached (proven), so Normal and IsolatedIo
         // both truncate. UploadDownload sidesteps that (it transfers whole files), and with ft's
         // out-of-order reorder buffer it reassembles 9P's out-of-order file delivery correctly. So 9P is
         // supported only via --upload-download; that is the one mode tested here.
@@ -731,13 +740,76 @@ namespace ft_tests
         private static LinuxProcessRunner LinuxGuest => _linuxGuest ??=
             new LinuxProcessRunner("192.168.0.82", "user", "live", LINUX_X64_EXE, "/tmp/ft-guest.log", 2222);
 
+        private static ConnectionInfo NestedGuestConnInfo() =>
+            new("192.168.0.82", 2222, "user", new PasswordAuthenticationMethod("user", "live")) { Timeout = TimeSpan.FromSeconds(8) };
+
+        // Confirm the nested QEMU guest can actually accept a deploy before a virtio test uses it, and refresh it
+        // if not. A previous run can leave a WEDGED ft in the guest: a ReceivePump thread stuck on the virtio
+        // mount keeps /tmp/ft/ft's text segment mapped, so scp fails with "Text file busy" - and it survives
+        // kill -9 (the thread is in uninterruptible sleep), so the runner's own pkill can't clear it. The only
+        // cure is a guest reboot. Returns false (the caller then skips) if the guest is unreachable or does not
+        // come back - an infrastructure problem should skip the virtio rows, not fail the suite.
+        private static bool EnsureNestedGuestHealthy()
+        {
+            bool wedged;
+            try
+            {
+                using var ssh = new SshClient(NestedGuestConnInfo());
+                ssh.Connect();
+                // Non-destructive writability probe: opening the deployed binary for write ETXTBSYs while a hung
+                // thread still maps it; bs=1 count=0 conv=notrunc changes nothing. An absent binary can't be wedged.
+                var probe = ssh.CreateCommand("if [ -f /tmp/ft/ft ]; then dd if=/tmp/ft/ft of=/tmp/ft/ft bs=1 count=0 conv=notrunc 2>&1; fi").Execute();
+                ssh.Disconnect();
+                wedged = probe.ToLowerInvariant().Contains("text file busy");
+            }
+            catch
+            {
+                return false; // guest unreachable -> caller skips
+            }
+            if (!wedged) return true;
+
+            Console.WriteLine("Nested QEMU guest (.82:2222): ft binary wedged (Text file busy from a hung thread). Rebooting to refresh.");
+            try
+            {
+                using var ssh = new SshClient(NestedGuestConnInfo());
+                ssh.Connect();
+                // Force the reboot: the hung thread is in uninterruptible sleep, so a clean shutdown stalls on it
+                // (systemd waits out its stop timeout). -f goes straight to the kernel reboot.
+                try { ssh.CreateCommand("sudo reboot -f 2>/dev/null || sudo systemctl reboot -ff 2>/dev/null || sudo reboot").Execute(); } catch { /* connection drops as it goes down */ }
+                try { ssh.Disconnect(); } catch { }
+            }
+            catch { }
+            _linuxGuest = null; // the cached runner's SSH session is dead now; force a fresh deploy once it's back
+
+            var deadline = DateTime.UtcNow.AddSeconds(150);
+            while (DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(5000);
+                try
+                {
+                    using var ssh = new SshClient(NestedGuestConnInfo());
+                    ssh.Connect();
+                    ssh.CreateCommand("true").Execute();
+                    ssh.Disconnect();
+                    Thread.Sleep(3000); // small settle after boot before we deploy + mount
+                    return true;
+                }
+                catch { /* still rebooting */ }
+            }
+            Console.WriteLine("Nested QEMU guest did not return within 150s of the reboot.");
+            return false;
+        }
+
         // virtio-fs (host <-> nested guest): host side is the native /srv/ftvfs (ext4); guest side is the
         // virtio-fs mount. ft auto-detects virtio-fs (mountinfo fstype) and runs Normal - its held handle
-        // refreshes via ForceRead's fstat, ~2.4x faster than IsolatedReads' reopen. (sshfs, the other FUSE
-        // family member, still gets IsolatedReads.) Confirmed on a real QEMU virtio-fs mount.
+        // refreshes via ForceRead's fstat, ~2.4x faster than IsolatedIo' reopen. (sshfs, the other FUSE
+        // family member, still gets IsolatedIo.) Confirmed on a real QEMU virtio-fs mount.
         [TestMethod]
         public void VirtioFs()
         {
+            if (!EnsureNestedGuestHealthy())
+                Assert.Inconclusive("Skipped: nested QEMU guest (.82:2222) unavailable or could not be refreshed.");
+
             var server = new VirtioFsServer(linux_x64_3); // .82 host - virtiofsd + the nested guest
 
             var f1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
@@ -759,6 +831,9 @@ namespace ft_tests
         [TestMethod]
         public void Virtio9p()
         {
+            if (!EnsureNestedGuestHealthy())
+                Assert.Inconclusive("Skipped: nested QEMU guest (.82:2222) unavailable or could not be refreshed.");
+
             var server = new Virtio9pServer(linux_x64_3);
 
             var f1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
@@ -773,7 +848,7 @@ namespace ft_tests
         }
 
         // The Rdp mstsc row. Normal is reliable (see RdpServer for the April-2026 consent-dialog handling), so
-        // it runs in the clean suite. IsolatedReads is split into its own KnownFlaky method below - both still
+        // it runs in the clean suite. IsolatedIo is split into its own KnownFlaky method below - both still
         // run; the tag only lets you exclude IR with `--filter TestCategory!=KnownFlaky` for a clean green.
         [DataTestMethod]
         [DataRow(Mode.Normal)]
@@ -811,7 +886,7 @@ namespace ft_tests
         // RDP rows use different Windows boxes - each needs a different drive redirected into the one
         // interactive session that user is allowed. (Linux -> .85 has no SID collision - the client is Linux.)
         //
-        // Normal mode only. IsolatedReads does work over FreeRDP redirection (unlike mstsc's, where it
+        // Normal mode only. IsolatedIo does work over FreeRDP redirection (unlike mstsc's, where it
         // fails ~100%), but at ~0.12 MB/s vs ~8 MB/s - measured 8 MB in 67s - so it would dominate the
         // suite's runtime and sit uncomfortably close to ConductTest's 180s budget.
         [DataTestMethod]
@@ -837,11 +912,11 @@ namespace ft_tests
 
         [DataTestMethod]
         [DataRow(OS.Windows, OS.Windows, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Windows, Mode.IsolatedIo)]
         [DataRow(OS.Windows, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Windows, OS.Linux, Mode.IsolatedIo)]
         [DataRow(OS.Linux, OS.Linux, Mode.Normal)]
-        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedReads)]
+        [DataRow(OS.Linux, OS.Linux, Mode.IsolatedIo)]
         public void VirtualBoxSharedFolder(OS client1OS, OS client2OS, Mode mode)
         {
             // The shared storage is the dev box's C:\ (the c_drive VBox shared folder). Both tunnel ends are
@@ -1394,7 +1469,7 @@ namespace ft_tests
 
 
 
-            if (mode == Mode.IsolatedReads)
+            if (mode == Mode.IsolatedIo)
             {
                 server.Restart();
                 side1.Restart();
@@ -1402,11 +1477,11 @@ namespace ft_tests
                 cleanupFiles();
 
                 ConductTest(
-                        $"{name} (Isolated Reads mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-reads"),
+                        $"{name} (IsolatedIo mode)",
+                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:192.168.0.31:5004 --isolated-io"),
                         server,
-                        new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-reads"),
-                        "Isolated Reads", bytesToSend);
+                        new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-io"),
+                        "IsolatedIo", bytesToSend);
             }
 
 
@@ -1720,7 +1795,7 @@ namespace ft_tests
     public enum Mode
     {
         Normal,
-        IsolatedReads,
+        IsolatedIo,
         UploadDownload,
         FTP,
         HttpApi

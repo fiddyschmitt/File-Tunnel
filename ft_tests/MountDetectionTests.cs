@@ -10,7 +10,7 @@ namespace ft_tests
     /// Real-mount findings for the virtio transports (confirmed on QEMU, via the ft_test_env nested guest):
     ///   - virtio-fs and sshfs BOTH report the FUSE magic (0x65735546) -> Fuse here. ft separates them by the
     ///     mountinfo fstype ("virtiofs" vs "fuse.sshfs", not by statfs): virtio-fs runs Normal (its held handle
-    ///     refreshes via fstat, ~2.4x faster), sshfs runs IsolatedReads. See Extensions.ModesForReadFile.
+    ///     refreshes via fstat, ~2.4x faster), sshfs runs IsolatedIo. See Extensions.ModesForReadFile.
     ///   - virtio-9p (QEMU -virtfs) reports its BACKING filesystem's magic (e.g. ext4 0xEF53), NOT V9FS,
     ///     so it classifies as that fs -> Normal. That is correct: QEMU virtio-9p (cache=none) is coherent,
     ///     so Normal works - unlike diod's TCP-9p, which reports V9FS and IS incoherent (needs
