@@ -89,24 +89,34 @@ namespace ft_test_env.Ssh
                 "booted() { [ \"$(\"$ADB\" -s \"$1\" get-state 2>/dev/null)\" = device ] && [ \"$(\"$ADB\" -s \"$1\" shell getprop sys.boot_completed 2>/dev/null | tr -dc 0-9)\" = 1 ]; }",
                 // wlanip(serial): the emulator's bridged LAN IP (wlan0); empty until DHCP lands.
                 "wlanip() { \"$ADB\" -s \"$1\" shell ip -4 addr show wlan0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'; }",
-                // reaches(src ip): 0 if src reaches ip:22 FAST (RST/connect), 1 if it blackhole-hangs. This is the
-                // health signal - a stale/degraded emulator (e.g. after a lab restart or long idle) hangs here, while
-                // a `booted` check alone would call it fine. :22 has no service, so a reachable peer answers with a
-                // fast RST; timing (<3s vs nc's -w4) separates that from a blackhole.
-                "reaches() { local d=\"$2\"; [ -z \"$d\" ] && return 1; local t=$SECONDS; \"$ADB\" -s \"$1\" shell \"toybox nc -w4 $d 22 </dev/null\" >/dev/null 2>&1; [ $((SECONDS-t)) -lt 3 ]; }",
+                // HOSTIP: this Mac's own LAN IP on the bridge interface - an emulator must reach it (and so the LAN) for
+                // its bridge to count as working. An emulator quick-booted from the AVD snapshot can come up with STALE
+                // wlan0 state (its previous session's IP + ARP) that never re-associated with the live vmnet bridge
+                // after a Mac restart: it looks configured, even holds a LAN IP, but passes no traffic (found the hard
+                // way: 53/53 Android rows timed out). renet() bounces wifi to force a fresh association + DHCP;
+                // ensurenet() verifies LAN reach first and bounces only if needed (up to 4 times).
+                $"HOSTIP=$(ipconfig getifaddr {iface} 2>/dev/null)",
+                "lanreach() { [ -n \"$HOSTIP\" ] && \"$ADB\" -s \"$1\" shell \"ping -c1 -W2 $HOSTIP\" >/dev/null 2>&1; }",
+                "renet() { \"$ADB\" -s \"$1\" shell 'svc wifi disable; sleep 3; svc wifi enable' >/dev/null 2>&1; sleep 10; }",
+                "ensurenet() { local i; for i in 1 2 3 4; do lanreach \"$1\" && return 0; echo \"$1: no LAN reach - bouncing wifi ($i)\"; renet \"$1\"; waitip \"$1\" >/dev/null; done; lanreach \"$1\"; }",
+                // reaches(src ip): 0 iff src gets an ICMP echo reply from ip. A real reply is the only trustworthy
+                // signal: the earlier TCP-timing test also returned "fast" on an immediate local failure (no route /
+                // no ARP), which is exactly how a dead bridge passed as healthy.
+                "reaches() { local d=\"$2\"; [ -z \"$d\" ] && return 1; \"$ADB\" -s \"$1\" shell \"ping -c1 -W2 $d\" >/dev/null 2>&1; }",
                 "waitboot() { local i; for i in $(seq 1 90); do booted \"$1\" && return 0; sleep 4; done; return 1; }",
                 "waitip() { local i x=''; for i in $(seq 1 45); do x=$(wlanip \"$1\"); [ -n \"$x\" ] && { echo \"$x\"; return 0; }; sleep 3; done; return 1; }",
                 // launch1(port logfile): a BRIDGED emulator (sudo, for vmnet -> real LAN IP). The env assignments are
                 // literal tokens here (C#-interpolated) so sudo applies them; a bare "$envs cmd" would NOT expand them.
                 $"launch1() {{ nohup sudo {envs} \"$EMU\" -avd {cfg.AvdName} {common} -port \"$1\" -vmnet-bridged {iface} >\"$2\" 2>&1 </dev/null & }}",
-                // HEALTH-AWARE IDEMPOTENCE: leave the pair alone only if BOTH are booted AND healthy (emu2 reaches
-                // emu1) - so re-running the bring-up doesn't disrupt a working pair, but a degraded-but-booted pair
-                // (stale networking) gets refreshed, which a pure `booted` check misses.
+                // HEALTH-AWARE IDEMPOTENCE: leave the pair alone only if BOTH are booted AND healthy - each reaches the
+                // LAN (after ensurenet's wifi bounce, if it came up with stale snapshot networking) and emu2 reaches
+                // emu1 - so re-running the bring-up doesn't disrupt a working pair, but a degraded-but-booted pair
+                // gets refreshed in place (bounce) or relaunched, which a pure `booted` check misses.
                 // lanip(ip): 0 if it is a real LAN IP (bridged), 1 for empty or the 10.0.x emulator NAT range - so a
                 // NAT emu2 (or a bridge that raced and fell back) counts as unhealthy and gets relaunched.
                 "lanip() { case \"$1\" in ''|10.0.*) return 1;; *) return 0;; esac; }",
                 "RELAUNCH=1",
-                "if booted \"$S1\" && booted \"$S2\"; then ip1=$(wlanip \"$S1\"); ip2=$(wlanip \"$S2\"); if lanip \"$ip1\" && lanip \"$ip2\" && reaches \"$S2\" \"$ip1\"; then RELAUNCH=0; echo already-up-healthy; fi; fi",
+                "if booted \"$S1\" && booted \"$S2\"; then ensurenet \"$S1\"; ensurenet \"$S2\"; ip1=$(wlanip \"$S1\"); ip2=$(wlanip \"$S2\"); if lanip \"$ip1\" && lanip \"$ip2\" && lanreach \"$S1\" && lanreach \"$S2\" && reaches \"$S2\" \"$ip1\"; then RELAUNCH=0; echo already-up-healthy; fi; fi",
                 "if [ \"$RELAUNCH\" = 1 ]; then",
                 "  echo relaunching",
                 "  \"$ADB\" -s \"$S1\" emu kill 2>/dev/null; \"$ADB\" -s \"$S2\" emu kill 2>/dev/null; sleep 2",
@@ -118,8 +128,8 @@ namespace ft_test_env.Ssh
                 // SEQUENTIAL, both bridged: emu1 boots + DHCPs its LAN IP FIRST, THEN emu2 - so Android promotes wlan0
                 // to the default network on EACH (a simultaneous bridged launch races and only the first gets a
                 // default route; the loser is left with L2 but no route, which broke FTP's data channel over it).
-                $"  launch1 {p1} ~/ft_emulator.log; waitboot \"$S1\"; ip1=$(waitip \"$S1\")",
-                $"  launch1 {p2} ~/ft_emulator2.log; waitboot \"$S2\"; ip2=$(waitip \"$S2\")",
+                $"  launch1 {p1} ~/ft_emulator.log; waitboot \"$S1\"; ip1=$(waitip \"$S1\"); ensurenet \"$S1\"; ip1=$(wlanip \"$S1\")",
+                $"  launch1 {p2} ~/ft_emulator2.log; waitboot \"$S2\"; ip2=$(waitip \"$S2\"); ensurenet \"$S2\"; ip2=$(wlanip \"$S2\")",
                 "fi",
                 // Root adbd on both (userdebug): sshfs rows (issue #45) need root for SELinux-permissive + the FUSE
                 // mount, and ft then runs as root. adb root drops+reopens the connection, so wait for each device.
@@ -128,8 +138,9 @@ namespace ft_test_env.Ssh
                 // Final state - b1/b2 ALWAYS 0 or 1; BOTH emulators are bridged so both report a wlan0 LAN IP.
                 "b1=0; booted \"$S1\" && b1=1; b2=0; booted \"$S2\" && b2=1",
                 "ip1=$(wlanip \"$S1\"); ip2=$(wlanip \"$S2\")",
+                "l1=0; lanreach \"$S1\" && l1=1; l2=0; lanreach \"$S2\" && l2=1; pr=0; reaches \"$S2\" \"$ip1\" && pr=1",
                 "abi=$(\"$ADB\" -s \"$S1\" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\\r ')",
-                "echo \"RESULT boot1=$b1 boot2=$b2 ip1=$ip1 ip2=$ip2 abi=$abi\" > ~/ft_emu_result.txt");
+                "echo \"RESULT boot1=$b1 boot2=$b2 ip1=$ip1 ip2=$ip2 lan1=$l1 lan2=$l2 peer=$pr abi=$abi\" > ~/ft_emu_result.txt");
             var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(script));
             // Run the launch DETACHED (nohup, own log + no stdin) so it survives THIS SSH channel closing. SSH.NET's
             // Execute() can return before a long backgrounded script finishes, and disposing the client would then
@@ -146,17 +157,24 @@ namespace ft_test_env.Ssh
                 if (output.Contains("RESULT ", StringComparison.Ordinal)) break;
             }
 
-            var m = System.Text.RegularExpressions.Regex.Match(output, @"RESULT boot1=(\S*) boot2=(\S*) ip1=(\S*) ip2=(\S*) abi=(\S*)");
+            var m = System.Text.RegularExpressions.Regex.Match(output, @"RESULT boot1=(\S*) boot2=(\S*) ip1=(\S*) ip2=(\S*) lan1=(\S*) lan2=(\S*) peer=(\S*) abi=(\S*)");
             var boot1 = m.Success && m.Groups[1].Value == "1";
             var boot2 = m.Success && m.Groups[2].Value == "1";
             var ip1 = m.Success ? m.Groups[3].Value : "";
             var ip2 = m.Success ? m.Groups[4].Value : "";
-            var abi = m.Success ? m.Groups[5].Value : "";
-            if (boot1 && boot2 && !string.IsNullOrEmpty(ip1) && !string.IsNullOrEmpty(ip2))
-                return StepOutcome.Ok($"{cfg.Serial} (bridged {ip1}, {abi}) + {cfg.SecondSerial} (bridged {ip2}) booted");
+            var lan1 = m.Success && m.Groups[5].Value == "1";
+            var lan2 = m.Success && m.Groups[6].Value == "1";
+            var peer = m.Success && m.Groups[7].Value == "1";
+            var abi = m.Success ? m.Groups[8].Value : "";
+            if (boot1 && boot2 && !string.IsNullOrEmpty(ip1) && !string.IsNullOrEmpty(ip2) && lan1 && lan2 && peer)
+                return StepOutcome.Ok($"{cfg.Serial} (bridged {ip1}, {abi}) + {cfg.SecondSerial} (bridged {ip2}) booted; both reach the LAN, emu2 reaches emu1");
             if (!boot1 || !boot2)
                 return StepOutcome.Fail($"emulator(s) did not boot (boot1={m.Groups[1].Value} boot2={m.Groups[2].Value}); see ~/ft_emulator*.log on {cfg.Host}");
-            return StepOutcome.Fail($"an emulator booted without a bridged LAN IP (ip1='{ip1}' ip2='{ip2}') - bridge '{cfg.BridgeInterface}' may have raced (see ~/ft_emulator*.log on {cfg.Host})");
+            if (string.IsNullOrEmpty(ip1) || string.IsNullOrEmpty(ip2))
+                return StepOutcome.Fail($"an emulator booted without a bridged LAN IP (ip1='{ip1}' ip2='{ip2}') - bridge '{cfg.BridgeInterface}' may have raced (see ~/ft_emulator*.log on {cfg.Host})");
+            if (!lan1 || !lan2)
+                return StepOutcome.Fail($"emulator(s) hold a LAN IP but cannot reach the LAN even after wifi bounces (lan1={lan1} lan2={lan2}) - stale snapshot networking on bridge '{cfg.BridgeInterface}'; see ~/ft_emu_launch.log on {cfg.Host}");
+            return StepOutcome.Fail($"emu2 ({ip2}) cannot reach emu1 ({ip1}) although both reach the LAN - see ~/ft_emu_launch.log on {cfg.Host}");
         }
 
         /// <summary>Kills both emulators if running (reaping the qemu children so no orphan holds a console port).</summary>
@@ -192,9 +210,17 @@ namespace ft_test_env.Ssh
             if (booted != "1")
                 return (false, $"{serial} present but not booted");
             var abi = ssh.CreateCommand($"\"{adb}\" -s {serial} shell getprop ro.product.cpu.abi 2>/dev/null").Execute().Trim();
-            return bridged
-                ? (true, $"{serial} booted ({abi}), bridged LAN IP {WlanIp(ssh, serial) ?? "MISSING"}")
-                : (true, $"{serial} booted ({abi}), NAT");
+            if (!bridged)
+                return (true, $"{serial} booted ({abi}), NAT");
+            var ip = WlanIp(ssh, serial);
+            // A LAN IP alone is not proof of a working bridge: stale snapshot networking holds an IP yet passes no
+            // traffic. Require an ICMP reply from this Mac's own bridge-interface address.
+            var hostIp = ssh.CreateCommand($"ipconfig getifaddr {cfg.BridgeInterface} 2>/dev/null").Execute().Trim();
+            var reach = !string.IsNullOrEmpty(hostIp)
+                && ssh.CreateCommand($"\"{adb}\" -s {serial} shell \"ping -c1 -W2 {hostIp}\" >/dev/null 2>&1 && echo ok").Execute().Contains("ok");
+            return reach
+                ? (true, $"{serial} booted ({abi}), bridged LAN IP {ip ?? "MISSING"}, reaches the LAN ({hostIp})")
+                : (false, $"{serial} booted ({abi}) with bridged IP {ip ?? "MISSING"} but CANNOT reach the LAN ({hostIp}) - stale bridge networking; refresh the emulators (menu 10)");
         }
 
         /// <summary>The bridged emulator's real LAN IP (wlan0). eth0 stays the user-mode NAT 10.0.2.15.</summary>

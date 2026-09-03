@@ -558,6 +558,21 @@ namespace ft_test_env
             return Summary(step);
         }
 
+        // ---- Android emulators: refresh on demand ----
+
+        /// <summary>Relaunch/refresh the two Android emulators without a full bring-up. After a Mac/PC restart they are
+        /// gone, and a quick-booted pair can hold stale snapshot networking (an IP but no traffic); Launch() is
+        /// health-aware - it verifies LAN reach, bounces wifi, and relaunches only if that fails - then Check()
+        /// confirms both reach the LAN.</summary>
+        public bool RefreshAndroidEmulators()
+        {
+            var step = new StepRunner();
+            step.Section("Android emulators (refresh)");
+            BringUpAndroidEmulators(step);
+            CheckAndroidEmulators(step);
+            return Summary(step);
+        }
+
         // ---- 6. check Windows services ----
 
         public bool CheckWindows()
