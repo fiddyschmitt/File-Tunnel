@@ -18,7 +18,7 @@ namespace ft_tests.Runner
             sshClient = new SshClient(host, port, username, password);
             sshClient.Connect();
 
-            sshClient.CreateCommand($"mkdir -p \"{remoteFolder}\"").Execute();
+            sshClient.ExecuteBounded($"mkdir -p \"{remoteFolder}\"");
 
             Stop();
 
@@ -28,7 +28,7 @@ namespace ft_tests.Runner
             Stop();
             scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
 
-            sshClient.CreateCommand($"chmod +x \"{this.remoteExecutablePath}\"").Execute();
+            sshClient.ExecuteBounded($"chmod +x \"{this.remoteExecutablePath}\"");
             this.outputFilename = outputFilename;
         }
 
@@ -40,7 +40,7 @@ namespace ft_tests.Runner
             var command = $"sudo bash -c 'nohup \"{remoteExecutablePath}\" {args} >> \"{outputFilename}\" 2>&1 &'";
 
             Debug.WriteLine($"{command}");
-            sshClient.CreateCommand(command).Execute();
+            sshClient.ExecuteBounded(command);
         }
 
         public override string GetFullCommand(string args)
@@ -53,7 +53,7 @@ namespace ft_tests.Runner
         {
             var processName = Path.GetFileName(remoteExecutablePath);
             // pkill by name to stop the process
-            sshClient.CreateCommand($"sudo pkill -x \"{processName}\" || true").Execute();
+            sshClient.ExecuteBounded($"sudo pkill -x \"{processName}\" || true");
 
             return null;
         }
@@ -63,21 +63,24 @@ namespace ft_tests.Runner
             var deleteCmd = @$"while [ -e ""{path}"" ]; do sudo rm -f ""{path}""; sleep 1; done";
             //var deleteCmd = @$"for i in {{1..10}}; do rm -f ""{path}""; sleep 1; done";
             Debug.WriteLine(deleteCmd);
-            sshClient.CreateCommand(deleteCmd).Execute();
+            sshClient.ExecuteBounded(deleteCmd);
         }
 
         public override void Run(string cmd, string args)
         {
             var command = $"sudo \"{cmd}\" {args}";
             Debug.WriteLine($"{command}");
-            sshClient.CreateCommand(command).Execute();
+            sshClient.ExecuteBounded(command);
         }
 
         public override (int ExitCode, string Output) RunCommand(string command)
         {
             Debug.WriteLine(command);
             using var sshCommand = sshClient.CreateCommand(command);
-            var stdout = sshCommand.Execute();
+            sshCommand.CommandTimeout = SshExecuteExtensions.DefaultTimeout;
+            string stdout;
+            try { stdout = sshCommand.Execute(); }
+            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (-1, "[ssh command timed out]"); }
             return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
         }
     }

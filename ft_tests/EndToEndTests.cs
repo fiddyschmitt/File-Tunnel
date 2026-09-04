@@ -758,9 +758,15 @@ namespace ft_tests
                 ssh.Connect();
                 // Non-destructive writability probe: opening the deployed binary for write ETXTBSYs while a hung
                 // thread still maps it; bs=1 count=0 conv=notrunc changes nothing. An absent binary can't be wedged.
-                var probe = ssh.CreateCommand("if [ -f /tmp/ft/ft ]; then dd if=/tmp/ft/ft of=/tmp/ft/ft bs=1 count=0 conv=notrunc 2>&1; fi").Execute();
+                var probeCmd = ssh.CreateCommand("if [ -f /tmp/ft/ft ]; then dd if=/tmp/ft/ft of=/tmp/ft/ft bs=1 count=0 conv=notrunc 2>&1; fi");
+                probeCmd.CommandTimeout = TimeSpan.FromSeconds(15);
+                var probe = probeCmd.Execute();
                 ssh.Disconnect();
                 wedged = probe.ToLowerInvariant().Contains("text file busy");
+            }
+            catch (Renci.SshNet.Common.SshOperationTimeoutException)
+            {
+                wedged = true; // the probe itself hung -> the guest is wedged; reboot it below
             }
             catch
             {
@@ -775,7 +781,7 @@ namespace ft_tests
                 ssh.Connect();
                 // Force the reboot: the hung thread is in uninterruptible sleep, so a clean shutdown stalls on it
                 // (systemd waits out its stop timeout). -f goes straight to the kernel reboot.
-                try { ssh.CreateCommand("sudo reboot -f 2>/dev/null || sudo systemctl reboot -ff 2>/dev/null || sudo reboot").Execute(); } catch { /* connection drops as it goes down */ }
+                try { var rc = ssh.CreateCommand("sudo reboot -f 2>/dev/null || sudo systemctl reboot -ff 2>/dev/null || sudo reboot"); rc.CommandTimeout = TimeSpan.FromSeconds(15); rc.Execute(); } catch { /* connection drops as it goes down */ }
                 try { ssh.Disconnect(); } catch { }
             }
             catch { }
@@ -789,7 +795,7 @@ namespace ft_tests
                 {
                     using var ssh = new SshClient(NestedGuestConnInfo());
                     ssh.Connect();
-                    ssh.CreateCommand("true").Execute();
+                    var upCmd = ssh.CreateCommand("true"); upCmd.CommandTimeout = TimeSpan.FromSeconds(8); upCmd.Execute();
                     ssh.Disconnect();
                     Thread.Sleep(3000); // small settle after boot before we deploy + mount
                     return true;
@@ -1584,7 +1590,11 @@ namespace ft_tests
             }
 
             stop.Cancel();
-            transfersTask.Wait();
+            // Bound the wait: TestDirection's socket reads take no cancellation token, so a transfer that never
+            // formed (e.g. a client's ft could not bind its ports) won't observe stop.Cancel(). Leak it rather
+            // than block the whole suite forever - the result is already recorded as "Did not finish".
+            if (!transfersTask.Wait(TimeSpan.FromSeconds(30)))
+                Debug.WriteLine($"WARNING: transfer task for [{name}] did not stop within 30s; leaking it so the suite proceeds.");
 
             sw.Stop();
 

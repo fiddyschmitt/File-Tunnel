@@ -49,27 +49,27 @@ namespace ft_tests.Runner
             sshfsPrefixMac = $"/Users/{username}/Library/Android/ft-sshfs/usr";
 
             // Fail fast if the emulator is not up, so a row that needs it is skipped rather than hanging.
-            var state = sshClient.CreateCommand($"{adb} get-state 2>&1").Execute().Trim();
+            var state = sshClient.ExecuteBounded($"{adb} get-state 2>&1").Trim();
             if (!state.EndsWith("device", StringComparison.Ordinal))
                 throw new InvalidOperationException($"Android emulator {serial} not ready on {macHost}: adb get-state = '{state}'");
 
             // Two-hop deploy: dev-box binary -> Mac staging (scp) -> emulator (adb push).
             var macStaging = $"/tmp/ft-android/{Path.GetFileName(localExecutablePath)}-{instance}";
-            sshClient.CreateCommand("mkdir -p /tmp/ft-android").Execute();
+            sshClient.ExecuteBounded("mkdir -p /tmp/ft-android");
             using (var scp = new ScpClient(connectionInfo))
             {
                 scp.Connect();
                 scp.Upload(new FileInfo(localExecutablePath), macStaging);
             }
-            sshClient.CreateCommand($"{adb} push \"{macStaging}\" \"{remoteExecutablePath}\"").Execute();
-            sshClient.CreateCommand($"{adb} shell chmod 755 \"{remoteExecutablePath}\"").Execute();
+            sshClient.ExecuteBounded($"{adb} push \"{macStaging}\" \"{remoteExecutablePath}\"");
+            sshClient.ExecuteBounded($"{adb} shell chmod 755 \"{remoteExecutablePath}\"");
 
             // Push the bundled Bionic OpenSSL (staged on the Mac by mac_android_setup.sh) into /data/local/tmp/ssl,
             // which Run() puts on LD_LIBRARY_PATH so ft's crypto backends (S3 SigV4, HTTPS/Dropbox) use real OpenSSL
             // instead of Android's BoringSSL. Best-effort: if the libs are absent, only the crypto rows are affected.
             var osslMac = $"/Users/{username}/Library/Android/ft-openssl";
-            sshClient.CreateCommand($"{adb} shell 'mkdir -p /data/local/tmp/ssl'").Execute();
-            sshClient.CreateCommand($"{adb} push \"{osslMac}/libcrypto.so\" /data/local/tmp/ssl/libcrypto.so 2>/dev/null; {adb} push \"{osslMac}/libssl.so\" /data/local/tmp/ssl/libssl.so 2>/dev/null; true").Execute();
+            sshClient.ExecuteBounded($"{adb} shell 'mkdir -p /data/local/tmp/ssl'");
+            sshClient.ExecuteBounded($"{adb} push \"{osslMac}/libcrypto.so\" /data/local/tmp/ssl/libcrypto.so 2>/dev/null; {adb} push \"{osslMac}/libssl.so\" /data/local/tmp/ssl/libssl.so 2>/dev/null; true");
 
             Stop();
         }
@@ -85,7 +85,7 @@ namespace ft_tests.Runner
                 var key = new PrivateKeyFile(keyPath);
                 using var ssh = new SshClient(new ConnectionInfo(macHost, port, username, new PrivateKeyAuthenticationMethod(username, key)));
                 ssh.Connect();
-                var raw = ssh.CreateCommand($"\"{adbPath}\" -s {serial} shell ip -4 addr show wlan0 2>/dev/null").Execute();
+                var raw = ssh.ExecuteBounded($"\"{adbPath}\" -s {serial} shell ip -4 addr show wlan0 2>/dev/null");
                 var m = System.Text.RegularExpressions.Regex.Match(raw, @"inet (\d+\.\d+\.\d+\.\d+)");
                 return m.Success ? m.Groups[1].Value : null;
             }
@@ -108,7 +108,7 @@ namespace ft_tests.Runner
             var deviceCmd = $"cd /data/local/tmp; TMPDIR=/data/local/tmp LD_LIBRARY_PATH=/data/local/tmp/ssl SSL_CERT_DIR=/system/etc/security/cacerts nohup {remoteExecutablePath} {args} >{outputFilename} 2>&1 </dev/null &";
             var command = $"{adb} shell '{deviceCmd}'";
             Debug.WriteLine(command);
-            sshClient.CreateCommand(command).Execute();
+            sshClient.ExecuteBounded(command);
         }
 
         public override string GetFullCommand(string args) => $"{adb} shell '{remoteExecutablePath} {args}'";
@@ -116,25 +116,28 @@ namespace ft_tests.Runner
         public override TimeSpan? Stop()
         {
             // Kill only THIS instance's ft on the device, matched by its unique path.
-            sshClient.CreateCommand($"{adb} shell 'pkill -f {remoteExecutablePath} || true'").Execute();
+            sshClient.ExecuteBounded($"{adb} shell 'pkill -f {remoteExecutablePath} || true'");
             return null;
         }
 
         public override void DeleteFile(string path)
         {
-            sshClient.CreateCommand($"{adb} shell 'rm -f \"{path}\" || true'").Execute();
+            sshClient.ExecuteBounded($"{adb} shell 'rm -f \"{path}\" || true'");
         }
 
         public override void Run(string cmd, string args)
         {
-            sshClient.CreateCommand($"{adb} shell '{cmd} {args}'").Execute();
+            sshClient.ExecuteBounded($"{adb} shell '{cmd} {args}'");
         }
 
         public override (int ExitCode, string Output) RunCommand(string command)
         {
             // Run a command INSIDE the emulator and block for its combined output.
             using var sshCommand = sshClient.CreateCommand($"{adb} shell '{command}'");
-            var stdout = sshCommand.Execute();
+            sshCommand.CommandTimeout = SshExecuteExtensions.DefaultTimeout;
+            string stdout;
+            try { stdout = sshCommand.Execute(); }
+            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (-1, "[ssh command timed out]"); }
             return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
         }
 
@@ -153,13 +156,13 @@ namespace ft_tests.Runner
                 // Ensure root adbd (userdebug image): the FUSE mount needs SELinux-permissive + the mount syscall.
                 // `adb root` is idempotent - a no-op (no adbd restart) if already root, else it restarts adbd, so
                 // wait for the device to reappear. MacEmulator.Launch also roots at boot; this covers other paths.
-                sshClient.CreateCommand($"{adb} root").Execute();
-                sshClient.CreateCommand($"{adb} wait-for-device").Execute();
+                sshClient.ExecuteBounded($"{adb} root");
+                sshClient.ExecuteBounded($"{adb} wait-for-device");
                 var present = sshClient.CreateCommand(
                     $"{adb} shell 'test -x {TermuxPrefixDevice}/bin/sshfs && echo READY'").Execute();
                 if (!present.Contains("READY", StringComparison.Ordinal))
                 {
-                    sshClient.CreateCommand($"{adb} shell 'mkdir -p /data/data/com.termux/files'").Execute();
+                    sshClient.ExecuteBounded($"{adb} shell 'mkdir -p /data/data/com.termux/files'");
                     // adb push <macPrefix> <devicePrefix> lands the contents at the exact Termux prefix path.
                     var push = sshClient.CreateCommand($"{adb} push \"{sshfsPrefixMac}\" {TermuxPrefixDevice}");
                     push.CommandTimeout = TimeSpan.FromMinutes(3);
@@ -239,30 +242,30 @@ namespace ft_tests.Runner
         public void PushFile(string localPath, string devicePath)
         {
             var macStaging = $"/tmp/ft-android/{Path.GetFileName(localPath)}-{instance}";
-            sshClient.CreateCommand("mkdir -p /tmp/ft-android").Execute();
+            sshClient.ExecuteBounded("mkdir -p /tmp/ft-android");
             using (var scp = new ScpClient(connectionInfo)) { scp.Connect(); scp.Upload(new FileInfo(localPath), macStaging); }
-            sshClient.CreateCommand($"{adb} push \"{macStaging}\" \"{devicePath}\"").Execute();
-            sshClient.CreateCommand($"{adb} shell chmod 600 \"{devicePath}\"").Execute();
+            sshClient.ExecuteBounded($"{adb} push \"{macStaging}\" \"{devicePath}\"");
+            sshClient.ExecuteBounded($"{adb} shell chmod 600 \"{devicePath}\"");
         }
 
         /// <summary>The bridged emulator's real LAN IP (wlan0) - where another emulator dials it for the "direct" row.</summary>
         public string? LanIp()
         {
-            var raw = sshClient.CreateCommand($"{adb} shell ip -4 addr show wlan0 2>/dev/null").Execute();
+            var raw = sshClient.ExecuteBounded($"{adb} shell ip -4 addr show wlan0 2>/dev/null");
             var m = System.Text.RegularExpressions.Regex.Match(raw, @"inet (\d+\.\d+\.\d+\.\d+)");
             return m.Success ? m.Groups[1].Value : null;
         }
 
         /// <summary>Read a small file from the device (e.g. a generated public key).</summary>
         public string ReadDeviceFile(string devicePath) =>
-            sshClient.CreateCommand($"{adb} shell cat \"{devicePath}\" 2>/dev/null").Execute().Trim();
+            sshClient.ExecuteBounded($"{adb} shell cat \"{devicePath}\" 2>/dev/null").Trim();
 
         /// <summary>Stage a multi-line shell script on the device (base64, to dodge adb/sh quoting) and run it.</summary>
         private void RunDeviceScript(string script, string name)
         {
             var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script.Replace("\r", "")));
             var path = $"/data/local/tmp/{name}.sh";
-            sshClient.CreateCommand($"{adb} shell 'echo {b64} | base64 -d > {path} && sh {path}'").Execute();
+            sshClient.ExecuteBounded($"{adb} shell 'echo {b64} | base64 -d > {path} && sh {path}'");
         }
     }
 }

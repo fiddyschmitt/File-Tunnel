@@ -21,7 +21,7 @@ namespace ft_tests.Runner
 
                 sshClient = new SshClient(host, username, password);
                 sshClient.Connect();
-                sshClient.CreateCommand(@$"mkdir ""{remoteFolder}""").Execute();
+                sshClient.ExecuteBounded(@$"mkdir ""{remoteFolder}""");
 
 
                 Stop();
@@ -89,7 +89,9 @@ namespace ft_tests.Runner
         public override TimeSpan? Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
-            sshClient.CreateCommand(@$"taskkill /IM {processName} /F").Execute();
+            var killCmd = sshClient.CreateCommand(@$"taskkill /IM {processName} /F");
+            killCmd.CommandTimeout = TimeSpan.FromSeconds(15);
+            try { killCmd.Execute(); } catch { /* taskkill timed out/errored - do not let a stuck node wedge the suite */ }
 
             return null;
         }
@@ -98,7 +100,9 @@ namespace ft_tests.Runner
         {
             var cmd = @$"@echo off & :loop & if exist ""{path}"" del /f /q ""{path}"" & if exist ""{path}"" timeout /t 1 >nul & goto loop";
             Debug.WriteLine(cmd);
-            sshClient.CreateCommand(cmd).Execute();
+            var delCmd = sshClient.CreateCommand(cmd);
+            delCmd.CommandTimeout = TimeSpan.FromSeconds(20);
+            try { delCmd.Execute(); } catch { /* the delete-loop batch can spin if a handle lingers - bound it */ }
         }
 
         public override void Run(string cmd, string args)
@@ -115,7 +119,10 @@ namespace ft_tests.Runner
             if (sshClient == null) throw new InvalidOperationException("RunCommand requires the SSH client (constructed with a non-null executable path).");
             Debug.WriteLine(command);
             using var sshCommand = sshClient.CreateCommand(command);
-            var stdout = sshCommand.Execute();
+            sshCommand.CommandTimeout = SshExecuteExtensions.DefaultTimeout;
+            string stdout;
+            try { stdout = sshCommand.Execute(); }
+            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (-1, "[ssh command timed out]"); }
             return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
         }
     }
