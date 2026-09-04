@@ -24,7 +24,13 @@ namespace ft_tests.Runner
         public override TimeSpan? Stop()
         {
             var processName = Path.GetFileName(localExecutablePath);
-            Process.Start("taskkill.exe", @$"/IM {processName} /F");
+            // CreateNoWindow so this doesn't flash a console window / Windows Terminal tab when the test host
+            // has no console of its own to inherit (Visual Studio's test runner, or a detached batch run).
+            Process.Start(new ProcessStartInfo("taskkill.exe", @$"/IM {processName} /F")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
 
             var result = process?.TotalProcessorTime;
             return result;
@@ -93,11 +99,13 @@ namespace ft_tests.Runner
         {
             var psi = new ProcessStartInfo
             {
-                //Verb = "runas",   //runs as admin, but prompts every time
-
                 FileName = cmd,
                 Arguments = args,
-                UseShellExecute = true
+                // UseShellExecute=false + CreateNoWindow=true so a short local command (e.g. cmdkey) runs
+                // hidden instead of flashing a new console window / Windows Terminal tab. (Elevation via
+                // Verb="runas" would need UseShellExecute=true, but it isn't used here.)
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
 
             Debug.WriteLine($"{cmd} {args}");
