@@ -333,12 +333,20 @@ namespace ft_tests
 
             // Client mounts idle-drop during the preceding (non-Mac) cells - which run first, so by the time a
             // Mac-involved cell runs its mounts have sat idle for many minutes. Refresh both clients' mounts to
-            // the server right before the cell; the per-cell server-service restart only touches the server.
+            // the server right before the cell.
             if (client1OS == OS.Mac || client2OS == OS.Mac || serverOS == OS.Mac)
             {
                 RefreshSmbClientMount(client1OS, serverOS, client1Runner);
                 RefreshSmbClientMount(client2OS, serverOS, client2Runner);
             }
+
+            // ...but the per-cell `systemctl restart smbd` (server.Restart, run right before ft launches) then
+            // SEVERS the freshly-established session. Linux cifs auto-reconnects; macOS smbfs does NOT - it
+            // zombies and every ft I/O HANGS ("Could not enqueue Ping" -> "Could not connect", deterministic
+            // 5/5). So for a Mac client of the Linux Samba server, re-mount AFTER the restart via this hook,
+            // which server.Restart fires once smbd is back (validated: remount succeeds ~1-2.5s post-restart).
+            if (serverOS == OS.Linux && (client1OS == OS.Mac || client2OS == OS.Mac))
+                smbServer.AfterRestart = () => RefreshMacClientMount(OS.Linux, force: true);
 
             // A Windows client reaches a non-Windows SMB server (.81 Samba / .33 macOS) via a cmdkey that must
             // live in ft's interactive session - seed it there before the cell (idempotent; see the helper).
@@ -352,11 +360,12 @@ namespace ft_tests
         // authenticated. macOS drops an idle SMB session, so a Mac client mount set up in ClassInit is
         // often dead by the time a Mac cell runs after the ~15min of non-Mac cells - surfacing as "Could
         // not connect" (the Mac ft can't write its tunnel file; the log shows "Could not enqueue Ping"
-        // within 2s). SmbServer.Restart restarts the *server* service each cell but not the *client* mount,
-        // so this closes that gap: it runs in ClassInit AND before each Mac-client SMB cell. Authenticated
-        // throughout - the typical option, and a guest session idle-drops fastest (~90s vs 200s+). A dropped
-        // mount VANISHES from `mount`, so the grep-guarded remount re-establishes it. No-op if mac_1 is null.
-        private static void RefreshMacClientMount(OS serverOS)
+        // within 2s). This runs in ClassInit AND before each Mac SMB cell to catch that idle drop; the Linux
+        // server's per-cell `systemctl restart smbd` ALSO severs the session, so it is re-run post-restart via
+        // SmbServer.AfterRestart with force:true. Authenticated throughout - the typical option, and a guest
+        // session idle-drops fastest (~90s vs 200s+). A dead mount can VANISH from `mount` OR ZOMBIE (still
+        // listed but I/O HANGS); the poll-bounded probe below handles both. No-op if mac_1 is null.
+        private static void RefreshMacClientMount(OS serverOS, bool force = false)
         {
             if (mac_1 == null) return;
             var (mp, mountSrc) = serverOS switch
@@ -365,12 +374,32 @@ namespace ft_tests
                 OS.Windows => ($"{MAC_SMB_ROOT}/{WIN_SERVER_IP}/shared", $"//{macSmbUser}:{macSmbPass}@{WIN_SERVER_IP}/Shared"),
                 _ => ($"{MAC_SMB_ROOT}/192.168.0.33/ftshare", $"//{macServerUser}:{macServerPass}@192.168.0.33/ftshare"),
             };
-            // An idle-dropped smbfs mount can VANISH from `mount` OR ZOMBIE (still listed but dead), so test
-            // writability and force-remount on failure rather than trusting `mount | grep`. The && short-
-            // circuits so touch never runs against a bare (unmounted) local dir.
-            mac_1.RunCommand($"MP=\"{mp}\"; mkdir -p \"$MP\"; " +
-                $"if mount | grep -q \"$MP\" && touch \"$MP/.ftw\" 2>/dev/null; then rm -f \"$MP/.ftw\"; " +
-                $"else umount -f \"$MP\" 2>/dev/null; mount_smbfs \"{mountSrc}\" \"$MP\"; fi");
+            if (force)
+            {
+                // The caller KNOWS the mount is dead - e.g. a server `systemctl restart smbd` just severed the
+                // smbfs session, which macOS does NOT auto-reconnect (it zombies). Skip the writability probe
+                // (which would only waste 8s hanging on the dead mount) and remount directly. Validated on .33:
+                // restart-then-remount succeeds reliably in ~1-2.5s.
+                mac_1.RunCommand($"MP=\"{mp}\"; mkdir -p \"$MP\"; umount -f \"$MP\" 2>/dev/null; mount_smbfs \"{mountSrc}\" \"$MP\"");
+                return;
+            }
+            // An idle-dropped smbfs mount can VANISH from `mount` OR ZOMBIE (still listed but dead). The trap:
+            // a ZOMBIE smbfs mount BLOCKS I/O instead of failing - a bare `touch` HANGS forever. The old
+            // `if mount|grep && touch ... else remount` therefore hung on the touch and never reached the
+            // remount branch; the bounded SSH just timed out and left the DEAD mount in place, so the
+            // late-ordered Mac SMB cells failed 5/5 with "Could not connect" (ft can't even write its Ping).
+            // Fix: probe writability in the BACKGROUND with its fds redirected (so a hung probe can't hold the
+            // SSH channel open) and poll it for up to 8s via `kill -0`; a probe that hangs (or fails, or a
+            // vanished mount) => force-remount. A healthy mount passes in ~1s and is left untouched. Validated
+            // on .33: healthy 1.1s, unmounted 1.2s->remount, hung-probe 8.5s->remount.
+            mac_1.RunCommand($"MP=\"{mp}\"; mkdir -p \"$MP\"; ok=0; M=\"/tmp/.ftw.$$\"; rm -f \"$M\"; " +
+                $"if mount | grep -q \"$MP\"; then " +
+                    $"( touch \"$MP/.ftw\" 2>/dev/null && rm -f \"$MP/.ftw\" 2>/dev/null && echo 1 > \"$M\" ) >/dev/null 2>&1 & p=$!; " +
+                    $"i=0; while [ $i -lt 8 ]; do kill -0 $p 2>/dev/null || break; sleep 1; i=$((i+1)); done; " +
+                    $"kill -9 $p 2>/dev/null; " +
+                    $"[ \"$(cat \"$M\" 2>/dev/null)\" = 1 ] && ok=1; " +
+                $"fi; rm -f \"$M\"; " +
+                $"[ $ok -eq 1 ] || {{ umount -f \"$MP\" 2>/dev/null; mount_smbfs \"{mountSrc}\" \"$MP\"; }}");
         }
 
         // (Re)establish ONE SMB client's *mount* to the given server's share, idempotently: Mac via smbfs

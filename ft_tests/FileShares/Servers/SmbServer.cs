@@ -16,9 +16,16 @@ namespace ft_tests.FileShares.Servers
             this.processRunner = processRunner;
         }
 
+        // Fired right after the server service is (re)started. A Linux `systemctl restart smbd` SEVERS every
+        // client's SMB session: Linux cifs transparently auto-reconnects on next I/O, but macOS smbfs does NOT -
+        // it zombies (all subsequent I/O then HANGS). So when a Mac client is involved, the test wires this hook
+        // to force-remount that client AFTER the restart and BEFORE ft launches, so ft never starts against a
+        // dead mount. Null (the default) for cells with no Mac client. See RefreshMacClientMount(force:true).
+        public Action? AfterRestart { get; set; }
+
         public override void Restart()
         {
-            if (OS == OS.Linux) processRunner.Run("systemctl", "restart smbd");
+            if (OS == OS.Linux) { processRunner.Run("systemctl", "restart smbd"); AfterRestart?.Invoke(); }
             // The Windows SMB server is the dedicated server VM (.84) - a hand-built VM with a DISTINCT machine
             // SID, so the same-SID client clones can authenticate to it (Windows 24H2+ rejects same-SID SMB).
             // We do NOT restart lanmanserver per cell (as we did for the flaky externals): `net stop` PROMPTS
