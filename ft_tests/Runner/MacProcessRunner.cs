@@ -87,12 +87,8 @@ namespace ft_tests.Runner
         public override (int ExitCode, string Output) RunCommand(string command)
         {
             Debug.WriteLine(command);
-            using var sshCommand = sshClient.CreateCommand(command);
-            sshCommand.CommandTimeout = SshExecuteExtensions.DefaultTimeout;
-            string stdout;
-            try { stdout = sshCommand.Execute(); }
-            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (-1, "[ssh command timed out]"); }
-            return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
+            var (output, status, completed) = sshClient.ExecuteHardBounded(command);
+            return completed ? (status, output) : (-1, "[ssh command timed out]");
         }
     }
 }

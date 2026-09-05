@@ -89,10 +89,10 @@ namespace ft_tests.Runner
         public override TimeSpan? Stop()
         {
             var processName = Path.GetFileName(remoteExecutablePath);
-            var killCmd = sshClient.CreateCommand(@$"taskkill /IM {processName} /F");
-            killCmd.CommandTimeout = TimeSpan.FromSeconds(15);
-            try { killCmd.Execute(); } catch { /* taskkill timed out/errored - do not let a stuck node wedge the suite */ }
-
+            // ExecuteBounded hard-caps the whole call INCLUDING channel-open. A tiring Windows node whose sshd
+            // stops answering channel-open used to hang here forever (CommandTimeout does not cover Open()),
+            // wedging the whole run - the exact 4.5h stall this replaced.
+            sshClient.ExecuteBounded(@$"taskkill /IM {processName} /F", 15);
             return null;
         }
 
@@ -100,9 +100,7 @@ namespace ft_tests.Runner
         {
             var cmd = @$"@echo off & :loop & if exist ""{path}"" del /f /q ""{path}"" & if exist ""{path}"" timeout /t 1 >nul & goto loop";
             Debug.WriteLine(cmd);
-            var delCmd = sshClient.CreateCommand(cmd);
-            delCmd.CommandTimeout = TimeSpan.FromSeconds(20);
-            try { delCmd.Execute(); } catch { /* the delete-loop batch can spin if a handle lingers - bound it */ }
+            sshClient.ExecuteBounded(cmd, 20); // hard-bounded (covers channel-open); the batch loop can spin, so cap it
         }
 
         public override void Run(string cmd, string args)
@@ -118,12 +116,8 @@ namespace ft_tests.Runner
         {
             if (sshClient == null) throw new InvalidOperationException("RunCommand requires the SSH client (constructed with a non-null executable path).");
             Debug.WriteLine(command);
-            using var sshCommand = sshClient.CreateCommand(command);
-            sshCommand.CommandTimeout = SshExecuteExtensions.DefaultTimeout;
-            string stdout;
-            try { stdout = sshCommand.Execute(); }
-            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (-1, "[ssh command timed out]"); }
-            return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
+            var (output, status, completed) = sshClient.ExecuteHardBounded(command);
+            return completed ? (status, output) : (-1, "[ssh command timed out]");
         }
     }
 }

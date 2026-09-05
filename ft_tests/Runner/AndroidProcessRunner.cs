@@ -133,12 +133,8 @@ namespace ft_tests.Runner
         public override (int ExitCode, string Output) RunCommand(string command)
         {
             // Run a command INSIDE the emulator and block for its combined output.
-            using var sshCommand = sshClient.CreateCommand($"{adb} shell '{command}'");
-            sshCommand.CommandTimeout = SshExecuteExtensions.DefaultTimeout;
-            string stdout;
-            try { stdout = sshCommand.Execute(); }
-            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (-1, "[ssh command timed out]"); }
-            return (sshCommand.ExitStatus ?? -1, stdout + sshCommand.Error);
+            var (output, status, completed) = sshClient.ExecuteHardBounded($"{adb} shell '{command}'");
+            return completed ? (status, output) : (-1, "[ssh command timed out]");
         }
 
         // ---- sshfs (issue #45): let the emulator be an sshfs client, exactly like a Termux user who runs
