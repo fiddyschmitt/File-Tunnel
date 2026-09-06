@@ -6,7 +6,7 @@
 	<!-- Single source of truth for the product version: the SDK turns <Version> into the
 	     Assembly/File/Informational version attributes, and Program.cs reads it back at runtime
 	     (see VERSION). IncludeSourceRevision=false keeps InformationalVersion exactly the <Version>. -->
-	<Version>3.5.3</Version>
+	<Version>3.5.4</Version>
 	<Product>File Tunnel</Product>
 	<Copyright>Copyright © 2023</Copyright>
 	<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
