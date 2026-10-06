@@ -15,6 +15,9 @@ namespace ft_tests
     ///     so it classifies as that fs -> Normal. That is correct: QEMU virtio-9p (cache=none) is coherent,
     ///     so Normal works - unlike diod's TCP-9p, which reports V9FS and IS incoherent (needs
     ///     upload-download). So the V9FS row below covers 9P-over-TCP (diod), not QEMU virtio-9p.
+    ///   - A WSL 2 drive (/mnt/c) ALSO reports V9FS, but is coherent and must run Normal: the Windows end of
+    ///     the tunnel is on plain NTFS (Normal), and both ends have to be in the same mode. ft tells it apart
+    ///     from network 9P by the mount's "aname=drvfs" option. See the ModesFor tests below.
     /// </summary>
     [TestClass]
     [TestCategory("Unit")]
@@ -30,6 +33,79 @@ namespace ft_tests
         public void ClassifyMountMagic_MapsMagicToKind(int magic, Extensions.MountKind expected, string description)
         {
             Assert.AreEqual(expected, Extensions.ClassifyMountMagic(magic), description);
+        }
+
+        // /proc/self/mountinfo lines captured verbatim from real mounts: a WSL 2.7 drive (Ubuntu 24.04), and the
+        // ft_test_env lab (ext4 root, diod 9P over TCP, sshfs, and QEMU virtio-9p / virtio-fs shares).
+        private const string Root = "28 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro";
+        private const string WslDrive = @"132 82 0:70 / /mnt/c rw,noatime - 9p C:\134 rw,aname=drvfs;path=C:\;uid=0;gid=0;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=6,wfd=6";
+        private const string Diod = "99 28 0:63 / /mnt/9p rw,relatime shared:313 - 9p 192.168.0.81 rw,aname=/srv/9p,access=client,msize=65536,trans=tcp";
+        private const string Sshfs = "241 28 0:57 / /home/user/share rw,nosuid,nodev,relatime shared:271 - fuse.sshfs user@192.168.0.81:/srv/sshfs rw,user_id=1000,group_id=1000";
+        private const string Virtio9p = "179 28 0:53 / /mnt/v9p rw,relatime shared:229 - 9p ft9p rw,access=client,trans=virtio";
+        private const string VirtioFs = "65 28 0:52 / /mnt/vfs rw,relatime shared:223 - virtiofs ftvfs rw";
+
+        private static readonly string[] MountInfo = [Root, WslDrive, Diod, Sshfs, Virtio9p, VirtioFs];
+
+        [DataTestMethod]
+        [DataRow("/mnt/c/Temp", "9p", true, "a folder on a WSL drive")]
+        [DataRow("/mnt/c", "9p", true, "the WSL drive's own mountpoint")]
+        [DataRow("/mnt/9p/tunnel", "9p", false, "a network 9P share is not a WSL drive")]
+        [DataRow("/home/user/share", "fuse.sshfs", false, "sshfs")]
+        [DataRow("/mnt/v9p/tunnel", "9p", false, "QEMU virtio-9p is 9P too, but not a WSL drive")]
+        [DataRow("/mnt/vfs/x/y", "virtiofs", false, "virtio-fs, nested folder")]
+        [DataRow("/mnt/cache/data", "ext4", false, "/mnt/cache must not match the /mnt/c mount")]
+        [DataRow("/srv/share", "ext4", false, "anything else falls back to the root mount")]
+        public void FindMount_PicksTheLongestMountpointPrefix(string path, string expectedFsType, bool expectWslDrive, string description)
+        {
+            var (fsType, superOptions) = Extensions.FindMount(MountInfo, path);
+
+            Assert.AreEqual(expectedFsType, fsType, description);
+            Assert.AreEqual(expectWslDrive, Extensions.IsWslDriveOptions(superOptions), description);
+        }
+
+        [TestMethod]
+        public void FindMount_ReturnsEmpty_WhenNothingMatchesOrALineIsMalformed()
+        {
+            Assert.AreEqual(("", ""), Extensions.FindMount([], "/mnt/c/Temp"));
+            Assert.AreEqual(("", ""), Extensions.FindMount(["garbage without a separator", "1 2 3 - 9p"], "/mnt/c/Temp"));
+        }
+
+        // The mode ft picks when the user passes none, per kind of mount. The WSL row is the regression test
+        // for v3.1.0-v3.5.4, which sent a WSL drive down the network-9P path (upload-download): the Windows end
+        // stayed in Normal, so a tunnel started with no mode flags never came online.
+        [DataTestMethod]
+        [DataRow(Extensions.MountKind.NineP, WslDrive, Extensions.TunnelMode.Normal, "a WSL drive (9P)")]
+        [DataRow(Extensions.MountKind.NineP, Diod, Extensions.TunnelMode.UploadDownload, "a 9P mount")]
+        [DataRow(Extensions.MountKind.Fuse, Sshfs, Extensions.TunnelMode.IsolatedIo, "an sshfs / FUSE mount")]
+        [DataRow(Extensions.MountKind.Fuse, VirtioFs, Extensions.TunnelMode.Normal, "a virtio-fs mount")]
+        [DataRow(Extensions.MountKind.Vboxsf, Root, Extensions.TunnelMode.IsolatedIo, "a VirtualBox shared folder (vboxsf)")]
+        [DataRow(Extensions.MountKind.Other, Root, Extensions.TunnelMode.Normal, "")]
+        public void ModesFor_PrefersTheRightMode(Extensions.MountKind kind, string mountInfoLine, Extensions.TunnelMode expectedPreferred, string expectedDescription)
+        {
+            var mountpoint = mountInfoLine.Split(' ')[4];
+            var (fsType, superOptions) = Extensions.FindMount([mountInfoLine], mountpoint);
+
+            var modes = Extensions.ModesFor(kind, fsType, superOptions);
+
+            Assert.AreEqual(expectedPreferred, modes.Preferred);
+            Assert.AreEqual(expectedDescription, modes.Description);
+            Assert.IsTrue(modes.Supports(expectedPreferred), "the preferred mode must be one of the known-good modes");
+        }
+
+        [TestMethod]
+        public void ModesFor_WslDrive_SupportsEveryMode_ButNetworkNinePOnlyUploadDownload()
+        {
+            var wsl = Extensions.ModesFor(Extensions.MountKind.NineP, "9p", Extensions.FindMount([WslDrive], "/mnt/c").SuperOptions);
+            var diod = Extensions.ModesFor(Extensions.MountKind.NineP, "9p", Extensions.FindMount([Diod], "/mnt/9p").SuperOptions);
+
+            foreach (var mode in new[] { Extensions.TunnelMode.Normal, Extensions.TunnelMode.IsolatedIo, Extensions.TunnelMode.UploadDownload })
+            {
+                Assert.IsTrue(wsl.Supports(mode), $"WSL drive should support {mode}");
+            }
+
+            Assert.IsFalse(diod.Supports(Extensions.TunnelMode.Normal));
+            Assert.IsFalse(diod.Supports(Extensions.TunnelMode.IsolatedIo));
+            Assert.IsTrue(diod.Supports(Extensions.TunnelMode.UploadDownload));
         }
     }
 }

@@ -622,35 +622,44 @@ namespace ft
         // stale / Normal is unreliable -> IsolatedIo) from virtio-fs (held handle refreshes on an fstat,
         // measured ~2.4x faster than reopen -> Normal). The mount's fstype string does: "virtiofs" vs
         // "fuse.sshfs". Read it from /proc/self/mountinfo (the longest mountpoint that prefixes the path).
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MountFsTypeCache = new();
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string FsType, string SuperOptions)> MountInfoCache = new();
 
-        private static string MountFsType(string path)
+        private static (string FsType, string SuperOptions) MountInfoFor(string path)
         {
-            return MountFsTypeCache.GetOrAdd(path, p =>
+            return MountInfoCache.GetOrAdd(path, p =>
             {
                 try
                 {
                     var full = Path.GetFullPath(File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p));
-                    var bestMount = ""; var bestFs = "";
-                    foreach (var line in File.ReadAllLines("/proc/self/mountinfo"))
-                    {
-                        // <id> <parent> <maj:min> <root> <mountpoint> <opts> [tags] - <fstype> <source> <superopts>
-                        var dash = line.IndexOf(" - ", StringComparison.Ordinal);
-                        if (dash < 0) continue;
-                        var left = line[..dash].Split(' ');
-                        if (left.Length < 5) continue;
-                        var mountpoint = left[4];
-                        var fstype = line[(dash + 3)..].Split(' ')[0];
-                        var isMatch = full == mountpoint || full.StartsWith(mountpoint.TrimEnd('/') + "/", StringComparison.Ordinal);
-                        if (isMatch && mountpoint.Length > bestMount.Length)
-                        {
-                            bestMount = mountpoint; bestFs = fstype;
-                        }
-                    }
-                    return bestFs;
+                    return FindMount(File.ReadAllLines("/proc/self/mountinfo"), full);
                 }
-                catch { return ""; }
+                catch { return ("", ""); }
             });
+        }
+
+        private static string MountFsType(string path) => MountInfoFor(path).FsType;
+
+        // The fstype and super-options of the /proc/self/mountinfo entry whose mountpoint is the longest
+        // prefix of fullPath. Pure (no I/O), so it is unit-testable against captured mountinfo lines.
+        public static (string FsType, string SuperOptions) FindMount(IEnumerable<string> mountInfoLines, string fullPath)
+        {
+            var bestMount = ""; var bestFs = ""; var bestOptions = "";
+            foreach (var line in mountInfoLines)
+            {
+                // <id> <parent> <maj:min> <root> <mountpoint> <opts> [tags] - <fstype> <source> <superopts>
+                var dash = line.IndexOf(" - ", StringComparison.Ordinal);
+                if (dash < 0) continue;
+                var left = line[..dash].Split(' ');
+                if (left.Length < 5) continue;
+                var mountpoint = left[4];
+                var right = line[(dash + 3)..].Split(' ');
+                var isMatch = fullPath == mountpoint || fullPath.StartsWith(mountpoint.TrimEnd('/') + "/", StringComparison.Ordinal);
+                if (isMatch && mountpoint.Length > bestMount.Length)
+                {
+                    bestMount = mountpoint; bestFs = right[0]; bestOptions = right.Length > 2 ? right[2] : "";
+                }
+            }
+            return (bestFs, bestOptions);
         }
 
         // True when the path is on a virtio-fs mount (a FUSE subtype). Unlike sshfs, its held read handle
@@ -682,21 +691,42 @@ namespace ft
         // THE single source of truth for ft's per-filesystem read-mode knowledge: which modes work on the
         // filesystem the Read file is on, and which ft prefers (fastest that works). The auto-selector applies
         // Preferred when the user gives no mode; the conflict warning checks Preferred/Supports(). Detection is
-        // by statfs magic, refined by mountinfo fstype where the magic is ambiguous (virtio-fs vs sshfs).
+        // by statfs magic, refined by the mountinfo entry where the magic is ambiguous (virtio-fs vs sshfs,
+        // a WSL drive vs network 9P).
         // Description is empty for ordinary coherent filesystems, which need no announcement.
-        public static FileSystemModes ModesForReadFile(string path) =>
+        public static FileSystemModes ModesForReadFile(string path)
+        {
+            var kind = ClassifyMountMagic(MountMagic(path));
+            // mountinfo is only consulted where the statfs magic alone is ambiguous.
+            (string FsType, string SuperOptions) info = kind is MountKind.Fuse or MountKind.NineP ? MountInfoFor(path) : ("", "");
+            return ModesFor(kind, info.FsType, info.SuperOptions);
+        }
+
+        // WSL 2 shares the Windows drives (/mnt/c ...) with the distro over 9P, exported under the name "drvfs".
+        public static bool IsWslDriveOptions(string superOptions) =>
+            superOptions.Contains("aname=drvfs", StringComparison.Ordinal);
+
+        // The decision itself, as a pure function of what the mount reports, so it is unit-testable.
+        public static FileSystemModes ModesFor(MountKind kind, string fsType, string superOptions) => kind switch
+        {
             // virtio-fs: a held handle refreshes via fstat (ForceRead does it) -> Normal works, ~2.4x faster
             // than reopen-per-read. All three modes work.
-            IsVirtioFsMount(path) ? new("a virtio-fs mount", TunnelMode.Normal, AllModes) :
+            MountKind.Fuse when string.Equals(fsType, "virtiofs", StringComparison.Ordinal) => new("a virtio-fs mount", TunnelMode.Normal, AllModes),
             // vboxsf: a held handle stays stale even after dropping caches; only a fresh open() sees new data.
-            IsVboxsfMount(path) ? new("a VirtualBox shared folder (vboxsf)", TunnelMode.IsolatedIo, ReopenOnly) :
+            MountKind.Vboxsf => new("a VirtualBox shared folder (vboxsf)", TunnelMode.IsolatedIo, ReopenOnly),
             // sshfs / other FUSE: a held handle is stale and an in-place refresh is unreliable under load.
-            IsFuseMount(path) ? new("an sshfs / FUSE mount", TunnelMode.IsolatedIo, ReopenOnly) :
+            MountKind.Fuse => new("an sshfs / FUSE mount", TunnelMode.IsolatedIo, ReopenOnly),
+            // A WSL drive: 9P, but a held handle sees appends at once, so Normal works and is ~10x faster than
+            // upload-download (measured on WSL 2.7, all three modes pass). Normal also HAS to be the default
+            // here: the Windows end of such a tunnel is on plain NTFS and runs Normal, and both ends must be
+            // in the same mode. v3.1.0-v3.5.4 treated this as network 9P, so the tunnel never came online.
+            MountKind.NineP when IsWslDriveOptions(superOptions) => new("a WSL drive (9P)", TunnelMode.Normal, AllModes),
             // 9P (diod over TCP): cache-coherent but delivers whole files out of order -> whole-file transfer only.
-            IsNinePMount(path) ? new("a 9P mount", TunnelMode.UploadDownload, UploadOnly) :
+            MountKind.NineP => new("a 9P mount", TunnelMode.UploadDownload, UploadOnly),
             // Coherent local/network filesystems (ext4, NFS, CIFS, and QEMU virtio-9p, which reports its ext
             // backing magic): a held handle sees appends -> all modes work, Normal is fastest.
-            new("", TunnelMode.Normal, AllModes);
+            _ => new("", TunnelMode.Normal, AllModes),
+        };
 
         // O_DIRECT's numeric value is architecture-specific on Linux. Confirmed 0x4000 on x86/x86-64;
         // null on architectures we haven't validated, where ForceRead falls back to a plain read.
