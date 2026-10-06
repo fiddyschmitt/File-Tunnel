@@ -1078,7 +1078,7 @@ namespace ft_tests
             ConductTunnelTests(Mode.HttpApi, side1, new Server(OS.Linux, FileShareType.WebDav), side2, readPath1, writePath1, readPath2, writePath2);
         }
 
-        // S3 (MinIO on .81:9000, bucket 'fttest') - exercises ft's native SigV4 signer end-to-end
+        // S3 (SILO - the maintained MinIO fork - on .81:9000, bucket 'fttest') - exercises ft's native SigV4 signer end-to-end
         // against a strictly-validating server. MinIO specifically: it is strongly consistent like real
         // AWS S3; `rclone serve s3` is NOT (its VFS caches object presence for minutes, deadlocking
         // ft's single-slot rapid write/delete handoff mid-transfer). Bucket names must be >= 3 chars,

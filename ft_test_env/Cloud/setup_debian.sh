@@ -232,49 +232,76 @@ echo "WebDAV (nginx) listening on 0.0.0.0:8080 at /dav/"
 
 
 
-##### Setup an S3-compatible server (MinIO) on 0.0.0.0:9000 for ft's --s3-native backend
-# MinIO validates SigV4 exactly like AWS (the whole point - it exercises ft's hand-rolled signer) and,
+##### Setup an S3-compatible server on 0.0.0.0:9000 for ft's --s3 backend
+# The server validates SigV4 exactly like AWS (the whole point - it exercises ft's hand-rolled signer) and,
 # unlike `rclone serve s3`, is strongly consistent with no VFS directory cache. That matters: ft's
 # single-slot UploadDownload does rapid write/delete/overwrite on ONE object and relies on immediate
 # read-after-write / read-after-delete (as real AWS S3 has been since Dec 2020). rclone's VFS caches
 # object presence for minutes, which deadlocks the writer<->reader handoff mid-transfer and times the
-# S3 e2e test out at 180s even though ft's client is correct. MinIO has no such layer.
+# S3 e2e test out at 180s even though ft's client is correct.
+#
+# This used to be MinIO, downloaded from dl.min.io. MinIO has since archived its open-source server and
+# removed every community binary from that site (it answers 410 Gone), so this installs SILO instead - the
+# maintained community fork (github.com/pgsty/silo) of the same code: same SigV4 validation, same
+# consistency, same MINIO_* settings and /minio/* routes. The release is PINNED and checksum-verified, so a
+# moved or replaced download fails loudly rather than running something else.
+#
 # The root creds become the S3 access-key/secret-key; throwaway lab-only values like the other creds.
-# NOTE: S3 bucket names must be >= 3 chars (MinIO enforces this; rclone did not), so the bucket is
-# 'fttest', not 'ft' - the S3Native test passes the same name.
-curl -sfL -o /tmp/minio https://dl.min.io/server/minio/release/linux-amd64/minio
-curl -sfL -o /tmp/mc    https://dl.min.io/client/mc/release/linux-amd64/mc
-install -m 755 /tmp/minio /usr/local/bin/minio
-install -m 755 /tmp/mc    /usr/local/bin/mc
-rm -f /tmp/minio /tmp/mc
-mkdir -p /srv/minio
+# NOTE: S3 bucket names must be >= 3 chars (rclone did not enforce this), so the bucket is 'fttest', not
+# 'ft' - the S3 test passes the same name.
+#
+# NON-FATAL: an external download must never stop the node from provisioning. When dl.min.io began
+# answering 410, `set -e` aborted the whole script right here, so the readiness sentinel below and the
+# nested QEMU guest were silently skipped on every node. The subshell still stops at its own first error
+# (a failed download or checksum mismatch installs nothing); it is deliberately NOT written as
+# `( ... ) || ...`, because bash ignores `set -e` inside a subshell used that way.
+set +e
+(
+  set -e
+  S3_RELEASE=RELEASE.2026-09-16T00-00-00Z
+  S3_TARBALL=silo_20260916000000.0.0_linux_amd64.tar.gz
+  S3_SHA256=381e745510a8fb64323d7bb3207f95984b7f4ed826f4fcad318f97683c420c73
+  curl -sfL -o "/tmp/$S3_TARBALL" "https://github.com/pgsty/silo/releases/download/$S3_RELEASE/$S3_TARBALL"
+  echo "$S3_SHA256  /tmp/$S3_TARBALL" | sha256sum -c --quiet -
+  tar -xzf "/tmp/$S3_TARBALL" -C /tmp silo
+  install -m 755 /tmp/silo /usr/local/bin/silo
+  rm -f /tmp/silo "/tmp/$S3_TARBALL"
+  mkdir -p /srv/minio
 
-cat > /etc/systemd/system/ft-s3.service <<'EOF'
+  cat > /etc/systemd/system/ft-s3.service <<'EOF'
 [Unit]
-Description=S3-compatible server (MinIO) for ft tests
+Description=S3-compatible server (SILO, a MinIO fork) for ft tests
 After=network.target
 
 [Service]
 Environment=MINIO_ROOT_USER=ftaccess
 Environment=MINIO_ROOT_PASSWORD=ftsecret
-ExecStart=/usr/local/bin/minio server /srv/minio --address :9000 --console-address :9001
+ExecStart=/usr/local/bin/silo server /srv/minio --address :9000 --console-address :9001
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
+  systemctl daemon-reload
+  systemctl enable ft-s3
+  systemctl start ft-s3
 
-systemctl daemon-reload
-systemctl enable ft-s3
-systemctl start ft-s3
-
-# Wait for the API to answer, then create the 'fttest' bucket (idempotent).
-for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:9000/minio/health/live && break; sleep 1; done
-mc alias set ftlocal http://localhost:9000 ftaccess ftsecret >/dev/null 2>&1
-mc mb --ignore-existing ftlocal/fttest
-
-echo "S3-compatible server (MinIO) listening on 0.0.0.0:9000, bucket 'fttest'"
+  # Create the 'fttest' bucket with a SigV4-signed PUT (curl signs it itself, so no separate client binary
+  # is needed). Retried, because the server refuses connections and then answers 503 for a moment while it
+  # starts. Idempotent: an existing bucket answers 409.
+  code=000
+  for i in $(seq 1 60); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:us-east-1:s3" --user ftaccess:ftsecret -X PUT http://localhost:9000/fttest || true)
+    case "$code" in 200|409) break ;; esac
+    sleep 1
+  done
+  case "$code" in 200|409) ;; *) echo "creating bucket 'fttest' failed: HTTP $code"; exit 1 ;; esac
+  echo "S3-compatible server (SILO) listening on 0.0.0.0:9000, bucket 'fttest'"
+)
+s3_rc=$?
+set -e
+[ "$s3_rc" -eq 0 ] || echo "WARNING: S3 server setup failed (non-fatal) - the S3 tests will fail until this is fixed"
 
 
 # Mark the node ready as soon as the STANDARD services are up. The nested QEMU guest section below (with
