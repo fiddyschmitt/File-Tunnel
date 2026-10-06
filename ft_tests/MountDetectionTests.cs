@@ -12,9 +12,11 @@ namespace ft_tests
     ///     mountinfo fstype ("virtiofs" vs "fuse.sshfs", not by statfs): virtio-fs runs Normal (its held handle
     ///     refreshes via fstat, ~2.4x faster), sshfs runs IsolatedIo. See Extensions.ModesForReadFile.
     ///   - virtio-9p (QEMU -virtfs) reports its BACKING filesystem's magic (e.g. ext4 0xEF53), NOT V9FS,
-    ///     so it classifies as that fs -> Normal. That is correct: QEMU virtio-9p (cache=none) is coherent,
-    ///     so Normal works - unlike diod's TCP-9p, which reports V9FS and IS incoherent (needs
-    ///     upload-download). So the V9FS row below covers 9P-over-TCP (diod), not QEMU virtio-9p.
+    ///     so it classifies as that fs -> Normal. A held handle there sees appends, so Normal works - unlike
+    ///     diod's TCP-9p, which reports V9FS and needs upload-download. So the V9FS row below covers
+    ///     9P-over-TCP (diod), not QEMU virtio-9p. BUT a held read handle on any Linux 9p mount goes stale
+    ///     across a purge, so ReusableFile reopens it after each one; that is keyed off the mountinfo fstype
+    ///     ("9p"), the only place virtio-9p is recognisable. See the IsNinePFsType test below.
     ///   - A WSL 2 drive (/mnt/c) ALSO reports V9FS, but is coherent and must run Normal: the Windows end of
     ///     the tunnel is on plain NTFS (Normal), and both ends have to be in the same mode. ft tells it apart
     ///     from network 9P by the mount's "aname=drvfs" option. See the ModesFor tests below.
@@ -61,6 +63,20 @@ namespace ft_tests
 
             Assert.AreEqual(expectedFsType, fsType, description);
             Assert.AreEqual(expectWslDrive, Extensions.IsWslDriveOptions(superOptions), description);
+        }
+
+        // Which mounts get the read handle reopened after a purge (Extensions.IsNinePFileSystem): every 9p
+        // mount, including QEMU virtio-9p, which statfs reports as its backing filesystem.
+        [DataTestMethod]
+        [DataRow("/mnt/v9p/tunnel", true, "QEMU virtio-9p")]
+        [DataRow("/mnt/9p/tunnel", true, "9P over TCP (diod)")]
+        [DataRow("/mnt/c/Temp", true, "a WSL drive")]
+        [DataRow("/mnt/vfs/tunnel", false, "virtio-fs")]
+        [DataRow("/home/user/share/tunnel", false, "sshfs")]
+        [DataRow("/srv/share", false, "ext4")]
+        public void IsNinePFsType_IsTrueForEveryNinePMount(string path, bool expected, string description)
+        {
+            Assert.AreEqual(expected, Extensions.IsNinePFsType(Extensions.FindMount(MountInfo, path).FsType), description);
         }
 
         [TestMethod]

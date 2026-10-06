@@ -662,6 +662,13 @@ namespace ft
             return (bestFs, bestOptions);
         }
 
+        // True when the path is on a mount whose filesystem type is 9p - going by mountinfo, NOT the statfs
+        // magic. QEMU virtio-9p reports its BACKING filesystem's magic, so IsNinePMount (statfs) never sees it,
+        // yet it is served by the same Linux 9p client as diod and WSL drives.
+        public static bool IsNinePFileSystem(string path) => IsNinePFsType(MountInfoFor(path).FsType);
+
+        public static bool IsNinePFsType(string fsType) => string.Equals(fsType, "9p", StringComparison.Ordinal);
+
         // True when the path is on a virtio-fs mount (a FUSE subtype). Unlike sshfs, its held read handle
         // refreshes via fstat (ForceRead does this), so it runs Normal mode - the fastest working mode here.
         public static bool IsVirtioFsMount(string path) =>

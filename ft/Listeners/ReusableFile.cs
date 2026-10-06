@@ -306,9 +306,20 @@ namespace ft.Listeners
             // post-purge appends before the offline timeout - the reader stalls, the tunnel is declared
             // offline and every carried connection is torn down mid-transfer. Reopening the handle at the
             // purge boundary re-syncs the smbfs client cache reliably (exactly what --isolated-io does
-            // on every read, which is why IR never hits this). macOS-only: other platforms read a purged
-            // file coherently, and an extra open there is pure cost. Measured: LMM 6/12 -> 12/12, 0 timeouts.
-            var reopenReadHandleAfterPurge = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+            // on every read, which is why IR never hits this). Measured: LMM 6/12 -> 12/12, 0 timeouts.
+            //
+            // The Linux 9p client has the same weakness, far more reliably: after the counterpart purges the
+            // file, a held read handle does not see the data written afterwards, so a purge ends the tunnel
+            // (the reader stalls, the tunnel goes offline after the timeout and the forward listener closes).
+            // That cut transfers above --max-size (10 MB) short on QEMU virtio-9p from v3.1.0 until this was
+            // added. Measured there (guest kernel 6.12): a 16 MB transfer died at the first purge in 7 of 9
+            // runs and at a later purge in the other two; with the reopen, 16/16/64/64 MB and 8/16/32 MB with
+            // a purge every 2 MB all pass. diod shows the same failure when forced into Normal. A WSL drive
+            // copes without the reopen, and is unharmed by it (64 MB and a purge every 2 MB pass there too).
+            //
+            // Elsewhere a purged file reads coherently through the held handle, and an extra open is pure cost.
+            var reopenReadHandleAfterPurge = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                                             || Extensions.IsNinePFileSystem(ReadFromFilename);
 
             // macOS NFS: a held read handle's attribute cache extends toward acregmax (~10s) while it keeps
             // seeing a stale EOF, so a peer's appends don't become visible before the tunnel timeout - a
