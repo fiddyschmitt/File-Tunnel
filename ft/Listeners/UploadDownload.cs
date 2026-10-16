@@ -598,34 +598,6 @@ namespace ft.Listeners
                         {
                             Program.Log($"[{readFileShortName}] Deserialised {commandsProcessed:N0} commands from one file ({memoryStream.Length.BytesToString()})");
                         }
-
-                        var filesInUseSnapshot = filesInUse.ToList();
-                        foreach (var entry in filesInUseSnapshot)
-                        {
-                            if (fileAccess.Exists(entry.Key))
-                            {
-                                var timeSinceSent = DateTime.Now - entry.Value;
-                                if (timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds)
-                                {
-                                    try
-                                    {
-                                        fileAccess.Delete(entry.Key);
-                                    }
-                                    catch { }
-
-                                    filesInUse.TryRemove(entry.Key, out var _);
-                                }
-                            }
-                            else
-                            {
-                                filesInUse.TryRemove(entry.Key, out var _);
-                            }
-                        }
-
-                        if (Verbose)
-                        {
-                            Program.Log($"[{readFileShortName}] There are currently {filesInUse.Count} files in use");
-                        }
                     }
 
                     if (blockingReader)
@@ -674,6 +646,43 @@ namespace ft.Listeners
                             {
                                 Program.Log($"[{readFileShortName}] Could not delete {Path.GetFileName(readFromFilename)}: {ex.Message}");
                             }
+                        }
+                    }
+
+                    //Only now, with the counterpart's file deleted, see which of our own files it has consumed.
+                    //Checked before that delete, two ends that read each other's file at the same moment each saw
+                    //their own still there, then deleted the other's, and neither wrote again until SendPump's
+                    //fallback check at half the tunnel timeout (30 s on the HTTP backends). That fired on both
+                    //ends at once, so they wrote in step again and could stall again. With the delete first, the
+                    //later of the two checks comes after both deletes, so at least one end sees its file gone.
+                    if (fileContent.Length > 0)
+                    {
+                        var filesInUseSnapshot = filesInUse.ToList();
+                        foreach (var entry in filesInUseSnapshot)
+                        {
+                            if (fileAccess.Exists(entry.Key))
+                            {
+                                var timeSinceSent = DateTime.Now - entry.Value;
+                                if (timeSinceSent.TotalMilliseconds > TunnelTimeoutMilliseconds)
+                                {
+                                    try
+                                    {
+                                        fileAccess.Delete(entry.Key);
+                                    }
+                                    catch { }
+
+                                    filesInUse.TryRemove(entry.Key, out var _);
+                                }
+                            }
+                            else
+                            {
+                                filesInUse.TryRemove(entry.Key, out var _);
+                            }
+                        }
+
+                        if (Verbose)
+                        {
+                            Program.Log($"[{readFileShortName}] There are currently {filesInUse.Count} files in use");
                         }
                     }
 
