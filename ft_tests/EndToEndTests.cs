@@ -150,12 +150,14 @@ namespace ft_tests
 
             // Three Windows VMs, all reached via runremote: client1, the server and client2. A VM can be down
             // (restarting to clear tiring, or not brought up), so tolerate it: a row that needs the missing VM
-            // is skipped (Assert.Inconclusive), the rest still run.
-            try { win10_x64_1 = new RemoteWindowsProcessRunner(WIN_C1_IP, win10Username, win10Password, WIN_X64_EXE); }
+            // is skipped (Assert.Inconclusive), the rest still run. Each VM's ft output is kept next to the
+            // results, as "<run> <address>.log".
+            string WinLog(string ip) => Path.Combine(testResultsFolder, $"{justDateFilename} {ip}.log");
+            try { win10_x64_1 = new RemoteWindowsProcessRunner(WIN_C1_IP, win10Username, win10Password, WIN_X64_EXE, WinLog(WIN_C1_IP)); }
             catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_1 ({WIN_C1_IP}) unavailable: {ex.Message}"); win10_x64_1 = null!; }
-            try { win10_x64_2 = new RemoteWindowsProcessRunner(WIN_SERVER_IP, win10Username, win10Password, WIN_X64_EXE); }
+            try { win10_x64_2 = new RemoteWindowsProcessRunner(WIN_SERVER_IP, win10Username, win10Password, WIN_X64_EXE, WinLog(WIN_SERVER_IP)); }
             catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_2 ({WIN_SERVER_IP}) unavailable: {ex.Message}"); win10_x64_2 = null!; }
-            try { win10_x64_3 = new RemoteWindowsProcessRunner(WIN_C2_IP, win10Username, win10Password, WIN_X64_EXE); }
+            try { win10_x64_3 = new RemoteWindowsProcessRunner(WIN_C2_IP, win10Username, win10Password, WIN_X64_EXE, WinLog(WIN_C2_IP)); }
             catch (Exception ex) { Console.WriteLine($"WARN: win10_x64_3 ({WIN_C2_IP}) unavailable: {ex.Message}"); win10_x64_3 = null!; }
 
             linux_x64_1 = new LinuxProcessRunner(LINUX_C1_IP, linuxUser, linuxPass, LINUX_X64_EXE, $"{remoteLinuxOutputFilename} {LINUX_C1_IP}.log");
@@ -180,9 +182,12 @@ namespace ft_tests
             // so tolerate absence: a null runner makes the Android rows skip (Assert.Inconclusive). TWO REAL
             // emulators (not two instances on one), so Android is a genuine distinct device on each tunnel side
             // (incl. Android-Android).
-            try { android_1 = new AndroidProcessRunner(MAC_IP, macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL_1, instance: 1); }
+            // Each emulator's ft output is kept next to the results, as "<run> emulator-<port>.log".
+            try { android_1 = new AndroidProcessRunner(MAC_IP, macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL_1, instance: 1,
+                                                       localLogFile: Path.Combine(testResultsFolder, $"{justDateFilename} {ANDROID_SERIAL_1}.log")); }
             catch (Exception ex) { Console.WriteLine($"WARN: android_1 ({ANDROID_SERIAL_1}) unavailable: {ex.Message}"); android_1 = null!; }
-            try { android_2 = new AndroidProcessRunner(MAC_IP, macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL_2, instance: 2); }
+            try { android_2 = new AndroidProcessRunner(MAC_IP, macUser, macKey, BIONIC_ARM64_EXE, ANDROID_ADB, ANDROID_SERIAL_2, instance: 2,
+                                                       localLogFile: Path.Combine(testResultsFolder, $"{justDateFilename} {ANDROID_SERIAL_2}.log")); }
             catch (Exception ex) { Console.WriteLine($"WARN: android_2 ({ANDROID_SERIAL_2}) unavailable: {ex.Message}"); android_2 = null!; }
             // Client mounts of the remote SMB servers (idempotent, as the user - no sudo). See
             // RefreshMacClientMount for the mount details and why these are re-established per cell.

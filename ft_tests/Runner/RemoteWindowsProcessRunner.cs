@@ -11,9 +11,16 @@ namespace ft_tests.Runner
         private readonly string host;
         private readonly string? remoteExecutablePath;
 
+        // ft's console output on the VM, kept by Stop() in localLogFile on the PC (when given): ft runs in the
+        // logged-on session, where its window and output are otherwise gone by the next row.
+        private const string RemoteLogFile = @"C:\Temp\ft\ft-run.log";
+        private readonly string? localLogFile;
+        private string? launchedArgs;                    // the ft launched since its log was last kept, if any
 
-        public RemoteWindowsProcessRunner(string host, string username, string password, string? localExecutablePath = null) : base(host)
+        public RemoteWindowsProcessRunner(string host, string username, string password, string? localExecutablePath = null,
+                                          string? localLogFile = null) : base(host)
         {
+            this.localLogFile = localLogFile;
             if (localExecutablePath != null)
             {
                 var remoteFolder = "/C:/Temp/ft/";
@@ -77,7 +84,14 @@ namespace ft_tests.Runner
 
         public override void Run(string args)
         {
-            InvokeRunRemote(remoteExecutablePath ?? "", args);
+            // Through cmd, so ft's output goes to a file - unless an argument holds a character cmd would act on.
+            if (localLogFile is null || args.IndexOfAny(['&', '|', '<', '>', '^', '%', '"']) >= 0)
+            {
+                InvokeRunRemote(remoteExecutablePath ?? "", args);
+                return;
+            }
+            InvokeRunRemote(@"C:\Windows\System32\cmd.exe", $"/c {remoteExecutablePath} {args} > {RemoteLogFile} 2>&1");
+            launchedArgs = args;
         }
 
         public override string GetFullCommand(string args)
@@ -93,7 +107,16 @@ namespace ft_tests.Runner
             // stops answering channel-open used to hang here forever (CommandTimeout does not cover Open()),
             // wedging the whole run - the exact 4.5h stall this replaced.
             sshClient.ExecuteBounded(@$"taskkill /IM {processName} /F", 15);
+            KeepLog();
             return null;
+        }
+
+        private void KeepLog()
+        {
+            if (localLogFile is null || launchedArgs is null) return;
+            var log = sshClient.ExecuteBounded($"Get-Content -Raw -LiteralPath '{RemoteLogFile}'", 60);
+            File.AppendAllText(localLogFile, $"===== {DateTime.Now:yyyy-MM-dd HH:mm:ss} {host}: ft {launchedArgs}{Environment.NewLine}{log}{Environment.NewLine}");
+            launchedArgs = null;
         }
 
         public override void DeleteFile(string path)

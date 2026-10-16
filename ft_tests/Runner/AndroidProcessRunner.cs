@@ -26,6 +26,11 @@ namespace ft_tests.Runner
         private readonly string outputFilename;          // on the emulator
         private readonly string sshfsPrefixMac;          // Termux sshfs prefix staged on the Mac by provisioning\mac\setup.sh
 
+        // Each launch overwrites outputFilename on the device, so Stop() appends its log to this file on the PC
+        // (when given) while it can: the Android side of a failed row is otherwise gone by the next row.
+        private readonly string? localLogFile;
+        private string? launchedArgs;                    // the ft launched since its log was last kept, if any
+
         // The Termux prefix on the device: staging the sshfs toolchain here (its exact `pkg install`
         // location) makes the binaries' baked-in rpaths/config resolve, so sshfs/ssh "just work".
         private const string TermuxPrefixDevice = "/data/data/com.termux/files/usr";
@@ -33,9 +38,10 @@ namespace ft_tests.Runner
         private static readonly HashSet<string> sshfsToolchainReady = new();
 
         public AndroidProcessRunner(string macHost, string username, string privateKeyPath, string localExecutablePath,
-                                    string adbPath, string serial, int instance = 1, int port = 22)
+                                    string adbPath, string serial, int instance = 1, int port = 22, string? localLogFile = null)
             : base(DiscoverLanIp(macHost, username, privateKeyPath, adbPath, serial, port) ?? macHost)
         {
+            this.localLogFile = localLogFile;
             var keyFile = new PrivateKeyFile(privateKeyPath);
             connectionInfo = new ConnectionInfo(macHost, port, username, new PrivateKeyAuthenticationMethod(username, keyFile));
             sshClient = new SshClient(connectionInfo);
@@ -109,6 +115,7 @@ namespace ft_tests.Runner
             var command = $"{adb} shell '{deviceCmd}'";
             Debug.WriteLine(command);
             sshClient.ExecuteBounded(command);
+            launchedArgs = args;
         }
 
         public override string GetFullCommand(string args) => $"{adb} shell '{remoteExecutablePath} {args}'";
@@ -117,7 +124,16 @@ namespace ft_tests.Runner
         {
             // Kill only THIS instance's ft on the device, matched by its unique path.
             sshClient.ExecuteBounded($"{adb} shell 'pkill -f {remoteExecutablePath} || true'");
+            KeepLog();
             return null;
+        }
+
+        private void KeepLog()
+        {
+            if (localLogFile is null || launchedArgs is null) return;
+            var log = sshClient.ExecuteBounded($"{adb} shell cat {outputFilename}", 120);
+            File.AppendAllText(localLogFile, $"===== {DateTime.Now:yyyy-MM-dd HH:mm:ss} {serial}: ft {launchedArgs}{Environment.NewLine}{log}{Environment.NewLine}");
+            launchedArgs = null;
         }
 
         public override void DeleteFile(string path)
