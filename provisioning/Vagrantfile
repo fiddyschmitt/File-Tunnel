@@ -81,9 +81,10 @@ Vagrant.configure("2") do |config|
         vb.linked_clone = true
         # The nested QEMU guest runs on KVM, inside this VM.
         vb.customize ["modifyvm", :id, "--nested-hw-virt", "on"] if m["qemu_host"]
-        # Names resolve through this PC's resolver at the time of each query. Otherwise a VM keeps the
-        # DNS servers the PC had when it booted, and loses DNS when they change (a VPN on the PC, say)
-        # - which the SOCKS rows' internet checks and the Dropbox rows need.
+        # VirtualBox's DNS relay on the NAT network (10.0.2.3) asks this PC's resolver at the time of each
+        # query. The provisioners point each VM at it: VirtualBox's DHCP hands out the DNS servers the PC
+        # had when the VM started, which go stale when they change (a VPN on the PC, say) - and the SOCKS
+        # rows' internet checks and the Dropbox rows need DNS.
         vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       end
 

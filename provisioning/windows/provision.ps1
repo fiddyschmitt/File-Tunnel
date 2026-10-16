@@ -60,6 +60,16 @@ if ($keys -like "$env:ProgramData\*") {
 # those ports proved unreliable here, and this is an isolated lab, so the firewall is off.
 Set-NetFirewallProfile -All -Enabled False
 
+# --- Names resolve through VirtualBox's DNS relay, which asks the PC ------------------------------
+# VirtualBox's DHCP hands the NAT adapter the DNS servers the PC had when the VM started, and Windows
+# keeps them after they change (a VPN on the PC connecting or disconnecting). VirtualBox's relay,
+# 10.0.2.3, asks the PC's resolver at the time of each query instead (--natdnshostresolver1).
+$nat = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like '10.0.2.*' } | Select-Object -First 1
+if ($nat -and ((Get-DnsClientServerAddress -InterfaceIndex $nat.InterfaceIndex -AddressFamily IPv4).ServerAddresses -join ',') -ne '10.0.2.3') {
+    Set-DnsClientServerAddress -InterfaceIndex $nat.InterfaceIndex -ServerAddresses '10.0.2.3'
+    Clear-DnsClientCache
+}
+
 # --- RDP: the RDP rows connect in, as the account, to its logged-on session -----------------------
 Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
 Set-Service TermService -StartupType Automatic

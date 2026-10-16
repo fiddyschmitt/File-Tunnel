@@ -1,6 +1,26 @@
 ---
 # Every Linux machine: Debian up to date, the test account, the lab key.
 
+# VirtualBox's DHCP hands a VM the DNS servers this PC had when the VM started, and the VM keeps
+# them after they change: when a VPN on the PC connects or disconnects, its lookups fail or land on
+# far-away servers. VirtualBox's DNS relay on the NAT network, 10.0.2.3, asks this PC's resolver at
+# the time of each query instead (the Vagrantfile's --natdnshostresolver1). First, so the rest of
+# the play can resolve names whatever the PC's DNS was at boot.
+- name: Names resolve through VirtualBox's DNS relay
+  ansible.builtin.blockinfile:
+    path: /etc/dhcpcd.conf
+    create: true
+    mode: "0644"
+    marker: "# {mark} File Tunnel lab: DNS through VirtualBox's relay"
+    block: |
+      interface eth0
+      static domain_name_servers=10.0.2.3
+  register: dns_relay
+
+- name: dhcpcd uses it now
+  ansible.builtin.command: dhcpcd -n eth0
+  when: dns_relay.changed
+
 # bento's box doesn't record which disk GRUB is installed on, and a GRUB upgrade stops to ask.
 # It's the VM's only disk.
 - name: GRUB's install disk is recorded

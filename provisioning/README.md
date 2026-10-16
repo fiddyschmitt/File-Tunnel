@@ -96,10 +96,11 @@ PASS/WARN/FAIL lines; a FAIL stops Vagrant there.
   address, and the VMs reach each other the same way. Each VM's second NIC is bridged onto the LAN with
   a fixed address; NIC 1 stays NAT, for Vagrant's own connection and the VM's internet access. Keep the
   addresses out of the router's DHCP pool.
-- **DNS through this PC's resolver**: each VM's NAT NIC asks this PC's resolver at the time of each
-  query. Otherwise a VM keeps the DNS servers this PC had when the VM booted, and loses DNS when they
-  change, for example when a VPN on this PC connects. The SOCKS rows' internet checks and the Dropbox
-  rows need it.
+- **DNS through this PC's resolver**: each VM resolves names through VirtualBox's DNS relay on its NAT
+  network, 10.0.2.3, which asks this PC's resolver at the time of each query. VirtualBox's DHCP would
+  otherwise give a VM the DNS servers this PC had when the VM started, which go stale when they
+  change, for example when a VPN on this PC connects or disconnects. The SOCKS rows' internet checks
+  and the Dropbox rows need it.
 - **Servers first**: `vagrant up` brings the VMs up in `settings.yml`'s order, servers first, so each
   Linux VM can mount the shares as it is provisioned.
 - **The shares, mounted by a script, not at boot**: each Linux test VM mounts the Linux server's SMB,
