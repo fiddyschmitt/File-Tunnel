@@ -41,8 +41,9 @@ namespace ft.Streams
     }
 
     // Write analog of IsolatedReadsFileStream: never holds a handle open. Each Write/SetLength opens the
-    // file, does the op and closes it (WriteThrough + the close flush push the bytes to the server), so a
-    // counterpart can read the file between our writes. This is what lets ft tunnel over a server whose files
+    // file, does the op and closes it (the close flushes the bytes to the server, as does write-through
+    // where ft uses it: see Extensions.TunnelWriteOptions), so a counterpart can read the file between our
+    // writes. This is what lets ft tunnel over a server whose files
     // open exclusively (a held write handle otherwise blocks every other open, even from another client -
     // e.g. the Win32-OpenSSH sftp server behind an sshfs mount). Position is tracked in memory, mirroring the
     // held FileStream it replaces.
@@ -80,7 +81,7 @@ namespace ft.Streams
         {
             IsolatedFileIo.WithRetry(retryTimeoutMilliseconds, () =>
             {
-                using var fileStream = new FileStream(Filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.WriteThrough);
+                using var fileStream = new FileStream(Filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite, 1, Extensions.TunnelWriteOptions);
                 fileStream.SetLength(value);
             });
         }
@@ -89,7 +90,7 @@ namespace ft.Streams
         {
             IsolatedFileIo.WithRetry(retryTimeoutMilliseconds, () =>
             {
-                using var fileStream = new FileStream(Filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.WriteThrough);
+                using var fileStream = new FileStream(Filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite, 1, Extensions.TunnelWriteOptions);
                 fileStream.Seek(Position, SeekOrigin.Begin);
                 fileStream.Write(buffer, offset, count);
             });

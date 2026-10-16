@@ -455,6 +455,20 @@ namespace ft
             }
         }
 
+        // The options for the handles ft writes its tunnel files through. Every write is followed by an fsync
+        // (the Flush above), so write-through adds nothing to durability, and on a Linux kernel it corrupts the
+        // file over SMB. Write-through is O_SYNC there, and since Linux 6.12.92 ("netfs: Fix potential deadlock
+        // in write-through mode") an O_SYNC write to a page the client doesn't have cached is followed by a
+        // writeback of the whole page: zeros go over everything in it before the write. The client drops its
+        // cache once the counterpart opens the file, so from then on each write wiped the commands before it
+        // in its page, the counterpart read zeros ("New session detected: 0") and the tunnel stalled. Without
+        // O_SYNC the fsync writes back only the bytes written. Windows and macOS keep write-through. Android
+        // runs a Linux kernel too (a linux-bionic build doesn't report as OSPlatform.Linux).
+        public static readonly FileOptions TunnelWriteOptions =
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                ? FileOptions.WriteThrough
+                : FileOptions.None;
+
         [DllImport("libc", SetLastError = true, EntryPoint = "open")]
         private static extern int libc_open([MarshalAs(UnmanagedType.LPStr)] string pathname, int flags);
         [DllImport("libc", SetLastError = true, EntryPoint = "read")]

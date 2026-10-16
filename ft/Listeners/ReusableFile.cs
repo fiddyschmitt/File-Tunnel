@@ -108,7 +108,7 @@ namespace ft.Listeners
                         var bufferSize = (int)Math.Clamp(PurgeSizeInBytes * 2L, 1024 * 1024, 1024 * 1024 * 1024);
 
                         //the writer always creates the file
-                        fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize, FileOptions.WriteThrough); //large buffer to prevent FileStream from autoflushing
+                        fileStream = new FileStream(WriteToFilename, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize, Extensions.TunnelWriteOptions); //large buffer to prevent FileStream from autoflushing
                     }
                 }
                 catch (Exception ex)
@@ -136,7 +136,7 @@ namespace ft.Listeners
 
                     Stream setReadyForPurgeStream = IsolatedIo
                         ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
-                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
+                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | Extensions.TunnelWriteOptions);
                     setReadyForPurge = new ToggleWriter(
                         new BinaryWriter(setReadyForPurgeStream),
                         READY_FOR_PURGE_FLAG,
@@ -145,7 +145,7 @@ namespace ft.Listeners
 
                     Stream setPurgeCompleteStream = IsolatedIo
                         ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
-                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | FileOptions.WriteThrough);
+                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | Extensions.TunnelWriteOptions);
                     setPurgeComplete = new ToggleWriter(
                         new BinaryWriter(setPurgeCompleteStream),
                         PURGE_COMPLETE_FLAG,

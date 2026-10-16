@@ -21,6 +21,15 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
 	<PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
+  <!-- Don't take .NET's advisory locks (flock) on Linux, Android and macOS. They emulate FileShare, and ft
+       opens every tunnel file FileShare.ReadWrite, so they never keep anything out - but .NET takes a shared
+       one on each read-only handle, and on an SMB mount the client can send it to the server as a byte-range
+       lock over the whole file, which then refuses the counterpart's writes (EACCES; a failed fsync loses
+       them). Once the write handles stopped being write-through (Extensions.TunnelWriteOptions), every
+       Linux-to-Linux tunnel over SMB stalled on it. No effect on Windows, which shares files natively. -->
+  <ItemGroup>
+	<RuntimeHostConfigurationOption Include="System.IO.DisableFileLocking" Value="true" />
+  </ItemGroup>
   <ItemGroup>
 	<PackageReference Include="CommandLineParser" Version="2.9.1" />
 	<PackageReference Include="FluentFTP" Version="54.2.0" />
