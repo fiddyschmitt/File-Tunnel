@@ -1487,9 +1487,12 @@ namespace ft_tests
                     Task.Factory.StartNew(() => side2.Runner.DeleteFile(readPath2)),
                     Task.Factory.StartNew(() => side2.Runner.DeleteFile(writePath2))];
 
+                // Wait for every delete to finish (each runner bounds its own). One still running once ft has
+                // started deletes the new tunnel file: over SMB, a file the other client holds open then stays,
+                // delete-pending, and every later open of it fails with "access denied".
                 try
                 {
-                    Task.WaitAll(deleteTasks, 10000);
+                    Task.WaitAll(deleteTasks);
                 }
                 catch { }
             });

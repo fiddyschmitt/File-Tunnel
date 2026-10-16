@@ -84,14 +84,16 @@ namespace ft_tests.Runner
 
         public override void DeleteFile(string path)
         {
-            while (File.Exists(path))
+            // Retrying while something still holds the file open, for 15 s at most, as on the Windows VMs: the
+            // tests wait for every delete to finish before they start ft.
+            for (var i = 0; i < 15 && File.Exists(path); i++)
             {
                 try
                 {
                     File.Delete(path);
                 }
                 catch { }
-                Thread.Sleep(1000);
+                if (File.Exists(path)) Thread.Sleep(1000);
             }
         }
 
