@@ -1497,88 +1497,96 @@ namespace ft_tests
             var name = $"{server.FileShareType} {side1.OS}-{server.OS}-{side2.OS}";
 
 
-            if (mode == Mode.Normal)
+            try
             {
-                server.Restart();
-                side1.Restart();
-                side2.Restart();
-                cleanupFiles();
+                if (mode == Mode.Normal)
+                {
+                    server.Restart();
+                    side1.Restart();
+                    side2.Restart();
+                    cleanupFiles();
 
-                ConductTest(
-                        $"{name} (Normal mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
-                        server,
-                        new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                        "Normal", bytesToSend ?? NormalModeBytesToSend);
+                    ConductTest(
+                            $"{name} (Normal mode)",
+                            new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
+                            server,
+                            new Client(side2.OS, side2.Runner, $"{side2.Args}"),
+                            "Normal", bytesToSend ?? NormalModeBytesToSend);
+                }
+
+
+
+                if (mode == Mode.IsolatedIo)
+                {
+                    server.Restart();
+                    side1.Restart();
+                    side2.Restart();
+                    cleanupFiles();
+
+                    ConductTest(
+                            $"{name} (IsolatedIo mode)",
+                            new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004 --isolated-io"),
+                            server,
+                            new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-io"),
+                            "IsolatedIo", bytesToSend ?? DefaultBytesToSend);
+                }
+
+
+
+                if (mode == Mode.UploadDownload)
+                {
+                    server.Restart();
+                    side1.Restart();
+                    side2.Restart();
+                    cleanupFiles();
+
+                    //9P is fully auto-configured from the mount type in Program.cs: statfs detects the 9P
+                    //mount, auto-enables --upload-download, and applies the 64KB cap + 10ms pace. So we pass
+                    //NEITHER --upload-download NOR --pace here - this exercises that detection end-to-end.
+                    ConductTest(
+                            $"{name} (Upload-Download mode)",
+                            new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
+                            server,
+                            new Client(side2.OS, side2.Runner, side2.Args),
+                            "Upload-Download", bytesToSend ?? DefaultBytesToSend);
+                }
+
+                if (mode == Mode.FTP)
+                {
+                    server.Restart();
+                    side1.Restart();
+                    side2.Restart();
+                    cleanupFiles();
+
+                    ConductTest(
+                            $"{name} (FTP mode)",
+                            new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
+                            server,
+                            new Client(side2.OS, side2.Runner, $"{side2.Args}"),
+                            "FTP", bytesToSend ?? DefaultBytesToSend);
+                }
+
+                //WebDAV / S3-native: the backend flag is already in the client Args (like --ftp), and the
+                //transport tuning (pace floor) is applied by Program.cs, so no extra args here.
+                if (mode == Mode.HttpApi)
+                {
+                    server.Restart();
+                    side1.Restart();
+                    side2.Restart();
+                    cleanupFiles();
+
+                    ConductTest(
+                            $"{name} (HTTP API mode)",
+                            new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
+                            server,
+                            new Client(side2.OS, side2.Runner, $"{side2.Args}"),
+                            "HTTP API", bytesToSend ?? DefaultBytesToSend);
+                }
             }
-
-
-
-            if (mode == Mode.IsolatedIo)
+            finally
             {
-                server.Restart();
-                side1.Restart();
-                side2.Restart();
+                // And afterwards, so the shares don't fill up with every row's files.
                 cleanupFiles();
-
-                ConductTest(
-                        $"{name} (IsolatedIo mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004 --isolated-io"),
-                        server,
-                        new Client(side2.OS, side2.Runner, $"{side2.Args} --isolated-io"),
-                        "IsolatedIo", bytesToSend ?? DefaultBytesToSend);
-            }
-
-
-
-            if (mode == Mode.UploadDownload)
-            {
-                server.Restart();
-                side1.Restart();
-                side2.Restart();
-                cleanupFiles();
-
-                //9P is fully auto-configured from the mount type in Program.cs: statfs detects the 9P
-                //mount, auto-enables --upload-download, and applies the 64KB cap + 10ms pace. So we pass
-                //NEITHER --upload-download NOR --pace here - this exercises that detection end-to-end.
-                ConductTest(
-                        $"{name} (Upload-Download mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
-                        server,
-                        new Client(side2.OS, side2.Runner, side2.Args),
-                        "Upload-Download", bytesToSend ?? DefaultBytesToSend);
-            }
-
-            if (mode == Mode.FTP)
-            {
-                server.Restart();
-                side1.Restart();
-                side2.Restart();
-                cleanupFiles();
-
-                ConductTest(
-                        $"{name} (FTP mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
-                        server,
-                        new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                        "FTP", bytesToSend ?? DefaultBytesToSend);
-            }
-
-            //WebDAV / S3-native: the backend flag is already in the client Args (like --ftp), and the
-            //transport tuning (pace floor) is applied by Program.cs, so no extra args here.
-            if (mode == Mode.HttpApi)
-            {
-                server.Restart();
-                side1.Restart();
-                side2.Restart();
-                cleanupFiles();
-
-                ConductTest(
-                        $"{name} (HTTP API mode)",
-                        new Client(side1.OS, side1.Runner, $"{side1.Args} -L 0.0.0.0:5001:127.0.0.1:6000 -L 0.0.0.0:5002:127.0.0.1:5003 -R 5003:{DEV_BOX_IP}:5004"),
-                        server,
-                        new Client(side2.OS, side2.Runner, $"{side2.Args}"),
-                        "HTTP API", bytesToSend ?? DefaultBytesToSend);
             }
         }
 

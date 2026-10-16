@@ -121,9 +121,14 @@ namespace ft_tests.Runner
 
         public override void DeleteFile(string path)
         {
-            var cmd = @$"@echo off & :loop & if exist ""{path}"" del /f /q ""{path}"" & if exist ""{path}"" timeout /t 1 >nul & goto loop";
+            // In PowerShell, the VMs' SSH shell (provisioning\windows\provision.ps1); retrying while something
+            // still holds the file open. (The cmd loop this replaced was a PowerShell parse error, so nothing was
+            // ever deleted.)
+            var p = path.Replace("'", "''");
+            var cmd = $"$p = '{p}'; for ($i = 0; $i -lt 15 -and (Test-Path -LiteralPath $p); $i++) " +
+                      "{ Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath $p) { Start-Sleep -Seconds 1 } }";
             Debug.WriteLine(cmd);
-            sshClient.ExecuteBounded(cmd, 20); // hard-bounded (covers channel-open); the batch loop can spin, so cap it
+            sshClient.ExecuteBounded(cmd, 20); // hard-bounded (covers channel-open); the loop can take 15 s, so cap it
         }
 
         public override void Run(string cmd, string args)
