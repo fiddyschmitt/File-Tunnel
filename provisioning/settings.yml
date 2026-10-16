@@ -1,0 +1,204 @@
+# =============================================================================
+# File Tunnel (ft) test lab: the one file you edit.
+#
+# Read by:
+#   * Vagrantfile            -> `network:`, `dev_box:`, `windows:`, `linux.build`, `machines:`
+#   * ansible/playbook.yml   -> what runs inside the Linux VMs
+#   * windows/provision.ps1  -> what runs inside the Windows VMs (the Vagrantfile passes it its part)
+#   * mac.ps1, mac/*.sh      -> `mac:` (the Mac and its Android emulators)
+#   * ft_tests               -> every machine's role, address and login (ft_tests/Lab.cs)
+#
+# After changing a value:
+#   memory_mb / cpus / ip    ->  vagrant reload --provision <name>
+#   box / box_version        ->  vagrant destroy -f <name>; vagrant up <name>
+#   mac: / accounts.mac_smb  ->  .\mac.ps1 setup
+#   anything else            ->  vagrant provision <name>
+# =============================================================================
+
+# The SSH key every machine accepts, and the one the tests log in to the Mac with.
+# Made on first use (by the Vagrantfile or mac.ps1). It lives outside this folder,
+# so it is never shared into a VM or committed:
+#   ssh -i ~/.ssh/ft_lab_ed25519 user@192.168.0.80       (Linux)
+#   ssh -i ~/.ssh/ft_lab_ed25519 vagrant@192.168.0.83    (Windows)
+ssh_key: "~/.ssh/ft_lab_ed25519"
+
+network:
+  # The PC's network adapter the VMs are bridged onto. It's specific to this PC:
+  # after a reinstall, `VBoxManage list bridgedifs` shows which one is Up.
+  bridge_adapter: "Intel(R) I211 Gigabit Network Connection"
+
+# This PC. It runs the tests, and shares two of its folders with the VMs as
+# VirtualBox shared folders:
+#   c_drive  every VM, at \\vboxsvr\c_drive (Windows) and /media/vboxsf/<ip>/c_drive
+#            (Linux): the VirtualBoxSharedFolder rows run ft over it
+#   ft_logs  the Linux test VMs, at /media/vboxsf/<ip>/ft_logs: where ft's output on
+#            those VMs is written, so it can be read here
+# It is also where the SOCKS rows' test servers run.
+dev_box:
+  ip: 192.168.0.31
+  shared_folders:
+    c_drive: "C:/"
+    ft_logs: "R:/Temp/ft release/linux-x64/output"
+
+# The logins the tests use: throwaway values for this lab only.
+accounts:
+  linux: { user: user, password: live }            # every Linux VM: SSH, sudo, Samba, sshfs
+  windows: { user: vagrant, password: vagrant }    # every Windows VM (the box's own account): SSH, SMB, RDP
+  mac_smb: { user: ftsmb, password: ftsmb-lab }    # the Mac's SMB share, ftshare
+
+# The VirtualBox VMs. `role` is how the tests find them:
+#   client1, client2   the two ends of a tunnel
+#   server             the file server between them
+#   build              builds ft for Android; not part of the tests
+# `vagrant up` creates and boots them in this order: the servers first, so the
+# Linux machines can mount their shares as they are provisioned. Each has a fixed address on the LAN
+# (keep these out of the router's DHCP pool). The boxes are pinned so every
+# build is identical: bump them on purpose.
+machines:
+  - name: ft-win11-2        # a Windows computer name: 15 characters at most
+    os: windows
+    role: server            # \\<ip>\Shared, the target of the RDP rows, the Windows sshfs server
+    ip: 192.168.0.84
+    box: gusztavvargadr/windows-11   # Windows 11 25H2 Enterprise (evaluation), OpenSSH included
+    box_version: "2607.1.0"
+    memory_mb: 4096
+    cpus: 2
+
+
+  - name: ft-debian-2
+    os: linux
+    role: server            # NFS, Samba, 9P (diod), sshfs, FTP, WebDAV, S3
+    ip: 192.168.0.81
+    box: bento/debian-13    # Debian 13 "trixie" + VirtualBox Guest Additions
+    box_version: "202510.26.0"
+    memory_mb: 2048
+    cpus: 2
+
+
+  - name: ft-debian-1
+    os: linux
+    role: client1
+    ip: 192.168.0.80
+    box: bento/debian-13
+    box_version: "202510.26.0"
+    memory_mb: 2048
+    cpus: 2
+    rdp_client: true        # xfreerdp3 under Xvfb: the RdpLinux row's RDP client
+
+
+  - name: ft-debian-3
+    os: linux
+    role: client2
+    ip: 192.168.0.82
+    box: bento/debian-13
+    box_version: "202510.26.0"
+    memory_mb: 3072
+    cpus: 4
+    qemu_host: true         # runs a nested QEMU guest with virtio-fs and virtio-9p shares (see linux.qemu_guest)
+
+
+  - name: ft-win11-1
+    os: windows
+    role: client1
+    ip: 192.168.0.83
+    box: gusztavvargadr/windows-11
+    box_version: "2607.1.0"
+    memory_mb: 4096
+    cpus: 2
+
+
+  - name: ft-win11-3
+    os: windows
+    role: client2
+    ip: 192.168.0.88        # .85 to .87 belong to other labs on this PC
+    box: gusztavvargadr/windows-11
+    box_version: "2607.1.0"
+    memory_mb: 4096
+    cpus: 2
+
+
+  - name: ft-debian-build
+    os: linux
+    role: build
+    ip: 192.168.0.79
+    box: bento/debian-13
+    box_version: "202510.26.0"
+    memory_mb: 6144          # the NativeAOT compiler is hungry
+    cpus: 4
+    autostart: false         # `vagrant up` skips it; `vagrant up ft-debian-build` or .\build-android.ps1 starts it
+
+linux:
+  # The kernel the Linux VMs boot: its SMB, NFS and 9P clients are among the clients ft is tested over.
+  #   newest   Debian's current kernel (the play keeps Debian up to date), as a user's would be
+  #   a version, with snapshot_sha1: that kernel, from snapshot.debian.org, for A/B tests against an
+  #            older one. For example version "6.12.90+deb13.1",
+  #            snapshot_sha1 8ca8e9c2f47ffaf1d91cf993208d0223f80c10ef
+  kernel:
+    version: newest
+
+  # The S3-compatible server on every Linux test VM: SILO, the maintained fork of
+  # MinIO (whose own downloads are gone), pinned and checksum-verified.
+  s3:
+    port: 9000
+    release: RELEASE.2026-09-16T00-00-00Z
+    tarball: silo_20260916000000.0.0_linux_amd64.tar.gz
+    sha256: 381e745510a8fb64323d7bb3207f95984b7f4ed826f4fcad318f97683c420c73
+    access_key: ftaccess
+    secret_key: ftsecret
+    bucket: fttest           # S3 bucket names have at least 3 characters
+
+  webdav:
+    port: 8080
+    path: /dav/
+
+  # The nested QEMU guest on the qemu_host VM. Debian's cloud image, plus the
+  # generic kernel (the cloud kernel has no 9p module) and ICU (for ft).
+  qemu_guest:
+    image_url: https://cloud.debian.org/images/cloud/trixie/20260601-2496/debian-13-genericcloud-amd64-20260601-2496.qcow2
+    image_sha512: 61264ae6968d765e61cf5607a664ba63099ddfb66b8404aa737d06f89b39c8e0fbaa1517b13705909ff01686d32015a0147436662672b4dacc10b4a171d7993d
+    memory_mb: 1024
+    ssh_port: 2222           # forwarded from the qemu_host VM's own address
+
+  # The build VM: builds ft for Android (linux-bionic-arm64, NativeAOT) from this
+  # PC's working tree, and puts the binary where the tests pick it up.
+  build:
+    dotnet_sdk: "10.0.301"
+    ndk: r27c
+    # Its SHA-1 is Google's published 090e8083a715fdb1a3e402d0763c388abb03fb4e. Bump both together.
+    ndk_sha256: 59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc
+    source_dir: ".."                                    # the repo, relative to this folder
+    output_dir: "R:/Temp/ft release/linux-bionic-arm64"
+
+windows:
+  # The RunRemote server (C:\Users\Smith\Desktop\dev\cs\RunRemote): the tests start
+  # ft through it, inside the logged-on session. A self-contained single-file build.
+  runremote_dir: "C:/Users/Smith/Desktop/dev/cs/RunRemote/server/bin/Release/net8.0-windows/win-x64/publish"
+
+# The Mac. It is a test machine itself (ft runs there, it serves SMB and sshfs, it
+# mounts the other machines' shares), and it runs the two Android emulators the
+# tests use as the Android clients. mac.ps1 drives it from this PC over SSH.
+mac:
+  name: mac-mini-m4
+  host: 192.168.0.33
+  user: smith
+  project_dir: ft-lab        # under the user's home on the Mac
+  emulators:
+    avd: ft_android36
+    # Android 16, for its kernel: on Android 14's, a connection out of the emulator crawled at one
+    # segment per ACK after any retransmission timeout, which stalled the Android rows.
+    system_image: "system-images;android-36;default;arm64-v8a"
+    # The emulator the lab runs: its own copy, in ~/Library/Android/ft-emulator/<version> on
+    # the Mac, from Google's download of that build. The SDK's own emulator is never updated:
+    # other emulators on the Mac run from it. (Google's SDK index publishes each zip's SHA-1;
+    # this is its SHA-256.)
+    emulator:
+      version: "37.2.12"
+      zip: emulator-darwin_aarch64-16428233.zip
+      sha256: f4c4a142bda54fcec064bdb32b51f19e25bae0a45ad019197ef968bf7a48979b
+      # Without it, Wi-Fi stays on the emulator's own network (10.0.2.x) whatever -vmnet-bridged says.
+      args: "-feature -WiFiPacketStream"
+    # The console ports of the two emulators (adb serial emulator-<port>): the first is
+    # client1, the second client2. Both are bridged onto the LAN with real addresses.
+    # Other emulators on the Mac are left alone.
+    ports: [5556, 5558]
+    bridge_interface: en0    # the Mac's LAN interface

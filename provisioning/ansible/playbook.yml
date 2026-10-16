@@ -1,0 +1,122 @@
+---
+# File Tunnel test lab: a Linux machine. Vagrant runs this inside each Linux VM
+# (ansible_local) when it first creates the VM, and again on every
+# `vagrant provision`.
+#
+# What a machine gets depends on its entry in settings.yml:
+#   every machine           base.yml          Debian up to date, the test account, the lab key
+#   the test machines       file_servers.yml  NFS, Samba, sshfs, 9P, FTP, HTTP proxy, WebDAV, S3
+#                           mounts.yml        the lab's shares, mounted where the tests expect them
+#   rdp_client: true        rdp_client.yml    xfreerdp3 under Xvfb
+#   qemu_host: true         qemu_host.yml     the nested QEMU guest (virtio-fs, virtio-9p)
+#   role: build             build_host.yml    the toolchain that builds ft for Android
+#
+# Inputs:
+#   settings.yml (vars_files)   the lab: machines, accounts, pinned downloads
+#   machine (extra_vars)        this machine's own entry from settings.yml
+#   lab_pubkey (extra_vars)     the lab's SSH public key
+#
+# Each task declares a state, so re-running `vagrant provision` changes nothing
+# unless something drifted. The machine's smoke test (/opt/ft/smoke-test.sh, from
+# templates/) isn't run here: the Vagrantfile runs it once a new kernel, if any,
+# has booted.
+
+- name: Configure a File Tunnel lab Linux machine
+  hosts: all
+  become: true
+  vars_files:
+    - ../settings.yml
+
+  vars:
+    # Pin the interpreter rather than letting Ansible guess (deterministic runs).
+    ansible_python_interpreter: /usr/bin/python3
+
+    lab_linux: "{{ machines | selectattr('os', 'equalto', 'linux') | list }}"
+    lab_windows: "{{ machines | selectattr('os', 'equalto', 'windows') | list }}"
+    linux_server: "{{ lab_linux | selectattr('role', 'equalto', 'server') | first }}"
+    windows_server: "{{ lab_windows | selectattr('role', 'equalto', 'server') | first }}"
+    test_machine: "{{ machine.role != 'build' }}"
+
+  tasks:
+    - name: Every machine
+      ansible.builtin.import_tasks: tasks/base.yml
+
+    - name: The test machines' servers
+      ansible.builtin.import_tasks: tasks/file_servers.yml
+      when: test_machine | bool
+
+    # Servers restart with their new configuration now, not at the end of the play,
+    # before anything mounts them.
+    - name: Changed servers restart
+      ansible.builtin.meta: flush_handlers
+
+    - name: The test machines' mounts
+      ansible.builtin.import_tasks: tasks/mounts.yml
+      when: test_machine | bool
+
+    - name: The RDP client
+      ansible.builtin.import_tasks: tasks/rdp_client.yml
+      when: machine.rdp_client | default(false) | bool
+
+    - name: The nested QEMU guest
+      ansible.builtin.import_tasks: tasks/qemu_host.yml
+      when: machine.qemu_host | default(false) | bool
+
+    - name: The Android build machine
+      ansible.builtin.import_tasks: tasks/build_host.yml
+      when: machine.role == 'build'
+
+  handlers:
+    - name: systemctl daemon-reload
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: update-grub
+      ansible.builtin.command: update-grub
+      changed_when: true
+
+    - name: Restart ssh
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+    - name: Re-export NFS shares
+      ansible.builtin.command: exportfs -ra
+      changed_when: true
+
+    - name: Restart smbd
+      ansible.builtin.service:
+        name: smbd
+        state: restarted
+
+    - name: Restart diod
+      ansible.builtin.service:
+        name: diod
+        state: restarted
+
+    - name: Restart vsftpd
+      ansible.builtin.service:
+        name: vsftpd
+        state: restarted
+
+    - name: Restart tinyproxy
+      ansible.builtin.service:
+        name: tinyproxy
+        state: restarted
+
+    - name: Restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
+    - name: Restart ft-s3
+      ansible.builtin.systemd_service:
+        name: ft-s3
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart ftq-guest
+      ansible.builtin.systemd_service:
+        name: ftq-guest
+        state: restarted
+        daemon_reload: true

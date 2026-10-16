@@ -1,0 +1,30 @@
+#!/bin/bash
+# Written by the File Tunnel lab's playbook. Starts the nested QEMU guest (ftq-guest.service):
+# a fresh overlay of the guest's image every time, virtio-fs through virtiofsd, virtio-9p through
+# QEMU's -virtfs, and the guest's SSH forwarded to this machine's port {{ linux.qemu_guest.ssh_port }}.
+FTQ=/var/lib/ftq
+RUN=/run/ftq
+GUESTMEM={{ linux.qemu_guest.memory_mb }}
+
+mkdir -p "$RUN" /srv/ftvfs /srv/ft9p
+chmod 777 /srv/ftvfs /srv/ft9p
+[ -f "$RUN/qemu.pid" ] && kill "$(cat "$RUN/qemu.pid")" 2>/dev/null
+pkill -f 'virtiofsd.*ftq/vfs.sock' 2>/dev/null
+sleep 1
+
+rm -f "$FTQ/guest.qcow2"
+qemu-img create -f qcow2 -b "$FTQ/guest-base.qcow2" -F qcow2 "$FTQ/guest.qcow2" >/dev/null || exit 1
+cloud-localds "$FTQ/seed.iso" "$FTQ/user-data" "$FTQ/meta-data" || exit 1
+
+/usr/libexec/virtiofsd --socket-path="$RUN/vfs.sock" --shared-dir=/srv/ftvfs --cache=auto --sandbox=none \
+  >"$RUN/virtiofsd.log" 2>&1 &
+sleep 1
+
+exec qemu-system-x86_64 -enable-kvm -m "$GUESTMEM" -smp 2 -display none -serial "file:$RUN/console.log" \
+  -drive "file=$FTQ/guest.qcow2,if=virtio,format=qcow2" \
+  -drive "file=$FTQ/seed.iso,if=virtio,format=raw" \
+  -netdev user,id=n0,hostfwd=tcp::{{ linux.qemu_guest.ssh_port }}-:22 -device virtio-net-pci,netdev=n0 \
+  -virtfs local,path=/srv/ft9p,mount_tag=ft9p,security_model=none \
+  -chardev socket,id=cvfs,path="$RUN/vfs.sock" -device vhost-user-fs-pci,chardev=cvfs,tag=ftvfs \
+  -object memory-backend-memfd,id=mem,size="${GUESTMEM}M",share=on -numa node,memdev=mem \
+  -pidfile "$RUN/qemu.pid" -daemonize

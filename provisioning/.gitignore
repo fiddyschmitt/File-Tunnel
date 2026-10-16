@@ -1,0 +1,3 @@
+# Vagrant's per-machine state (includes the generated SSH private keys).
+.vagrant/
+__pycache__/

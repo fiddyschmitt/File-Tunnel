@@ -26,14 +26,13 @@ namespace ft_tests.FileShares.Servers
         public override void Restart()
         {
             if (OS == OS.Linux) { processRunner.Run("systemctl", "restart smbd"); AfterRestart?.Invoke(); }
-            // The Windows SMB server is the dedicated server VM (.84) - a hand-built VM with a DISTINCT machine
-            // SID, so the same-SID client clones can authenticate to it (Windows 24H2+ rejects same-SID SMB).
-            // We do NOT restart lanmanserver per cell (as we did for the flaky externals): `net stop` PROMPTS
-            // "These workstations have sessions... continue? (Y/N)" whenever a node has a live mount to
-            // \\.84\Shared, and that blocks forever over the fire-and-forget runremote call (no stdin) - plus
-            // it would drop every other node's mount mid-run. Instead just ensure the (persistent) Shared share
-            // exists - idempotent, non-interactive, no session drop. Clear tiring by rebooting the server VM
-            // (ft_test_env menu 8) when needed, not per cell.
+            // The Windows SMB server is the Windows server VM. We do NOT restart lanmanserver per cell (as we
+            // did for the flaky externals): `net stop` PROMPTS "These workstations have sessions... continue?
+            // (Y/N)" whenever a machine has a live mount to its \\<ip>\Shared, and that blocks forever over the
+            // fire-and-forget runremote call (no stdin) - plus it would drop every other machine's mount mid-run.
+            // Instead just ensure the (persistent) Shared share exists - idempotent, non-interactive, no session
+            // drop. Clear tiring by restarting the server VM (`vagrant reload <name>` in provisioning) when
+            // needed, not per cell.
             if (OS == OS.Windows)
                 processRunner.RunCommand("if (-not (Get-SmbShare -Name Shared -ErrorAction SilentlyContinue)) { New-Item -ItemType Directory -Force 'C:\\Temp\\ft\\Shared' | Out-Null; New-SmbShare -Name Shared -Path 'C:\\Temp\\ft\\Shared' -FullAccess Everyone -ErrorAction SilentlyContinue | Out-Null }");
             // OS.Mac: intentionally a no-op. Kickstarting the Mac's smbd would drop every client's mount to

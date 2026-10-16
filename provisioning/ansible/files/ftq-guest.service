@@ -1,0 +1,14 @@
+# Written by the File Tunnel lab's playbook: the nested QEMU guest (virtio-fs and virtio-9p).
+[Unit]
+Description=Nested QEMU guest sharing /srv/ftvfs (virtio-fs) and /srv/ft9p (virtio-9p) for the ft tests
+After=network.target
+
+[Service]
+Type=forking
+PIDFile=/run/ftq/qemu.pid
+ExecStart=/bin/bash /var/lib/ftq/start-guest.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+# Most of this folder is read on Linux or macOS (Ansible and its files in the Linux VMs, the scripts
+# mac.ps1 copies to the Mac): a CR at each line end breaks shell scripts and config files there.
+* text eol=lf
+# The PowerShell scripts run on Windows.
+*.ps1 text eol=crlf

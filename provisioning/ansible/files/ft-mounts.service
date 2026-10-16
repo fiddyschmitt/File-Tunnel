@@ -1,0 +1,15 @@
+# Written by the File Tunnel lab's playbook: mounts the lab's shares at boot.
+# It runs in the background (Type=simple), so a server that is down never holds up the boot.
+[Unit]
+Description=Mount the File Tunnel lab's shares
+Wants=network-online.target
+After=network-online.target remote-fs.target nfs-server.service smbd.service diod.service
+
+[Service]
+Type=simple
+# Just after boot, a server may not quite be ready (diod refuses connections until DNS is): retry.
+Environment=FT_MOUNT_RETRIES=6
+ExecStart=/opt/ft/mounts.sh
+
+[Install]
+WantedBy=multi-user.target

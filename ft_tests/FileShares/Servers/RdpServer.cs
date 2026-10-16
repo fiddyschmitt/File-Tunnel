@@ -8,10 +8,10 @@ namespace ft_tests.FileShares.Servers
     /// share is not a daemon on a file server: it is the RDPDR channel of a live RDP session, so Restart()
     /// establishes that session.
     ///
-    ///     side1 (.83, client) -> C:\Temp\x.dat            local NTFS, fully coherent
-    ///     side2 (.84, server) -> \\tsclient\c\Temp\x.dat  through RDPDR (== side1's C:)
+    ///     side1 (client1)     -> C:\Temp\x.dat            local NTFS, fully coherent
+    ///     side2 (the server)  -> \\tsclient\c\Temp\x.dat  through RDPDR (== side1's C:)
     ///
-    /// side1 (a client clone) runs mstsc and connects to side2 (the server VM), redirecting side1's C:, which
+    /// side1 (the client1 VM) runs mstsc and connects to side2 (the server VM), redirecting side1's C:, which
     /// side2 then sees as <c>\\tsclient\c</c>. Two things make this work, both non-obvious:
     ///
     /// 1. <b>\\tsclient is session-scoped.</b> ft on side2 only sees it from inside the RDP session, so side2
@@ -22,11 +22,9 @@ namespace ft_tests.FileShares.Servers
     ///    one, and runremote's server survives the takeover - putting ft and the redirected drive in the same
     ///    session.
     ///
-    /// Why side2 is the dedicated SERVER VM (.84) and not another client clone: the clients are same-SID
-    /// linked clones, and Windows 24H2+ rejects RDP (and SMB) authentication between same-SID peers - so a
-    /// clone cannot RDP into another clone. The server VM was built fresh, so it has a DISTINCT machine SID,
-    /// and the client's RDP session to it authenticates normally. (RdpLinux points at a client, .85, instead,
-    /// so the two RDP rows never fight over one box's single interactive session.)
+    /// The machines need distinct machine SIDs: Windows 24H2+ rejects RDP (and SMB) authentication between
+    /// peers that share one. The lab's Windows VMs each get their own (they come from a sysprepped box). RdpLinux
+    /// points at client2 instead, so the two RDP rows never fight over one box's single interactive session.
     /// </summary>
     public class RdpServer : Server
     {

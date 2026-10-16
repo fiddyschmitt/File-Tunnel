@@ -1,0 +1,171 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+#
+# File Tunnel test lab: the Linux and Windows test machines, VirtualBox VMs
+# bridged onto the LAN. (The Mac and its Android emulators are driven from here
+# by mac.ps1.) This file defines the MACHINES; ansible/playbook.yml (Linux) and
+# windows/provision.ps1 (Windows) configure what runs INSIDE them. Tunables for
+# all of it live in settings.yml.
+#
+#   vagrant up                      create, boot and (first time) provision every VM
+#   vagrant up <name>               the same for one VM from settings.yml
+#   vagrant provision [name]        re-apply the configuration (safe to repeat)
+#   vagrant reload --provision [n]  apply a memory/cpus/ip change from settings.yml
+#   vagrant ssh <name>              shell into a VM
+#   vagrant halt | destroy [name]   stop | delete
+
+require "fileutils"
+require "yaml"
+
+settings = YAML.load_file(File.join(__dir__, "settings.yml"))
+dev_box  = settings.fetch("dev_box")
+
+# When the provisioning restarts a Windows VM, Vagrant waits 2 minutes for it by
+# default; finishing the NFS client's installation during that restart can take longer.
+ENV["VAGRANT_MAX_REBOOT_RETRY_DURATION"] ||= "900"
+folders  = dev_box.fetch("shared_folders")
+
+# The lab's SSH key: every machine accepts it. Made on first use.
+lab_key = File.expand_path(settings.fetch("ssh_key"))
+unless File.exist?(lab_key)
+  FileUtils.mkdir_p(File.dirname(lab_key))
+  system("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "ft test lab", "-f", lab_key) or
+    abort("Couldn't create the lab's SSH key #{lab_key}: is ssh-keygen on the PATH?")
+end
+lab_pubkey = File.read("#{lab_key}.pub").strip
+
+# Each machine's smoke test runs after every `vagrant up`, `reload` and `provision`
+# (after any restart the provisioning needed): its PASS/WARN/FAIL lines are shown,
+# and a FAIL stops Vagrant there.
+class LabSmokeTestFailed < Vagrant::Errors::VagrantError
+  error_message("The smoke test failed: see its FAIL lines above.")
+end
+
+smoke_test = lambda do |machine, windows|
+  output  = +""
+  collect = proc { |_type, data| output << data }
+  status  = if windows
+              machine.communicate.execute('powershell -NoProfile -ExecutionPolicy Bypass -File C:\ft-lab\smoke-test.ps1',
+                                          error_check: false, &collect)
+            else
+              machine.communicate.sudo("/opt/ft/smoke-test.sh", error_check: false, &collect)
+            end
+  output.each_line { |line| machine.ui.info(line.chomp) unless line.strip.empty? }
+  raise LabSmokeTestFailed if status != 0
+end
+
+Vagrant.configure("2") do |config|
+  settings.fetch("machines").each do |m|
+    name    = m.fetch("name")
+    windows = m.fetch("os") == "windows"
+    build   = m.fetch("role") == "build"
+    abort("#{name}: a Windows computer name has at most 15 characters") if windows && name.length > 15
+
+    config.vm.define name, autostart: m["autostart"] != false do |node|
+      node.vm.box         = m.fetch("box")
+      node.vm.box_version = m["box_version"] if m["box_version"]
+      node.vm.hostname    = name
+
+      # NIC 2: bridged onto the LAN at the machine's own address. (NIC 1 stays NAT:
+      # Vagrant's own connection uses it, and so does the guest's internet access,
+      # so the LAN NIC needs no gateway.)
+      node.vm.network "public_network", bridge: settings.fetch("network").fetch("bridge_adapter"),
+                                        ip: m.fetch("ip")
+
+      node.vm.provider "virtualbox" do |vb|
+        vb.name   = name
+        vb.memory = m.fetch("memory_mb")
+        vb.cpus   = m.fetch("cpus")
+        # Each VM's disk holds only what differs from its box, which VirtualBox
+        # imports once. (The Windows box is 14 GB.)
+        vb.linked_clone = true
+        # The nested QEMU guest runs on KVM, inside this VM.
+        vb.customize ["modifyvm", :id, "--nested-hw-virt", "on"] if m["qemu_host"]
+        # Names resolve through this PC's resolver at the time of each query. Otherwise a VM keeps the
+        # DNS servers the PC had when it booted, and loses DNS when they change (a VPN on the PC, say)
+        # - which the SOCKS rows' internet checks and the Dropbox rows need.
+        vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+      end
+
+      if windows
+        # The box's first boot (it's sysprepped), then the rename and its reboot.
+        node.vm.boot_timeout = 1200
+
+        # `vagrant ssh <name> -c ...` hands its command to PowerShell, the VM's SSH shell.
+        node.ssh.shell = "powershell"
+
+        node.vm.synced_folder ".", "/vagrant", disabled: true
+
+        # \\vboxsvr\c_drive is the PC's C:\ (the VirtualBoxSharedFolder rows), and
+        # \\vboxsvr\runremote the RunRemote build the provisioner installs. Vagrant
+        # also links each one at the path given here, which nothing uses.
+        node.vm.synced_folder folders.fetch("c_drive"), "C:/ft-lab/c_drive", id: "c_drive",
+                              SharedFoldersEnableSymlinksCreate: false
+        node.vm.synced_folder settings.fetch("windows").fetch("runremote_dir"), "C:/ft-lab/runremote",
+                              id: "runremote", SharedFoldersEnableSymlinksCreate: false
+
+        account = settings.fetch("accounts").fetch("windows")
+        node.vm.provision "file", source: "windows/smoke-test.ps1", destination: "C:/ft-lab/smoke-test.ps1"
+        node.vm.provision "shell", path: "windows/provision.ps1",
+                                   env: { "LAB_PUBKEY" => lab_pubkey,
+                                          "LAB_USER" => account.fetch("user"),
+                                          "LAB_PASSWORD" => account.fetch("password") }
+
+        # Windows' NFS client only works after a restart: the provisioner leaves a
+        # marker when it installed something that needs one. Then the smoke test.
+        node.trigger.after [:up, :reload, :provision] do |t|
+          t.name = "#{name}: restart if the provisioner asked for one, then the smoke test"
+          t.ruby do |_env, machine|
+            marker = 'C:\ft-lab\restart-required'
+            if machine.communicate.test("if (Test-Path '#{marker}') { exit 0 } else { exit 1 }")
+              machine.communicate.execute("Remove-Item -Force '#{marker}'")
+              machine.guest.capability(:reboot)
+            end
+            smoke_test.call(machine, true)
+          end
+        end
+      else
+        # The project folder, so the guest can see ansible/ and settings.yml. The
+        # guests never need to create symlinks in a shared folder, so they can't.
+        node.vm.synced_folder ".", "/vagrant", SharedFoldersEnableSymlinksCreate: false
+
+        shared = "/media/vboxsf/#{dev_box.fetch("ip")}"
+        if build
+          # The repo as it is on this PC (built as-is, uncommitted changes included),
+          # and the folder the Android binary goes to.
+          b = settings.fetch("linux").fetch("build")
+          node.vm.synced_folder File.expand_path(b.fetch("source_dir"), __dir__), "/srv/ft-src",
+                                id: "ft_src", mount_options: ["ro"], SharedFoldersEnableSymlinksCreate: false
+          node.vm.synced_folder b.fetch("output_dir"), "/srv/ft-out", id: "ft_out", create: true,
+                                SharedFoldersEnableSymlinksCreate: false
+        else
+          node.vm.synced_folder folders.fetch("c_drive"), "#{shared}/c_drive", id: "c_drive",
+                                SharedFoldersEnableSymlinksCreate: false
+          node.vm.synced_folder folders.fetch("ft_logs"), "#{shared}/ft_logs", id: "ft_logs", create: true,
+                                SharedFoldersEnableSymlinksCreate: false
+        end
+
+        # ansible_local: Vagrant installs Ansible INSIDE the guest and runs the
+        # playbook there (Ansible can't be a control node on Windows). The machine's
+        # own entry from settings.yml is handed to the play as `machine`.
+        node.vm.provision "ansible_local" do |ansible|
+          ansible.playbook   = "ansible/playbook.yml"
+          ansible.extra_vars = { machine: m, lab_pubkey: lab_pubkey }
+        end
+
+        # The play brings Debian up to date, the kernel included, and names the kernel
+        # the VM should run (linux.kernel): this boots it. Then any share whose server
+        # has come up since gets mounted, and the smoke test runs.
+        node.trigger.after [:up, :reload, :provision] do |t|
+          t.name = "#{name}: boot the chosen kernel, mount the shares, then the smoke test"
+          t.ruby do |_env, machine|
+            other_kernel = '[ -f /etc/ft-lab-kernel ] && [ "$(uname -r)" != "$(cat /etc/ft-lab-kernel)" ]'
+            machine.guest.capability(:reboot) if machine.communicate.test(other_kernel)
+            machine.communicate.sudo("[ ! -x /opt/ft/mounts.sh ] || /opt/ft/mounts.sh", error_check: false)
+            smoke_test.call(machine, false)
+          end
+        end
+      end
+    end
+  end
+end

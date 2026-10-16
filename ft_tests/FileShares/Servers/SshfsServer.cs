@@ -14,7 +14,7 @@ namespace ft_tests.FileShares.Servers
     /// </summary>
     public class SshfsServer : Server
     {
-        public const string ServerIp = "192.168.0.81";
+        public static readonly string ServerIp = Lab.LinuxServerIp;
         public const string ExportDir = "/srv/sshfs";
 
         private readonly ProcessRunner processRunner;

@@ -7,7 +7,7 @@ namespace ft_tests
     /// - the pure core of ft's filesystem auto-detection, with no real mount or lab needed. Documents and
     /// locks in which filesystem magics map to which handling.
     ///
-    /// Real-mount findings for the virtio transports (confirmed on QEMU, via the ft_test_env nested guest):
+    /// Real-mount findings for the virtio transports (confirmed on QEMU, via the lab's nested guest):
     ///   - virtio-fs and sshfs BOTH report the FUSE magic (0x65735546) -> Fuse here. ft separates them by the
     ///     mountinfo fstype ("virtiofs" vs "fuse.sshfs", not by statfs): virtio-fs runs Normal (its held handle
     ///     refreshes via fstat, ~2.4x faster), sshfs runs IsolatedIo. See Extensions.ModesForReadFile.
@@ -38,7 +38,7 @@ namespace ft_tests
         }
 
         // /proc/self/mountinfo lines captured verbatim from real mounts: a WSL 2.7 drive (Ubuntu 24.04), and the
-        // ft_test_env lab (ext4 root, diod 9P over TCP, sshfs, and QEMU virtio-9p / virtio-fs shares).
+        // lab (ext4 root, diod 9P over TCP, sshfs, and QEMU virtio-9p / virtio-fs shares).
         private const string Root = "28 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro";
         private const string WslDrive = @"132 82 0:70 / /mnt/c rw,noatime - 9p C:\134 rw,aname=drvfs;path=C:\;uid=0;gid=0;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=6,wfd=6";
         private const string Diod = "99 28 0:63 / /mnt/9p rw,relatime shared:313 - 9p 192.168.0.81 rw,aname=/srv/9p,access=client,msize=65536,trans=tcp";

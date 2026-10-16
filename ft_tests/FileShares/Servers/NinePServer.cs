@@ -4,8 +4,8 @@ namespace ft_tests.FileShares.Servers
 {
     /// <summary>
     /// "Server" for a 9P (Plan 9 filesystem protocol) share, served by <c>diod</c> - a userspace
-    /// 9P2000.L server - over TCP on .81, mirroring the NFS topology (client1 - server - client2).
-    /// diod, its config and the export dir are provisioned by setup_debian.sh: DIOD_ENABLE=true in
+    /// 9P2000.L server - over TCP on the Linux server, mirroring the NFS topology (client1 - server - client2).
+    /// diod, its config and the export dir are provisioned by the lab's playbook (provisioning\ansible): DIOD_ENABLE=true in
     /// /etc/default/diod, and /etc/diod.conf exports <see cref="ExportDir"/> with auth_required=0 so
     /// the in-kernel 9p client can mount over plain TCP (no munge). The client needs no package.
     ///
@@ -13,7 +13,7 @@ namespace ft_tests.FileShares.Servers
     /// </summary>
     public class NinePServer : Server
     {
-        public const string ServerIp = "192.168.0.81";
+        public static readonly string ServerIp = Lab.LinuxServerIp;
         public const string ExportDir = "/srv/9p";
         public const int Port = 564;
 

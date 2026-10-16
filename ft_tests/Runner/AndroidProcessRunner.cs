@@ -6,12 +6,12 @@ namespace ft_tests.Runner
 {
     // An Android emulator (running on the Mac .33), driven over SSH + adb. ft here is the NativeAOT
     // linux-bionic-arm64 build (issue #45) - a native Android/Bionic binary - pushed into the emulator's
-    // /data/local/tmp and launched with `adb shell`. The emulator is stood up by ft_test_env; if it is not
+    // /data/local/tmp and launched with `adb shell`. The emulator is stood up by `.\mac.ps1 up` (provisioning); if it is not
     // running, the constructor throws and the runner is treated as unavailable (Android rows Assert.Inconclusive),
     // exactly like a down Windows VM.
     //
     // Android is a tunnel CLIENT (both client1/side1 and client2/side2). The emulator is launched BRIDGED by
-    // ft_test_env (-vmnet-bridged), so its wlan0 gets a real LAN IP (DiscoverLanIp -> RunOnIP) and it is reachable
+    // provisioning\mac\emulators.sh (-vmnet-bridged), so its wlan0 gets a real LAN IP (DiscoverLanIp -> RunOnIP) and it is reachable
     // inbound like any node - which is what lets it be side1, not just side2 (its user-mode eth0 NAT alone would
     // give outbound but no inbound). Deploy is two hops: SCP the binary dev-box -> Mac (like MacProcessRunner),
     // then `adb push` the staged copy Mac -> emulator.
@@ -24,7 +24,7 @@ namespace ft_tests.Runner
         private readonly string serial;
         private readonly string remoteExecutablePath;    // on the emulator: /data/local/tmp/ft-<instance>
         private readonly string outputFilename;          // on the emulator
-        private readonly string sshfsPrefixMac;          // Termux sshfs prefix staged on the Mac by mac_android_setup.sh
+        private readonly string sshfsPrefixMac;          // Termux sshfs prefix staged on the Mac by provisioning\mac\setup.sh
 
         // The Termux prefix on the device: staging the sshfs toolchain here (its exact `pkg install`
         // location) makes the binaries' baked-in rpaths/config resolve, so sshfs/ssh "just work".
@@ -64,7 +64,7 @@ namespace ft_tests.Runner
             sshClient.ExecuteBounded($"{adb} push \"{macStaging}\" \"{remoteExecutablePath}\"");
             sshClient.ExecuteBounded($"{adb} shell chmod 755 \"{remoteExecutablePath}\"");
 
-            // Push the bundled Bionic OpenSSL (staged on the Mac by mac_android_setup.sh) into /data/local/tmp/ssl,
+            // Push the bundled Bionic OpenSSL (staged on the Mac by provisioning\mac\setup.sh) into /data/local/tmp/ssl,
             // which Run() puts on LD_LIBRARY_PATH so ft's crypto backends (S3 SigV4, HTTPS/Dropbox) use real OpenSSL
             // instead of Android's BoringSSL. Best-effort: if the libs are absent, only the crypto rows are affected.
             var osslMac = $"/Users/{username}/Library/Android/ft-openssl";
@@ -74,7 +74,7 @@ namespace ft_tests.Runner
             Stop();
         }
 
-        // The emulator, launched bridged (ft_test_env: -vmnet-bridged), gets a REAL LAN IP on wlan0 via DHCP
+        // The emulator, launched bridged (mac\emulators.sh: -vmnet-bridged), gets a REAL LAN IP on wlan0 via DHCP
         // (eth0 stays the user-mode NAT 10.0.2.15). That LAN IP becomes this runner's RunOnIP, so the harness dials
         // the emulator directly - letting Android be side1 (client1) like any node. Falls back to the Mac's IP if
         // wlan0 has no LAN IP (a non-bridged emulator), which is harmless for a side2-only Android.
@@ -139,7 +139,7 @@ namespace ft_tests.Runner
 
         // ---- sshfs (issue #45): let the emulator be an sshfs client, exactly like a Termux user who runs
         // `pkg install sshfs`. The Termux sshfs toolchain (sshfs + fuse3 + openssh + openssl, staged on the Mac
-        // by mac_android_setup.sh) is pushed to the device's Termux prefix, then sshfs mounts the lab export.
+        // by provisioning\mac\setup.sh) is pushed to the device's Termux prefix, then sshfs mounts the lab export.
         // The resulting mount is a real FUSE filesystem (statfs f_type == 0x65735546), so bionic ft auto-enables
         // IsolatedIo over it just like on Linux. Used by AndroidSshfsClient.
 
@@ -151,7 +151,7 @@ namespace ft_tests.Runner
                 if (sshfsToolchainReady.Contains(serial)) return;
                 // Ensure root adbd (userdebug image): the FUSE mount needs SELinux-permissive + the mount syscall.
                 // `adb root` is idempotent - a no-op (no adbd restart) if already root, else it restarts adbd, so
-                // wait for the device to reappear. MacEmulator.Launch also roots at boot; this covers other paths.
+                // wait for the device to reappear. `.\mac.ps1 up` also roots it at boot; this covers other paths.
                 sshClient.ExecuteBounded($"{adb} root");
                 sshClient.ExecuteBounded($"{adb} wait-for-device");
                 var present = sshClient.CreateCommand(
@@ -163,12 +163,14 @@ namespace ft_tests.Runner
                     var push = sshClient.CreateCommand($"{adb} push \"{sshfsPrefixMac}\" {TermuxPrefixDevice}");
                     push.CommandTimeout = TimeSpan.FromMinutes(3);
                     push.Execute();
+                    // Android 16 lands a pushed tree under /data/data without its execute bits.
+                    sshClient.ExecuteBounded($"{adb} shell 'chmod -R 755 {TermuxPrefixDevice}/bin {TermuxPrefixDevice}/libexec'");
                     var recheck = sshClient.CreateCommand(
                         $"{adb} shell 'test -x {TermuxPrefixDevice}/bin/sshfs && echo READY'").Execute();
                     if (!recheck.Contains("READY", StringComparison.Ordinal))
                         throw new InvalidOperationException(
                             $"sshfs toolchain not staged on {serial}: is '{sshfsPrefixMac}' present on the Mac " +
-                            $"(run mac_android_setup.sh / ft_test_env menu 10)? push said: {push.Result}");
+                            $"(run .\\mac.ps1 setup, then .\\mac.ps1 up)? push said: {push.Result}");
                 }
                 sshfsToolchainReady.Add(serial);
             }

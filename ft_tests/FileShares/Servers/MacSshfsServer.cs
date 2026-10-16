@@ -2,15 +2,15 @@ using ft_tests.Runner;
 
 namespace ft_tests.FileShares.Servers
 {
-    /// <summary>The Mac (.33) as an sshfs server (issue #45): its always-on sshd exports a dir; the Android clients
-    /// sshfs-mount smith@.33:/Users/smith/ftsshfs. Key auth - Restart ensures the export dir and appends the lab
-    /// keypair's public key to the Mac's ~/.ssh/authorized_keys (idempotent, no sudo; the Mac's own login key auth
-    /// is untouched). Staged base64 to keep the key text intact through C#->SSH->zsh.</summary>
+    /// <summary>The Mac as an sshfs server (issue #45): its always-on sshd exports a dir; the Android clients
+    /// sshfs-mount &lt;user&gt;@&lt;mac&gt;:~/ftsshfs. Key auth - Restart ensures the export dir and appends the
+    /// throwaway sshfs keypair's public key to the Mac's ~/.ssh/authorized_keys (idempotent, no sudo; the Mac's own
+    /// login key auth is untouched). Staged base64 to keep the key text intact through C#->SSH->zsh.</summary>
     public class MacSshfsServer : Server
     {
-        public const string Host = "192.168.0.33";
-        public const string ExportDir = "/Users/smith/ftsshfs";
-        public const string SshUser = "smith";
+        public static readonly string Host = Lab.MacIp;
+        public static readonly string ExportDir = $"{Lab.MacHome}/ftsshfs";
+        public static readonly string SshUser = Lab.MacUser;
 
         private readonly ProcessRunner runner;    // a Mac runner (mac_1)
         private readonly string authorizedKeyText;

@@ -1,0 +1,112 @@
+---
+# A QEMU guest nested in this VM (KVM, thanks to the VM's nested virtualization), sharing two of
+# this VM's directories with it, so ft can be tested between the two over each:
+#   /srv/ftvfs  over virtio-fs  (virtiofsd), mounted in the guest at /mnt/vfs by the tests
+#   /srv/ft9p   over virtio-9p  (QEMU -virtfs), mounted in the guest at /mnt/9p by the tests
+# The guest's SSH is forwarded to this VM's port {{ linux.qemu_guest.ssh_port }}, where the tests log in.
+#
+# The guest is Debian's cloud image plus the generic kernel (the cloud kernel has no 9p module) and
+# ICU (ft needs it to start), baked in once with virt-customize. Every start of the guest runs on a
+# fresh overlay of that image, so the guest always starts clean.
+
+- name: QEMU and friends
+  ansible.builtin.apt:
+    name:
+      - qemu-system-x86
+      - qemu-utils
+      - virtiofsd
+      - cloud-image-utils   # cloud-localds, for the guest's cloud-init seed
+      - libguestfs-tools    # virt-customize
+    state: present
+
+- name: Directories (the guest's images; the two shared directories)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/lib/ftq, mode: "0755" }
+    - { path: /var/lib/ftq/vtmp, mode: "0755" }
+    - { path: /srv/ftvfs, mode: "0777" }
+    - { path: /srv/ft9p, mode: "0777" }
+
+- name: The guest's cloud-init (the test account, the lab key)
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/var/lib/ftq/{{ item }}"
+    mode: "0644"
+  loop: [user-data, meta-data]
+  notify: Restart ftq-guest
+
+- name: The guest's starter
+  ansible.builtin.template:
+    src: start-guest.sh.j2
+    dest: /var/lib/ftq/start-guest.sh
+    mode: "0755"
+  notify: Restart ftq-guest
+
+- name: The image customisation (drops the cloud kernel, so the generic one boots)
+  ansible.builtin.copy:
+    src: ftq-customize.sh
+    dest: /var/lib/ftq/customize.sh
+    mode: "0644"
+
+- name: Debian's cloud image (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ linux.qemu_guest.image_url }}"
+    dest: /var/lib/ftq/debian-genericcloud.qcow2
+    checksum: "sha512:{{ linux.qemu_guest.image_sha512 }}"
+    mode: "0644"
+
+- name: Which cloud image the guest's image was built from
+  ansible.builtin.slurp:
+    src: /var/lib/ftq/guest-base.source
+  register: guest_base_source
+  failed_when: false
+
+- name: The guest's image  (built once, from the cloud image; several minutes)
+  when: (guest_base_source.content | default('') | b64decode | trim) != linux.qemu_guest.image_sha512
+  notify: Restart ftq-guest
+  block:
+    # virt-customize boots its own small VM on KVM: not alongside the guest.
+    - name: The guest is stopped while its image is built
+      ansible.builtin.systemd_service:
+        name: ftq-guest
+        state: stopped
+      failed_when: false
+
+    - name: The guest's image is built (generic kernel, ICU)
+      ansible.builtin.shell: |
+        set -e
+        cd /var/lib/ftq
+        rm -f guest-base.building.qcow2
+        cp debian-genericcloud.qcow2 guest-base.building.qcow2
+        virt-customize -a guest-base.building.qcow2 \
+          --install linux-image-amd64,libicu76,tzdata \
+          --run customize.sh
+        mv -f guest-base.building.qcow2 guest-base.qcow2
+      environment:
+        TMPDIR: /var/lib/ftq/vtmp
+        LIBGUESTFS_CACHEDIR: /var/lib/ftq/vtmp
+        LIBGUESTFS_BACKEND: direct
+      changed_when: true
+
+    - name: Built from this cloud image
+      ansible.builtin.copy:
+        dest: /var/lib/ftq/guest-base.source
+        content: "{{ linux.qemu_guest.image_sha512 }}\n"
+        mode: "0644"
+
+- name: ftq-guest.service (starts the guest at boot)
+  ansible.builtin.copy:
+    src: ftq-guest.service
+    dest: /etc/systemd/system/ftq-guest.service
+    mode: "0644"
+  notify: Restart ftq-guest
+
+- name: The guest is running
+  ansible.builtin.systemd_service:
+    name: ftq-guest
+    state: started
+    enabled: true
+    daemon_reload: true

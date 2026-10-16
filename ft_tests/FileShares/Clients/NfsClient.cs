@@ -32,16 +32,16 @@ namespace ft_tests.FileShares.Clients
 
                 runner.Run("umount.exe", "X:");
 
-                runner.Run("mount.exe", "192.168.0.81:/mnt/tmpfs X:");
+                runner.Run("mount.exe", $"{Lab.LinuxServerIp}:/mnt/tmpfs X:");
 
                 //This causes NFS Windows-Linux-Windows to not work
-                //runner.Run("mount.exe", "-o nolock,noac,nfsvers=4 192.168.0.81:/mnt/tmpfs X:");
+                //runner.Run("mount.exe", "-o nolock,noac,nfsvers=4 <server>:/mnt/tmpfs X:");
             }
 
             if (OS == OS.Linux)
             {
-                runner.Run("umount", "/media/nfs/192.168.0.81/tmpfs");
-                runner.Run("mount", "-t nfs 192.168.0.81:/mnt/tmpfs /media/nfs/192.168.0.81/tmpfs");
+                runner.Run("umount", $"/media/nfs/{Lab.LinuxServerIp}/tmpfs");
+                runner.Run("mount", $"-t nfs {Lab.LinuxServerIp}:/mnt/tmpfs /media/nfs/{Lab.LinuxServerIp}/tmpfs");
             }
 
             if (OS == OS.Mac)
@@ -52,8 +52,8 @@ namespace ft_tests.FileShares.Clients
                 // by default; the Mac must ask for one). That is the ONLY option here: no version pin, no
                 // cache-defeating flags - a Mac reader seeing another client's appends is handled IN ft by
                 // MacDirectRefresh. MacProcessRunner.Run does not add sudo, so pass it explicitly.
-                const string mp = "/Users/smith/mnt/nfs/192.168.0.81/tmpfs";
-                runner.Run("sudo", $"bash -c 'mkdir -p {mp}; umount -f {mp} 2>/dev/null; mount -t nfs -o resvport 192.168.0.81:/mnt/tmpfs {mp}'");
+                var mp = $"{Lab.MacHome}/mnt/nfs/{Lab.LinuxServerIp}/tmpfs";
+                runner.Run("sudo", $"bash -c 'mkdir -p {mp}; umount -f {mp} 2>/dev/null; mount -t nfs -o resvport {Lab.LinuxServerIp}:/mnt/tmpfs {mp}'");
             }
         }
     }

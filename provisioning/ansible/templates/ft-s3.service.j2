@@ -1,0 +1,14 @@
+# Written by the File Tunnel lab's playbook: the S3-compatible server for ft's --s3 rows.
+[Unit]
+Description=S3-compatible server (SILO, a MinIO fork) for the File Tunnel tests
+After=network.target
+
+[Service]
+Environment=MINIO_ROOT_USER={{ linux.s3.access_key }}
+Environment=MINIO_ROOT_PASSWORD={{ linux.s3.secret_key }}
+ExecStart=/usr/local/bin/silo server /srv/minio --address :{{ linux.s3.port }} --console-address :9001
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

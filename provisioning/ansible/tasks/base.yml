@@ -1,0 +1,171 @@
+---
+# Every Linux machine: Debian up to date, the test account, the lab key.
+
+# bento's box doesn't record which disk GRUB is installed on, and a GRUB upgrade stops to ask.
+# It's the VM's only disk.
+- name: GRUB's install disk is recorded
+  ansible.builtin.debconf:
+    name: grub-pc
+    question: grub-pc/install_devices
+    value: /dev/sda
+    vtype: multiselect
+
+# The kernel's SMB, NFS and 9P clients are among the clients ft is tested over, so they should be
+# the ones Debian users run today, not the ones bento's box was built with (6.12.48, October 2025,
+# whose cifs client the rclone lab caught reading stale sizes after a truncate - and ft truncates
+# its files at every purge). The Vagrantfile reboots into the kernel chosen here.
+- name: Debian up to date, the kernel included
+  ansible.builtin.apt:
+    upgrade: dist
+    update_cache: true
+    cache_valid_time: 86400
+
+# linux.kernel.version in settings.yml can name an older kernel instead, for an A/B test: Debian
+# keeps only its current one, so it comes from snapshot.debian.org, by the file's hash.
+- name: The kernel {{ linux.kernel.version }}, from snapshot.debian.org
+  when: linux.kernel.version != 'newest'
+  block:
+    - name: Its package (checksum-verified)
+      ansible.builtin.get_url:
+        url: "https://snapshot.debian.org/file/{{ linux.kernel.snapshot_sha1 }}"
+        dest: "/var/cache/linux-image-{{ linux.kernel.version }}-amd64.deb"
+        checksum: "sha1:{{ linux.kernel.snapshot_sha1 }}"
+        mode: "0644"
+
+    - name: Installed
+      ansible.builtin.apt:
+        deb: "/var/cache/linux-image-{{ linux.kernel.version }}-amd64.deb"
+
+- name: Newest installed kernel
+  ansible.builtin.shell: ls /lib/modules | sort -V | tail -n 1
+  register: newest_kernel
+  changed_when: false
+
+- name: The kernel the VM boots
+  ansible.builtin.set_fact:
+    boot_kernel: "{{ newest_kernel.stdout if linux.kernel.version == 'newest' else linux.kernel.version ~ '-amd64' }}"
+
+- name: GRUB boots it
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_DEFAULT='
+    # 0 is the newest; an older one is in the "Advanced options" submenu.
+    line: >-
+      GRUB_DEFAULT={{ '0' if linux.kernel.version == 'newest'
+      else '"Advanced options for Debian GNU/Linux>Debian GNU/Linux, with Linux ' ~ boot_kernel ~ '"' }}
+  notify: update-grub
+
+- name: The kernel the VM should be running (the Vagrantfile reboots into it when it isn't)
+  ansible.builtin.copy:
+    dest: /etc/ft-lab-kernel
+    content: "{{ boot_kernel }}\n"
+    mode: "0644"
+
+# The box's VirtualBox Guest Additions built kernel modules for the box's kernel only. Booting
+# another one, their boot script ("vboxadd start") tries a rebuild, fails, and swaps the kernel's own
+# vboxguest and vboxsf out and back in, which unmounts the shared folders that Vagrant mounts from
+# /etc/fstab. The kernel's own drivers work with the Guest Additions programs, so for a kernel
+# without modules of its own the script just loads those (as in the rclone and SimpleKVM labs).
+- name: Guest Additions modules of their own for that kernel?  (they install into misc/)
+  ansible.builtin.shell: compgen -G '/lib/modules/{{ boot_kernel }}/misc/vboxguest.ko*'
+  args:
+    executable: /bin/bash
+  register: ga_modules
+  changed_when: false
+  failed_when: false
+
+- name: Drop-in directory for the Guest Additions boot service
+  ansible.builtin.file:
+    path: /etc/systemd/system/vboxadd.service.d
+    state: directory
+    mode: "0755"
+  when: ga_modules.rc != 0
+
+- name: Without modules of their own, the Guest Additions boot script loads the kernel's drivers
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/vboxadd.service.d/ft-lab-kernel-drivers.conf
+    content: |
+      # Written by the File Tunnel lab's playbook. The Guest Additions have no kernel modules
+      # for this kernel, and the kernel's own vboxguest and vboxsf work with their programs.
+      # Load those rather than let "vboxadd start" try a rebuild and a driver swap, which
+      # unmounts the shared folders.
+      [Service]
+      ExecStart=
+      ExecStart=-/usr/sbin/modprobe vboxguest
+      ExecStart=-/usr/sbin/modprobe vboxsf
+    mode: "0644"
+  when: ga_modules.rc != 0
+  notify: systemctl daemon-reload
+
+- name: With modules of their own, the Guest Additions boot script runs as shipped
+  ansible.builtin.file:
+    path: /etc/systemd/system/vboxadd.service.d/ft-lab-kernel-drivers.conf
+    state: absent
+  when: ga_modules.rc == 0
+  notify: systemctl daemon-reload
+
+- name: Packages every machine needs
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - libicu76          # ft is .NET without invariant globalization: it needs ICU to start
+      - python3-passlib   # the password_hash filter below (Python 3.13 has no crypt module)
+      - rsync
+    state: present
+
+- name: The test account ({{ accounts.linux.user }})
+  ansible.builtin.user:
+    name: "{{ accounts.linux.user }}"
+    # A fixed salt keeps the hash stable, so a re-run doesn't rewrite it.
+    password: "{{ accounts.linux.password | password_hash('sha512', 'ftlab') }}"
+    shell: /bin/bash
+    groups: [sudo]
+    append: true
+
+- name: The test account runs sudo without a password (the tests run ft as root)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/ft-lab
+    content: "{{ accounts.linux.user }} ALL=(ALL) NOPASSWD:ALL\n"
+    mode: "0440"
+    validate: visudo -cf %s
+
+# The tests log in with the account's password; sshfs clients mount with it too.
+- name: SSH accepts passwords
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/ft-lab.conf
+    content: |
+      # Written by the File Tunnel lab's playbook: the tests (and the sshfs clients) log in with a password.
+      PasswordAuthentication yes
+    mode: "0644"
+  notify: Restart ssh
+
+- name: The test account's .ssh is its own
+  ansible.builtin.file:
+    path: "/home/{{ accounts.linux.user }}/.ssh"
+    state: directory
+    owner: "{{ accounts.linux.user }}"
+    group: "{{ accounts.linux.user }}"
+    mode: "0700"
+
+- name: The lab's SSH key opens the test account and the vagrant account
+  ansible.builtin.lineinfile:
+    path: "/home/{{ item }}/.ssh/authorized_keys"
+    line: "{{ lab_pubkey }}"
+    owner: "{{ item }}"
+    group: "{{ item }}"
+    mode: "0600"
+    create: true
+  loop: ["{{ accounts.linux.user }}", vagrant]
+
+- name: /opt/ft (the lab's own scripts)
+  ansible.builtin.file:
+    path: /opt/ft
+    state: directory
+    mode: "0755"
+
+- name: The smoke test
+  ansible.builtin.template:
+    src: smoke-test.sh.j2
+    dest: /opt/ft/smoke-test.sh
+    mode: "0755"

@@ -1,0 +1,13 @@
+#cloud-config
+# Written by the File Tunnel lab's playbook: the nested QEMU guest's account.
+ssh_pwauth: true
+users:
+  - name: {{ accounts.linux.user }}
+    plain_text_passwd: {{ accounts.linux.password }}
+    lock_passwd: false
+    sudo: 'ALL=(ALL) NOPASSWD:ALL'
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - {{ lab_pubkey }}
+chpasswd:
+  expire: false

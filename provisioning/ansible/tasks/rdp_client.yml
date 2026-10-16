@@ -1,0 +1,18 @@
+---
+# The RDP client for the RdpLinux row: this machine connects to a Windows machine with
+# xfreerdp3 and shares /srv/ftrdp into the session, where it appears as \tsclient\ftshare.
+# xfreerdp3 is the engine Remmina wraps, minus the GTK front end, and it needs no desktop:
+# Xvfb satisfies its X dependency, since only the drive redirection matters.
+
+- name: RDP client packages
+  ansible.builtin.apt:
+    name:
+      - xvfb
+      - freerdp3-x11
+    state: present
+
+- name: The directory shared into the RDP session
+  ansible.builtin.file:
+    path: /srv/ftrdp
+    state: directory
+    mode: "0777"

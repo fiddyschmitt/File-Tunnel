@@ -3,9 +3,9 @@ using ft_tests.Runner;
 namespace ft_tests.FileShares.Clients
 {
     /// <summary>
-    /// The guest-side ft endpoint of a virtio share test. Runs inside the nested QEMU guest on .82
-    /// (reached over the host's SSH port-forward, .82:2222, via a <see cref="LinuxProcessRunner"/> with
-    /// port 2222) where the host's exported directory appears as a virtio-fs or virtio-9p mount. Restart
+    /// The guest-side ft endpoint of a virtio share test. Runs inside the nested QEMU guest on the QEMU host
+    /// (reached over the host's SSH port-forward, via a <see cref="LinuxProcessRunner"/> on
+    /// <see cref="Lab.QemuGuestSshPort"/>) where the host's exported directory appears as a virtio-fs or virtio-9p mount. Restart
     /// (re)mounts that share so the guest ft auto-detects it. The host side of the tunnel is a plain
     /// <see cref="Client"/> on the native export dir (no mount needed).
     /// </summary>

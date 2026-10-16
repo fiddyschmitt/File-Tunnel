@@ -16,7 +16,7 @@ namespace ft_tests.FileShares.Clients
     public class NinePClient : Client
     {
         // Mirrors the NFS/sshfs /media/<type>/<server>/<share> convention.
-        public const string MountPoint = "/media/9p/192.168.0.81/export";
+        public static readonly string MountPoint = $"/media/9p/{NinePServer.ServerIp}/export";
 
         private readonly ProcessRunner runner;
 

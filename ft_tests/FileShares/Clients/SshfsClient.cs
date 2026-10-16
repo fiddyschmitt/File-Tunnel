@@ -5,10 +5,10 @@ using ft_tests.Runner;
 namespace ft_tests.FileShares.Clients
 {
     /// <summary>
-    /// Mounts an sshfs export over sshfs on a Linux node (.80 side1 / .82 side2). The server it mounts is not fixed:
-    /// a <see cref="SshfsMountSpec"/> names the host/port/user/export/auth, so the same client mounts the Linux (.81,
-    /// password), Mac (.33, key) or Windows (.84, OpenSSH password) server - exactly like <see cref="AndroidSshfsClient"/>.
-    /// The sshfs package is installed by provisioning (ft_test_env/Cloud/setup_debian.sh); Restart only does the
+    /// Mounts an sshfs export over sshfs on a Linux VM (client1 side1 / client2 side2). The server it mounts is not
+    /// fixed: a <see cref="SshfsMountSpec"/> names the host/port/user/export/auth, so the same client mounts the Linux
+    /// (password), Mac (key) or Windows (OpenSSH password) server - exactly like <see cref="AndroidSshfsClient"/>.
+    /// The sshfs package is installed by provisioning (provisioning\ansible); Restart only does the
     /// runtime (re)mount, mirroring <see cref="NfsClient"/>:
     ///   1. tear down any stale/hung mount (fusermount -uz, then a lazy umount),
     ///   2. (re)mount user@host:export at a fixed local mount point.

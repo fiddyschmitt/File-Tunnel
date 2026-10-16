@@ -1,0 +1,65 @@
+#!/bin/bash
+# Written by the File Tunnel lab's playbook: checks what the tests rely on, on {{ machine.name }}.
+# The playbook runs it last; run it any time with `sudo /opt/ft/smoke-test.sh`.
+# FAIL lines are this machine's own problems. WARN lines are about another machine (a share whose
+# server is down, say), or something still starting.
+fail=0
+pass() { echo "PASS  $*"; }
+warn() { echo "WARN  $*"; }
+bad()  { echo "FAIL  $*"; fail=1; }
+check() { local what="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$what"; else bad "$what"; fi; }
+
+echo "{{ machine.name }} ({{ machine.role }}, {{ machine.ip }}): Debian $(cat /etc/debian_version), kernel $(uname -r)"
+check "ICU (ft needs it to start)" bash -c 'ldconfig -p | grep -q libicuuc'
+check "the lab's address {{ machine.ip }} is up" bash -c 'ip -4 -o addr show | grep -q " {{ machine.ip }}/"'
+{% if machine.role != 'build' %}
+
+for unit in ssh nfs-server smbd diod vsftpd tinyproxy nginx ft-s3; do
+    check "service $unit" systemctl is-active --quiet "$unit"
+done
+check "NFS export /mnt/tmpfs" bash -c 'exportfs -s | grep -q "^/mnt/tmpfs"'
+check "Samba share [data]" bash -c 'testparm -s 2>/dev/null | grep -q "^\[data\]"'
+check "9P (diod) on 564" bash -c 'ss -ltn | grep -q ":564 "'
+check "FTP lists anonymously" curl -sf --max-time 10 ftp://localhost/
+check "WebDAV takes a PUT" bash -c 'curl -sf --max-time 10 -T /etc/hostname http://localhost:{{ linux.webdav.port }}{{ linux.webdav.path }}.ft-smoke && curl -sf --max-time 10 -X DELETE http://localhost:{{ linux.webdav.port }}{{ linux.webdav.path }}.ft-smoke'
+check "S3 bucket {{ linux.s3.bucket }}" curl -sf --max-time 10 -I --aws-sigv4 "aws:amz:us-east-1:s3" --user "{{ linux.s3.access_key }}:{{ linux.s3.secret_key }}" "http://localhost:{{ linux.s3.port }}/{{ linux.s3.bucket }}"
+check "the PC's C:\\ at /media/vboxsf/{{ dev_box.ip }}/c_drive" test -d "/media/vboxsf/{{ dev_box.ip }}/c_drive/Windows"
+check "ft's log folder /media/vboxsf/{{ dev_box.ip }}/ft_logs is writable" bash -c 'p=/media/vboxsf/{{ dev_box.ip }}/ft_logs/.ft-smoke.$$ && touch "$p" && rm -f "$p"'
+
+# The shares on the other machines: a WARN means that machine isn't up, or wasn't when this ran.
+# Just after a boot, ft-mounts.service may still be mounting them: let it finish first.
+for i in $(seq 1 60); do systemctl is-active --quiet ft-mounts || break; sleep 2; done
+for mp in $(findmnt --fstab --noheadings --output TARGET --types cifs,nfs,nfs4,9p); do
+    if timeout -s KILL 8 mountpoint -q "$mp" && timeout -s KILL 8 sh -c ': > "$1"' sh "$mp/.ft-smoke.$$" 2>/dev/null; then
+        timeout -s KILL 8 rm -f "$mp/.ft-smoke.$$"
+        pass "share mounted: $mp"
+    else
+        warn "share not mounted: $mp (once its server is up: sudo /opt/ft/mounts.sh)"
+    fi
+done
+{% endif %}
+{% if machine.rdp_client | default(false) %}
+
+check "xfreerdp3 and Xvfb (the RdpLinux row)" bash -c 'command -v xfreerdp3 && command -v xvfb-run'
+{% endif %}
+{% if machine.qemu_host | default(false) %}
+
+check "KVM inside this VM (nested virtualization)" test -c /dev/kvm
+check "service ftq-guest (the nested QEMU guest)" systemctl is-active --quiet ftq-guest
+# The guest may still be booting: give it a couple of minutes to answer SSH.
+for i in $(seq 1 30); do
+    banner=$(timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/{{ linux.qemu_guest.ssh_port }} && head -c 7 <&3' 2>/dev/null)
+    [ "$banner" = "SSH-2.0" ] && break
+    sleep 5
+done
+if [ "$banner" = "SSH-2.0" ]; then pass "the nested guest answers SSH on {{ linux.qemu_guest.ssh_port }}"
+else warn "the nested guest doesn't answer SSH on {{ linux.qemu_guest.ssh_port }} yet (see /run/ftq/console.log)"; fi
+{% endif %}
+{% if machine.role == 'build' %}
+
+check ".NET SDK {{ linux.build.dotnet_sdk }}" bash -c '/opt/ftbuild/dotnet/dotnet --list-sdks | grep -q "^{{ linux.build.dotnet_sdk }} "'
+check "Android NDK {{ linux.build.ndk }}" test -x "/opt/ftbuild/android-ndk-{{ linux.build.ndk }}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+check "the PC's working tree at /srv/ft-src" test -f /srv/ft-src/ft/ft.csproj
+check "the output folder /srv/ft-out is writable" bash -c 'sudo -u vagrant touch /srv/ft-out/.ft-smoke && rm -f /srv/ft-out/.ft-smoke'
+{% endif %}
+exit $fail

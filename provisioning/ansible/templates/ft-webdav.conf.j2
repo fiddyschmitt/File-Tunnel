@@ -1,0 +1,11 @@
+# Written by the File Tunnel lab's playbook: WebDAV for ft's --webdav rows,
+# http://<ip>:{{ linux.webdav.port }}{{ linux.webdav.path }}, backed by /srv/webdav{{ linux.webdav.path }}.
+server {
+    listen {{ linux.webdav.port }};
+    location {{ linux.webdav.path }} {
+        root /srv/webdav;
+        dav_methods PUT DELETE MKCOL COPY MOVE;
+        create_full_put_path on;
+        client_max_body_size 50m;
+    }
+}

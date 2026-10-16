@@ -2,17 +2,17 @@ using ft_tests.Runner;
 
 namespace ft_tests.FileShares.Servers
 {
-    /// <summary>The Windows server VM (.84) as an sshfs server (issue #45): Windows OpenSSH Server exports a dir; the
-    /// Android clients sshfs-mount &lt;user&gt;@.84:/C:/sshfs_export (Windows OpenSSH presents drives as /C:/...).
-    /// Password auth (the baked lab account). Restart ensures OpenSSH Server is installed + running + the firewall +
-    /// the export dir, via runremote (session 1). Only runs in the batched full-lab run (needs the Windows node up).</summary>
+    /// <summary>The Windows server VM as an sshfs server (issue #45): Windows OpenSSH Server exports a dir; the
+    /// Android clients sshfs-mount &lt;user&gt;@&lt;server&gt;:/C:/sshfs_export (Windows OpenSSH presents drives as
+    /// /C:/...). Password auth (the lab's Windows account). Restart ensures OpenSSH Server is installed + running +
+    /// the firewall + the export dir. Only runs when the Windows server VM is up.</summary>
     public class WindowsSshfsServer : Server
     {
-        public const string Host = "192.168.0.84";
+        public static readonly string Host = Lab.WindowsServerIp;
         public const string ExportDir = "/C:/sshfs_export";        // sshfs remote path (Windows OpenSSH drive form)
         public const string LocalExportDir = @"C:\sshfs_export";   // same dir, Windows form (a local ft reader on .84 uses this)
 
-        private readonly ProcessRunner runner;   // win10_x64_2 (the .84 server), runremote
+        private readonly ProcessRunner runner;   // win10_x64_2 (the Windows server VM)
 
         public WindowsSshfsServer(ProcessRunner runner) : base(OS.Windows, FileShareType.Sshfs)
         {

@@ -28,10 +28,10 @@ namespace ft_tests.FileShares.Servers
     /// Consequence: this <b>steals</b> whatever RDP client was attached to that user's session, and
     /// Windows allows only one interactive session per user, so this test cannot share a Windows node
     /// with <see cref="EndToEndTests.Rdp"/> (which needs side1's C: at \\tsclient\c). They are deliberately
-    /// pointed at different boxes: Rdp uses the client2 node (.85), RdpLinux uses the server node (.84).
+    /// pointed at different boxes: Rdp uses the Windows server VM, RdpLinux the Windows client2 VM.
     ///
-    /// xvfb + freerdp3-x11 are installed by provisioning on one node only
-    /// (ft_test_env/Cloud/setup_debian.sh); the X stack is ~354MB and the node roots are small.
+    /// xvfb + freerdp3-x11 are installed by provisioning on the Linux client1 VM only (rdp_client: true in
+    /// provisioning\settings.yml).
     /// </summary>
     public class RdpLinuxServer : Server
     {

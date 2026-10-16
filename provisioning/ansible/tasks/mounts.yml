@@ -1,0 +1,81 @@
+---
+# The lab's shares, mounted on every Linux test machine at /media/<type>/<server address>/<share>,
+# where the tests expect them. (The PC's two shared folders, c_drive and ft_logs, are VirtualBox
+# shared folders that Vagrant mounts itself.)
+#
+# They are in /etc/fstab as `noauto`: systemd doesn't mount them at boot, when their servers may
+# not be up yet. /opt/ft/mounts.sh mounts whichever aren't mounted, or are mounted but dead: at
+# boot (ft-mounts.service), at the end of provisioning, and before every test run. Each uses the
+# protocol's typical options, nothing tuned.
+
+- name: The clients (SMB and NFS; the 9P client is in the kernel)
+  ansible.builtin.apt:
+    name:
+      - cifs-utils
+      - nfs-common
+    state: present
+
+- name: The Windows server's SMB login (for \\{{ windows_server.ip }}\Shared)
+  ansible.builtin.copy:
+    dest: /etc/ft-windows-server.cred
+    content: |
+      username={{ accounts.windows.user }}
+      password={{ accounts.windows.password }}
+    mode: "0600"
+
+- name: The lab's shares are in /etc/fstab
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ item.src }}"
+    fstype: "{{ item.fstype }}"
+    opts: "{{ item.opts }}"
+    state: present
+  loop:
+    # root with an empty password, which Samba maps to its guest account (as the old lab mounted
+    # it). `guest` instead would make an anonymous session, in which setting a file's times fails.
+    - path: "/media/smb/{{ linux_server.ip }}/data"
+      src: "//{{ linux_server.ip }}/data"
+      fstype: cifs
+      opts: password=,noauto
+    - path: "/media/nfs/{{ linux_server.ip }}/tmpfs"
+      src: "{{ linux_server.ip }}:/mnt/tmpfs"
+      fstype: nfs
+      opts: noauto
+    - path: "/media/9p/{{ linux_server.ip }}/export"
+      src: "{{ linux_server.ip }}"
+      fstype: 9p
+      opts: trans=tcp,aname=/srv/9p,noauto
+    - path: "/media/smb/{{ windows_server.ip }}/shared"
+      src: "//{{ windows_server.ip }}/Shared"
+      fstype: cifs
+      opts: credentials=/etc/ft-windows-server.cred,noauto
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: /opt/ft/mounts.sh
+  ansible.builtin.copy:
+    src: mounts.sh
+    dest: /opt/ft/mounts.sh
+    mode: "0755"
+
+- name: ft-mounts.service (mounts the shares at boot)
+  ansible.builtin.copy:
+    src: ft-mounts.service
+    dest: /etc/systemd/system/ft-mounts.service
+    mode: "0644"
+  notify: systemctl daemon-reload
+
+- name: ft-mounts.service enabled
+  ansible.builtin.systemd_service:
+    name: ft-mounts
+    enabled: true
+    daemon_reload: true
+
+- name: Shares mounted now  (a server that isn't up yet only warns; see the summary)
+  ansible.builtin.command: /opt/ft/mounts.sh
+  register: mounts
+  changed_when: "'Mounted:' in mounts.stdout"
+
+- name: Mounts
+  ansible.builtin.debug:
+    msg: "{{ mounts.stdout_lines }}"

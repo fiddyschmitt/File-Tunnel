@@ -1,0 +1,284 @@
+---
+# The servers ft is tested over. Every Linux test machine runs all of them, so any
+# of them could stand in for another; the tests use the ones on the `server` machine.
+
+- name: Server packages
+  ansible.builtin.apt:
+    name:
+      - nfs-kernel-server
+      - samba
+      - smbclient       # for poking at a share by hand
+      - sshfs           # the sshfs client (the server side is plain sshd)
+      - diod            # a 9P server
+      - vsftpd
+      - tinyproxy
+      - nginx
+    state: present
+
+# ---- NFS: a 3 GB tmpfs, exported read-write to anyone --------------------------------------------
+
+- name: NFS export directory is a tmpfs
+  ansible.posix.mount:
+    path: /mnt/tmpfs
+    src: tmpfs
+    fstype: tmpfs
+    opts: size=3G
+    state: mounted
+
+- name: NFS export
+  ansible.builtin.lineinfile:
+    path: /etc/exports
+    line: "/mnt/tmpfs *(rw,sync,no_root_squash,no_subtree_check)"
+  notify: Re-export NFS shares
+
+- name: NFS server running
+  ansible.builtin.service:
+    name: nfs-server
+    state: started
+    enabled: true
+
+# ---- SMB (Samba): \\<ip>\data, open to guests and to the test account -----------------------------
+
+- name: SMB share directory
+  ansible.builtin.file:
+    path: /media/smbserver/data
+    state: directory
+    mode: "0777"
+
+# Windows 11 24H2 and later refuse a server that doesn't sign ("...your computer is configured to
+# require SMB signing"). Debian's stock smb.conf leaves signing off; `auto` is the documented setting
+# for serving modern Windows clients.
+- name: Samba signs when the client asks
+  ansible.builtin.lineinfile:
+    path: /etc/samba/smb.conf
+    regexp: '^\s*server signing\s*='
+    line: "   server signing = auto"
+    insertafter: '^\[global\]'
+    validate: testparm -s %s
+  notify: Restart smbd
+
+- name: SMB share
+  ansible.builtin.blockinfile:
+    path: /etc/samba/smb.conf
+    marker: "# {mark} File Tunnel lab share"
+    block: |
+      [data]
+         read only = no
+         writable = yes
+         path = /media/smbserver/data
+         guest ok = yes
+    validate: testparm -s %s
+  notify: Restart smbd
+
+# The share takes guests, but Windows refuses unauthenticated guest access by default, so the
+# Windows clients log in as the test account.
+- name: Is the test account a Samba user?
+  ansible.builtin.command: pdbedit -L -u {{ accounts.linux.user }}
+  register: samba_user
+  changed_when: false
+  failed_when: false
+
+- name: The test account is a Samba user
+  ansible.builtin.shell: printf '%s\n%s\n' "$PW" "$PW" | smbpasswd -a -s "{{ accounts.linux.user }}"
+  environment:
+    PW: "{{ accounts.linux.password }}"
+  when: samba_user.rc != 0
+
+- name: Samba running
+  ansible.builtin.service:
+    name: smbd
+    state: started
+    enabled: true
+
+# ---- sshfs: no daemon of its own (it rides sshd), just a directory anyone can write ---------------
+
+- name: sshfs export directory
+  ansible.builtin.file:
+    path: /srv/sshfs
+    state: directory
+    mode: "0777"
+
+# ---- 9P: diod over TCP 564, no authentication, so the kernel client mounts it with trans=tcp -------
+
+- name: 9P export directory
+  ansible.builtin.file:
+    path: /srv/9p
+    state: directory
+    mode: "0777"
+
+- name: diod exports it
+  ansible.builtin.copy:
+    dest: /etc/diod.conf
+    content: |
+      exports = { "/srv/9p" }
+      auth_required = 0
+    mode: "0644"
+  notify: Restart diod
+
+- name: diod's init script is switched on
+  ansible.builtin.lineinfile:
+    path: /etc/default/diod
+    regexp: '^DIOD_ENABLE='
+    line: DIOD_ENABLE=true
+    create: true
+    mode: "0644"
+  notify: Restart diod
+
+- name: diod running
+  ansible.builtin.service:
+    name: diod
+    state: started
+    enabled: true
+
+# ---- FTP: anonymous, read from /srv/ftp/pub, write to its uploads/ --------------------------------
+
+- name: FTP directories (the anonymous root must not be writable; uploads/ is)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /srv/ftp, owner: root, mode: "0755" }
+    - { path: /srv/ftp/pub, owner: root, mode: "0755" }
+    - { path: /srv/ftp/pub/uploads, owner: ftp, mode: "0775" }
+
+- name: vsftpd configuration
+  ansible.builtin.copy:
+    src: vsftpd.conf
+    dest: /etc/vsftpd.conf
+    mode: "0644"
+  notify: Restart vsftpd
+
+- name: vsftpd running
+  ansible.builtin.service:
+    name: vsftpd
+    state: started
+    enabled: true
+
+# ---- HTTP proxy (tinyproxy) on 0.0.0.0:8888, open to anyone ---------------------------------------
+
+- name: tinyproxy listens on every address, port 8888
+  ansible.builtin.lineinfile:
+    path: /etc/tinyproxy/tinyproxy.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^#?Port ', line: Port 8888 }
+    - { regexp: '^#?Listen ', line: Listen 0.0.0.0 }
+  notify: Restart tinyproxy
+
+- name: tinyproxy takes clients from anywhere (no Allow lines)
+  ansible.builtin.replace:
+    path: /etc/tinyproxy/tinyproxy.conf
+    regexp: '^Allow '
+    replace: '#Allow '
+  notify: Restart tinyproxy
+
+- name: tinyproxy running
+  ansible.builtin.service:
+    name: tinyproxy
+    state: started
+    enabled: true
+
+# ---- WebDAV (nginx): http://<ip>:8080/dav/, no authentication -------------------------------------
+# nginx's own dav module covers what ft uses (GET/PUT/HEAD/DELETE). With no username, ft sends no
+# Authorization header, which exercises that path.
+
+- name: WebDAV directory
+  ansible.builtin.file:
+    path: "/srv/webdav{{ linux.webdav.path }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+
+- name: WebDAV site
+  ansible.builtin.template:
+    src: ft-webdav.conf.j2
+    dest: /etc/nginx/conf.d/ft-webdav.conf
+    mode: "0644"
+  notify: Restart nginx
+
+- name: nginx running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+
+# ---- S3: SILO (the maintained fork of MinIO) on :9000, bucket fttest -----------------------------
+# A server that validates SigV4 exactly like AWS (it exercises ft's own signer) and, unlike
+# `rclone serve s3`, is strongly consistent with no directory cache: ft's single-slot
+# upload-download overwrites and deletes one object rapidly and relies on read-after-write.
+# MinIO's community downloads are gone (410), so this is its maintained fork, the same code: the
+# same SigV4 validation, the same MINIO_* settings. Pinned and checksum-verified.
+#
+# A failed download must not stop the rest of the machine from being provisioned, so it only
+# warns; the summary says so, and `vagrant provision` retries it.
+
+- name: S3-compatible server
+  block:
+    - name: SILO download (checksum-verified)
+      ansible.builtin.get_url:
+        url: "https://github.com/pgsty/silo/releases/download/{{ linux.s3.release }}/{{ linux.s3.tarball }}"
+        dest: "/var/cache/{{ linux.s3.tarball }}"
+        checksum: "sha256:{{ linux.s3.sha256 }}"
+        mode: "0644"
+
+    - name: SILO installed
+      ansible.builtin.unarchive:
+        src: "/var/cache/{{ linux.s3.tarball }}"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [silo]
+      register: silo_binary
+
+    - name: S3 data directory
+      ansible.builtin.file:
+        path: /srv/minio
+        state: directory
+        mode: "0755"
+
+    - name: S3 service
+      ansible.builtin.template:
+        src: ft-s3.service.j2
+        dest: /etc/systemd/system/ft-s3.service
+        mode: "0644"
+      register: s3_unit
+
+    - name: S3 server running (restarted when it changed)
+      ansible.builtin.systemd_service:
+        name: ft-s3
+        state: "{{ 'restarted' if (silo_binary.changed or s3_unit.changed) else 'started' }}"
+        enabled: true
+        daemon_reload: true
+
+    # A SigV4-signed PUT (curl signs it itself). Retried: just after a start the server refuses
+    # connections, then answers 503 for a moment. An existing bucket answers 409.
+    - name: S3 bucket {{ linux.s3.bucket }}
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - --aws-sigv4
+          - "aws:amz:us-east-1:s3"
+          - --user
+          - "{{ linux.s3.access_key }}:{{ linux.s3.secret_key }}"
+          - --request
+          - PUT
+          - "http://localhost:{{ linux.s3.port }}/{{ linux.s3.bucket }}"
+      register: s3_bucket
+      until: s3_bucket.stdout in ['200', '409']
+      retries: 60
+      delay: 1
+      changed_when: s3_bucket.stdout == '200'
+
+  rescue:
+    - name: The S3 server is not set up
+      ansible.builtin.debug:
+        msg: "WARNING: setting up the S3 server failed (see above). The S3 rows will fail until `vagrant provision` succeeds."

@@ -1,0 +1,66 @@
+---
+# The Android build machine: builds ft for Android/Termux (linux-bionic-arm64, NativeAOT), a native
+# Bionic binary that runs in Termux as it is. /opt/ftbuild/build-bionic.sh builds the PC's working
+# tree (shared read-only at /srv/ft-src, uncommitted changes included) and writes the binary to the
+# PC's output folder (shared at /srv/ft-out). The PC runs it with .\build-android.ps1.
+#
+# The recipe (dotnet/runtime's android-bionic.md): PublishAot + DisableUnsupportedError +
+# PublishAotUsingRuntimePack, with the NDK's LLVM toolchain on the PATH. ft.csproj adds
+# -Wl,--undefined-version for this RID. The SDK and NDK are installed by root and only read by
+# the build, which runs as vagrant.
+
+- name: Build tools
+  ansible.builtin.apt:
+    name:
+      - clang
+      - lld
+      - binutils
+      - zlib1g-dev
+      - libicu-dev      # the .NET CLI itself won't start without ICU
+      - git
+      - unzip
+      - file
+    state: present
+
+- name: Build directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "0755"
+  loop:
+    - { path: /opt/ftbuild, owner: root }
+    - { path: /opt/ftbuild/nuget, owner: vagrant }
+    - { path: /opt/ftbuild/work, owner: vagrant }
+
+- name: dotnet-install.sh
+  ansible.builtin.get_url:
+    url: https://dot.net/v1/dotnet-install.sh
+    dest: /opt/ftbuild/dotnet-install.sh
+    mode: "0755"
+
+- name: .NET SDK {{ linux.build.dotnet_sdk }}
+  ansible.builtin.command:
+    argv: [/opt/ftbuild/dotnet-install.sh, --version, "{{ linux.build.dotnet_sdk }}", --install-dir, /opt/ftbuild/dotnet]
+    creates: "/opt/ftbuild/dotnet/sdk/{{ linux.build.dotnet_sdk }}"
+
+- name: Android NDK {{ linux.build.ndk }} download (checksum-verified)
+  ansible.builtin.get_url:
+    url: "https://dl.google.com/android/repository/android-ndk-{{ linux.build.ndk }}-linux.zip"
+    dest: "/var/cache/android-ndk-{{ linux.build.ndk }}-linux.zip"
+    checksum: "sha256:{{ linux.build.ndk_sha256 }}"
+    mode: "0644"
+
+- name: Android NDK {{ linux.build.ndk }} unpacked
+  ansible.builtin.unarchive:
+    src: "/var/cache/android-ndk-{{ linux.build.ndk }}-linux.zip"
+    dest: /opt/ftbuild
+    remote_src: true
+    creates: "/opt/ftbuild/android-ndk-{{ linux.build.ndk }}"
+
+- name: build-bionic.sh
+  ansible.builtin.template:
+    src: build-bionic.sh.j2
+    dest: /opt/ftbuild/build-bionic.sh
+    mode: "0755"
