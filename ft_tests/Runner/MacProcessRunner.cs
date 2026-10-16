@@ -37,11 +37,16 @@ namespace ft_tests.Runner
             sshClient.ExecuteBounded("pkill -x ft || true");
             Stop();
 
+            // Upload to a new file and rename it over the old one. Copying over the old binary in place keeps
+            // its inode, and macOS on Apple Silicon can then refuse to run it: the kernel kills ft at launch
+            // ("CODESIGNING, Taskgated Invalid Signature") before it writes a line, and every row with this
+            // runner fails with "Could not connect". A rename gives the kernel a fresh file to check.
+            var uploadPath = $"{remoteExecutablePath}.new";
             var scpClient = new ScpClient(connectionInfo);
             scpClient.Connect();
-            scpClient.Upload(new FileInfo(localExecutablePath), remoteExecutablePath);
+            scpClient.Upload(new FileInfo(localExecutablePath), uploadPath);
 
-            sshClient.ExecuteBounded($"chmod +x \"{remoteExecutablePath}\"");
+            sshClient.ExecuteBounded($"chmod +x \"{uploadPath}\" && mv -f \"{uploadPath}\" \"{remoteExecutablePath}\"");
             this.outputFilename = outputFilename;
         }
 
