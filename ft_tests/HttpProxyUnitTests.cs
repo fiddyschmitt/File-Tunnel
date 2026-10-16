@@ -15,6 +15,8 @@ namespace ft_tests
     // In-process end-to-end tests for the HTTP CONNECT proxy (ft's --http-proxy / --remote-http-proxy),
     // mirroring SocksUnitTests: two ft.Program.Main instances over temp files, a real CONNECT client through
     // the tunnel to a loopback destination, byte-integrity both ways. [Timeout] bounds any hang.
+    // The loopback ports are fixed and below 49152: Windows lends 49152-65535 to other programs' outgoing
+    // connections, so a port there can already be taken.
     [DoNotParallelize]
     [TestClass]
     [TestCategory("Unit")]
@@ -25,8 +27,8 @@ namespace ft_tests
 
         [DataTestMethod]
         [Timeout(180000)]
-        [DataRow("--http-proxy 0.0.0.0:57101", 57101, 58101, DisplayName = "Local_HttpProxy")]
-        [DataRow("--remote-http-proxy 0.0.0.0:57102", 57102, 58102, DisplayName = "Remote_HttpProxy")]
+        [DataRow("--http-proxy 0.0.0.0:42101", 42101, 43101, DisplayName = "Local_HttpProxy")]
+        [DataRow("--remote-http-proxy 0.0.0.0:42102", 42102, 43102, DisplayName = "Remote_HttpProxy")]
         public void HttpProxy_Connect_Transfers(string proxyArg, int proxyPort, int destPort)
         {
             var writeFilename = Path.GetTempFileName();
@@ -71,7 +73,7 @@ namespace ft_tests
         [Timeout(90000)]   // the dialer retries for the ~10s tunnel-timeout before reporting the failure
         public void HttpProxy_DeadDestination_Returns5xx()
         {
-            const int proxyPort = 57111, deadPort = 57199;
+            const int proxyPort = 42111, deadPort = 42199;
             var writeFilename = Path.GetTempFileName();
             var readFilename = Path.GetTempFileName();
             var (listenThread, forwardThread) = StartTunnel($"--http-proxy 0.0.0.0:{proxyPort}", writeFilename, readFilename);
@@ -106,7 +108,7 @@ namespace ft_tests
         [Timeout(300000)]
         public void HttpProxyStress_FourProxies_HundredsOfRapidRequests()
         {
-            const int aLocal = 57210, aRemote = 57211, bLocal = 57212, bRemote = 57213, dest = 57214;
+            const int aLocal = 42210, aRemote = 42211, bLocal = 42212, bRemote = 42213, dest = 42214;
             const int totalRequests = 400;
             const int concurrency = 32;
 

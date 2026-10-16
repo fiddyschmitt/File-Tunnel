@@ -14,6 +14,8 @@ namespace ft_tests
 {
     // Tests for SOCKS5 UDP ASSOCIATE (RFC 1928): the datagram-header codec + the passive per-destination
     // stream (pure, no network) and an in-process UDP-echo round-trip through a real `-D` tunnel.
+    // The loopback ports are fixed and below 49152: Windows lends 49152-65535 to other programs' outgoing
+    // connections, so a port there can already be taken.
     [DoNotParallelize]
     [TestClass]
     [TestCategory("Unit")]
@@ -190,8 +192,8 @@ namespace ft_tests
         // far-side hostname resolution is already covered by the TCP Socks5_Domain test).
         [DataTestMethod]
         [Timeout(180000)]
-        [DataRow((byte)0x01, "127.0.0.1", 56101, 59101, DisplayName = "Udp_IPv4")]
-        [DataRow((byte)0x03, "127.0.0.1", 56102, 59102, DisplayName = "Udp_DomainAtyp")]
+        [DataRow((byte)0x01, "127.0.0.1", 41101, 44101, DisplayName = "Udp_IPv4")]
+        [DataRow((byte)0x03, "127.0.0.1", 41102, 44102, DisplayName = "Udp_DomainAtyp")]
         public void LocalUdpAssociate_Echo(byte atyp, string host, int socksPort, int destPort)
         {
             var payload = new byte[4096];
@@ -209,7 +211,7 @@ namespace ft_tests
         [Timeout(180000)]
         public void LocalUdpAssociate_MultipleDestinations_OneAssociation()
         {
-            int socksPort = 56111, destA = 59111, destB = 59112;
+            int socksPort = 41111, destA = 44111, destB = 44112;
             var payloadA = Encoding.ASCII.GetBytes("to-A");
             var payloadB = Encoding.ASCII.GetBytes("destination-B");
 
@@ -227,7 +229,7 @@ namespace ft_tests
         [Timeout(180000)]
         public void LocalUdpAssociate_LargeDatagram_NotSplitOrCoalesced()
         {
-            int socksPort = 56121, destPort = 59121;
+            int socksPort = 41121, destPort = 44121;
             var payload = new byte[60000];
             Random.Shared.NextBytes(payload);
 
@@ -242,7 +244,7 @@ namespace ft_tests
         [Timeout(180000)]
         public void LocalUdpAssociate_FragmentedDatagram_Dropped()
         {
-            int socksPort = 56131, destPort = 59131;
+            int socksPort = 41131, destPort = 44131;
             var payload = Encoding.ASCII.GetBytes("frag");
 
             RunUdpTunnel(socksPort, [destPort], (control, relaySocket, bnd, echoPorts) =>

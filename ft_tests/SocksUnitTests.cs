@@ -16,6 +16,8 @@ namespace ft_tests
     // instances on threads over temp files, drives a real SOCKS client through the tunnel to a loopback
     // "ultimate destination", and verifies byte integrity both ways - the same hermetic pattern as
     // TcpUnitTests. [Timeout] bounds any hang.
+    // The loopback ports are fixed and below 49152: Windows lends 49152-65535 to other programs' outgoing
+    // connections, so a port there can already be taken.
     [DoNotParallelize]
     [TestClass]
     [TestCategory("Unit")]
@@ -25,9 +27,9 @@ namespace ft_tests
 
         [DataTestMethod]
         [Timeout(180000)]
-        [DataRow((byte)5, false, 55101, 58101, DisplayName = "LocalDynamic_Socks5_IPv4")]
-        [DataRow((byte)5, true, 55102, 58102, DisplayName = "LocalDynamic_Socks5_Domain")]   // far-side name resolution
-        [DataRow((byte)4, false, 55103, 58103, DisplayName = "LocalDynamic_Socks4_IPv4")]
+        [DataRow((byte)5, false, 40101, 43101, DisplayName = "LocalDynamic_Socks5_IPv4")]
+        [DataRow((byte)5, true, 40102, 43102, DisplayName = "LocalDynamic_Socks5_Domain")]   // far-side name resolution
+        [DataRow((byte)4, false, 40103, 43103, DisplayName = "LocalDynamic_Socks4_IPv4")]
         public void LocalDynamicForward(byte version, bool useHostname, int socksPort, int destPort)
         {
             RunDynamicForwardTransfer($"-D {socksPort}", socksPort, version, useHostname, destPort);
@@ -39,15 +41,15 @@ namespace ft_tests
         {
             // "-R port" (no destination) overloads into a remote SOCKS proxy. The SOCKS server runs on the
             // far side; this exercises the CreateListener("socks", ...) + MultiServer partition path.
-            RunDynamicForwardTransfer("-R 55111", 55111, version: 5, useHostname: false, destPort: 58111);
+            RunDynamicForwardTransfer("-R 40111", 40111, version: 5, useHostname: false, destPort: 43111);
         }
 
         [TestMethod]
         [Timeout(90000)]   // the dialer retries for the ~10s tunnel-timeout before reporting the refusal
         public void FailureReply_RefusedDestination_ReportsAccurateCode()
         {
-            const int socksPort = 55121;
-            const int deadPort = 55199;   // nothing listens here
+            const int socksPort = 40121;
+            const int deadPort = 40199;   // nothing listens here
 
             var writeFilename = Path.GetTempFileName();
             var readFilename = Path.GetTempFileName();
@@ -90,7 +92,7 @@ namespace ft_tests
         [Timeout(300000)]
         public void SocksStress_FourProxies_LargeConcurrentTransfers()
         {
-            const int aLocal = 55210, aRemote = 55211, bLocal = 55212, bRemote = 55213, dest = 55214;
+            const int aLocal = 40210, aRemote = 40211, bLocal = 40212, bRemote = 40213, dest = 40214;
             const int connectionsPerProxy = 4;
             const int bytesPerTransfer = 16 * 1024 * 1024;
 
