@@ -47,6 +47,11 @@ do {
 } while ((Get-Date) -lt $deadline)
 if ($session) { Pass 'the account is logged on at the console' } else { Fail 'the account is logged on at the console' }
 if ($udp) { Pass 'RunRemote listening (UDP 8888)' } else { Fail 'RunRemote listening (UDP 8888)' }
+# What RunRemote starts (ft) inherits its priority, so it must be the one a program the user starts gets.
+Check 'RunRemote runs at normal priority' {
+    $rr = @(Get-Process server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq 'C:\Temp\runremote\server.exe' })
+    $rr.Count -gt 0 -and -not ($rr | Where-Object { $_.PriorityClass -ne 'Normal' })
+}
 
 if ($script:failed) { exit 1 }
 exit 0

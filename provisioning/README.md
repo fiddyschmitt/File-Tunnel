@@ -130,7 +130,8 @@ PASS/WARN/FAIL lines; a FAIL stops Vagrant there.
   where `\\tsclient` (RDP drive redirection), the NFS drive and saved SMB credentials live; an SSH
   session can't see them. The account logs on at the console at every boot, RunRemote starts at logon
   and every two minutes after (a second copy exits while the first holds the port), so it comes back
-  if it dies. It's installed from the PC's own build (`windows.runremote_dir`).
+  if it dies. It runs at normal priority, which ft inherits, as it would from a program you start
+  yourself. It's installed from the PC's own build (`windows.runremote_dir`).
 - **No Windows firewall**: the tests connect into ft's port forwards on whatever ports a test picks; a
   scoped rule proved unreliable here, and this is an isolated lab.
 - **The S3 server is SILO**, the maintained fork of MinIO (whose community downloads are gone), pinned

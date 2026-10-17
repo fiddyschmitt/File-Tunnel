@@ -110,23 +110,28 @@ if ($LASTEXITCODE -ne 0) { throw 'icacls failed on C:\Temp\ft\Shared' }
 # Installed from the PC's build (shared in as \\vboxsvr\runremote). It runs at logon, and every two
 # minutes after that, so it comes back if it ever dies: a second copy exits at once while the first
 # holds the port.
+# It runs at normal priority, like a program the user starts. A task's default priority (7) is below
+# normal, with low I/O and memory priority too, and everything RunRemote starts inherits it: ft then
+# got no CPU at all for seconds at a time whenever the tests' own SSH sessions kept both CPUs busy.
 $rrDir = 'C:\Temp\runremote'
 $rrExe = Join-Path $rrDir 'server.exe'
 $rrSource = '\\vboxsvr\runremote\server.exe'
 if (-not (Test-Path $rrSource)) { throw "No RunRemote server at $rrSource (windows.runremote_dir in settings.yml)" }
 New-Item -ItemType Directory -Force -Path $rrDir | Out-Null
-if (-not (Test-Path $rrExe) -or (Get-FileHash $rrExe).Hash -ne (Get-FileHash $rrSource).Hash) {
+$rrRunning = @(Get-Process server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $rrExe })
+$rrStale = -not (Test-Path $rrExe) -or (Get-FileHash $rrExe).Hash -ne (Get-FileHash $rrSource).Hash
+if ($rrStale -or ($rrRunning | Where-Object { $_.PriorityClass -ne 'Normal' })) {
     Stop-ScheduledTask -TaskName RunRemote -ErrorAction SilentlyContinue
-    Get-Process server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $rrExe } | Stop-Process -Force
+    $rrRunning | Stop-Process -Force
     Start-Sleep -Seconds 1
-    Copy-Item -Force $rrSource $rrExe
+    if ($rrStale) { Copy-Item -Force $rrSource $rrExe }
 }
 $action = New-ScheduledTaskAction -Execute $rrExe -WorkingDirectory $rrDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 2)).Repetition
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -Priority 4
 Register-ScheduledTask -TaskName RunRemote -Action $action -Trigger $trigger -Principal $principal `
     -Settings $taskSettings -Description 'File Tunnel lab: RunRemote server (UDP 8888) in the logged-on session' `
     -Force | Out-Null
