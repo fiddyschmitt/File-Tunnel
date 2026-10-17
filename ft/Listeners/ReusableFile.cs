@@ -125,7 +125,8 @@ namespace ft.Listeners
                     var hashingStream = new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds);
                     var binaryWriter = new BinaryWriter(hashingStream);
 
-                    var sessionId = Random.Shared.NextInt64();
+                    //Never 0: the header reads as 0 until this id is written, which tells the reader to wait for it.
+                    var sessionId = Random.Shared.NextInt64(1, long.MaxValue);
                     binaryWriter.Write(sessionId);
                     binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
@@ -289,6 +290,24 @@ namespace ft.Listeners
             return result;
         }
 
+        //The writer sizes a new file to the header before it writes its session id there, so for a moment the
+        //file exists with an id of 0. A reader that took that for the id saw the real one a second later as
+        //a new session, and dropped everything the counterpart had set up through it.
+        static bool HasSessionId(string filename)
+        {
+            try
+            {
+                using var file = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                Span<byte> sessionId = stackalloc byte[sizeof(long)];
+                return file.ReadAtLeast(sessionId, sessionId.Length, throwOnEndOfStream: false) == sessionId.Length
+                       && BitConverter.ToInt64(sessionId) != 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public override void ReceivePump()
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
@@ -343,7 +362,7 @@ namespace ft.Listeners
                     {
                         while (true)
                         {
-                            if (File.Exists(ReadFromFilename) && new FileInfo(ReadFromFilename).Length > 0)
+                            if (File.Exists(ReadFromFilename) && HasSessionId(ReadFromFilename))
                             {
                                 Program.Log($"[{readFileShortName}] now exists. Reading.");
                                 break;
