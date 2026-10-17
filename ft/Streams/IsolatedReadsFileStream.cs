@@ -40,12 +40,45 @@ namespace ft.Streams
             }
         }
 
+        // Linux vboxsf (VirtualBox shared folders) re-reads a file from the host on open() only when the
+        // host's modification time has moved forward since the guest last looked; otherwise it keeps serving
+        // the pages it has. That time can move backwards: a truncate is stamped with the WRITER guest's clock
+        // (rounded down to the second), every other write with the host's. When the writer's clock runs ahead
+        // of the host's - as after the host steps its own clock back, which Windows Time does every few days -
+        // a purge's truncate is stamped later than the flag write that follows it, so a reader that looked in
+        // between never sees the flag: each end then waits on the other until the tunnel times out. Dropping
+        // the cached pages first makes the read come from the host whatever the times say.
+        const int POSIX_FADV_DONTNEED = 4;
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_fadvise(int fd, long offset, long len, int advice);
+
+        readonly bool dropCachedPages;
+
         readonly int retryTimeoutMilliseconds;
 
         public IsolatedReadsFileStream(string filename, int retryTimeoutMilliseconds)
         {
             Filename = filename;
             this.retryTimeoutMilliseconds = retryTimeoutMilliseconds;
+            dropCachedPages = Extensions.IsVboxsfMount(filename);
+        }
+
+        void DropCachedPages(SafeHandle handle)
+        {
+            if (!dropCachedPages)
+            {
+                return;
+            }
+
+            try
+            {
+                posix_fadvise((int)handle.DangerousGetHandle(), 0, 0, POSIX_FADV_DONTNEED);
+            }
+            catch
+            {
+                //Best effort: if it fails the read falls back to the cached path.
+            }
         }
 
         public override bool CanRead => true;
@@ -80,6 +113,7 @@ namespace ft.Streams
             {
                 using var fileStream = new FileStream(Filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 BypassCacheOnMac(fileStream.SafeFileHandle);
+                DropCachedPages(fileStream.SafeFileHandle);
                 fileStream.Seek(Position, SeekOrigin.Begin);
                 read = fileStream.Read(buffer, offset, count);
             });
