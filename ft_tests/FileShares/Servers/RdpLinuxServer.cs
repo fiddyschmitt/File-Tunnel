@@ -42,17 +42,27 @@ namespace ft_tests.FileShares.Servers
         public static string RedirectedPath(string filename) => $@"\\tsclient\{ShareName}\{filename}";
 
         private readonly ProcessRunner rdpClient;   // the Linux node that runs xfreerdp
+        private readonly ProcessRunner windowsHost;
         private readonly string windowsHostIp;
         private readonly string username;
         private readonly string password;
 
-        public RdpLinuxServer(ProcessRunner rdpClient, string windowsHostIp, string username, string password)
+        public RdpLinuxServer(ProcessRunner rdpClient, ProcessRunner windowsHost, string username, string password)
             : base(OS.Windows, FileShareType.RdpLinux)
         {
             this.rdpClient = rdpClient;
-            this.windowsHostIp = windowsHostIp;
+            this.windowsHost = windowsHost;
+            windowsHostIp = windowsHost.RunOnIP;
             this.username = username;
             this.password = password;
+        }
+
+        // xfreerdp3 runs with +auto-reconnect, so it must be gone before the session is moved back to the
+        // console, or it would take the session straight back. Restart() started it through sudo.
+        public override void Stop()
+        {
+            rdpClient.RunCommand("sudo pkill -9 -x xfreerdp3; sudo pkill -9 -x Xvfb; true");
+            RdpServer.ReturnSessionToConsole(windowsHost, username);
         }
 
         public override void Restart()

@@ -21,5 +21,13 @@ namespace ft_tests.FileShares.Servers
         {
 
         }
+
+        /// <summary>
+        /// Called once a row has finished, to undo anything Restart() set up that would otherwise outlast it.
+        /// </summary>
+        public virtual void Stop()
+        {
+
+        }
     }
 }

@@ -34,17 +34,38 @@ namespace ft_tests.FileShares.Servers
         public static string RedirectedPath(string filename) => $@"\\tsclient\c\{filename}";
 
         private readonly ProcessRunner side1Node;   // the client that runs mstsc, exposing its C: as \\tsclient\c
-        private readonly string targetIp;           // the server VM (receives the RDP session, runs side2's ft)
+        private readonly ProcessRunner target;      // the server VM (receives the RDP session, runs side2's ft)
+        private readonly string targetIp;
         private readonly string username;
         private readonly string password;
 
-        public RdpServer(ProcessRunner side1Node, string targetIp, string username, string password)
+        public RdpServer(ProcessRunner side1Node, ProcessRunner target, string username, string password)
             : base(OS.Windows, FileShareType.RDP)
         {
             this.side1Node = side1Node;
-            this.targetIp = targetIp;
+            this.target = target;
+            targetIp = target.RunOnIP;
             this.username = username;
             this.password = password;
+        }
+
+        public override void Stop()
+        {
+            side1Node.RunCommand("taskkill /IM mstsc.exe /F");
+            ReturnSessionToConsole(target, username);
+        }
+
+        /// <summary>
+        /// Moves <paramref name="username"/>'s session on <paramref name="windowsHost"/> back to the console once
+        /// the RDP client that took it over has gone. Otherwise the session stays attached to RDP, or
+        /// disconnected, and the lab's console check (check.ps1, vagrant provision) fails until that VM restarts.
+        /// tscon needs the elevated token the SSH logon has.
+        /// </summary>
+        public static void ReturnSessionToConsole(ProcessRunner windowsHost, string username)
+        {
+            windowsHost.RunCommand(
+                $"$line = @(query user 2>$null) | Where-Object {{ $_ -match '^\\s*>?{username}\\s' }} | Select-Object -First 1; " +
+                "if ($line -and $line -notmatch '\\sconsole\\s' -and $line -match '\\s(\\d+)\\s+(Active|Disc)\\s') { tscon $Matches[1] /dest:console }");
         }
 
         public override void Restart()

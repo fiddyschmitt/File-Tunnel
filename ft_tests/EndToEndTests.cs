@@ -895,7 +895,7 @@ namespace ft_tests
 
             // side1 (client1) runs mstsc into side2 (the server) with side1's C: redirected, so side2 sees
             // the same bytes at \\tsclient\c. See RdpServer.
-            var server = new RdpServer(win10_x64_1, win10_x64_2.RunOnIP, win10Username, win10Password);
+            var server = new RdpServer(win10_x64_1, win10_x64_2, win10Username, win10Password);
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
@@ -926,7 +926,7 @@ namespace ft_tests
         [DataRow(Mode.Normal)]
         public void RdpLinux(Mode mode)
         {
-            var server = new RdpLinuxServer(linux_x64_1, win10_x64_3.RunOnIP, win10Username, win10Password);
+            var server = new RdpLinuxServer(linux_x64_1, win10_x64_3, win10Username, win10Password);
 
             var filename1 = $"{Random.Shared.Next(int.MaxValue)}.dat";
             var filename2 = $"{Random.Shared.Next(int.MaxValue)}.dat";
@@ -1590,6 +1590,8 @@ namespace ft_tests
             {
                 // And afterwards, so the shares don't fill up with every row's files.
                 cleanupFiles();
+
+                try { server.Stop(); } catch { }
             }
         }
 
