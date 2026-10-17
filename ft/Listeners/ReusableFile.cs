@@ -39,6 +39,8 @@ namespace ft.Listeners
         public int PurgeSizeInBytes { get; }
         public bool IsolatedIo { get; }
 
+        public override bool ReportsCounterpartRestarts => true;
+
         public ReusableFile(
                     string readFromFilename,
                     string writeToFilename,
@@ -317,6 +319,7 @@ namespace ft.Listeners
             var checkForSessionChange = new Stopwatch();
 
             long currentSessionId = -1;
+            long? knownSessionId = null;   //survives reopening the file, unlike currentSessionId
             long? retryPos = null;
 
             // macOS smbfs serves a held read handle a stale view across a counterpart's purge (the
@@ -400,7 +403,15 @@ namespace ft.Listeners
                         {
                             Program.Log($"[{readFileShortName}] Read Session ID: {currentSessionId}");
                         }
-                        SessionChanged?.Invoke(this, new());
+
+                        //Reopening the file, after a timeout or a read error, doesn't make a new session. Only a
+                        //counterpart that has restarted has lost what it set up through us, such as the
+                        //listeners it asked us to host.
+                        if (currentSessionId != knownSessionId)
+                        {
+                            knownSessionId = currentSessionId;
+                            SessionChanged?.Invoke(this, new());
+                        }
 
 
                         // On macOS NFS the purge-handshake flag bytes go stale on a held read handle exactly

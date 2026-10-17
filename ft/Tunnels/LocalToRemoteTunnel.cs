@@ -27,9 +27,16 @@ namespace ft.Tunnels
                 }
                 else
                 {
+                    //Listeners the counterpart asked for are stopped like our own, not forgotten: it may not
+                    //have seen the tunnel go down (only this end can stop hearing the other), and then it never
+                    //asks for them again. Where a counterpart restart is reported, they're dropped then instead
+                    //(SessionChanged below); otherwise a restarted counterpart would find them still here.
                     var reason = "File tunnel is offline.";
                     localListeners.Stop(reason);
-                    localListeners.RemoveListenersOriginatingFromRemote(reason);
+                    if (!sharedFileManager.ReportsCounterpartRestarts)
+                    {
+                        localListeners.RemoveListenersOriginatingFromRemote(reason);
+                    }
                     sharedFileManager.TearDownAllConnections();
                 }
             };
