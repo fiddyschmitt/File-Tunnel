@@ -39,8 +39,6 @@ namespace ft.Listeners
         public int PurgeSizeInBytes { get; }
         public bool IsolatedIo { get; }
 
-        public override bool ReportsCounterpartRestarts => true;
-
         public ReusableFile(
                     string readFromFilename,
                     string writeToFilename,

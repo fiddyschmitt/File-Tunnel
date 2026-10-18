@@ -330,6 +330,12 @@ namespace ft.Listeners
             int? readFromIx = null;
             var sessionCheckStopwatch = Stopwatch.StartNew();
 
+            //Every session the counterpart has written in. One we haven't seen means it has restarted, and has
+            //lost what it set up through us, such as the listeners it asked us to host. A set rather than the
+            //latest id, because a file the old session left behind can still turn up after the new session's
+            //first, and that is no new restart.
+            var counterpartSessions = new HashSet<long>();
+
             while (true)
             {
                 try
@@ -571,6 +577,18 @@ namespace ft.Listeners
                                     Program.Log(exMsg);
                                 }
                                 throw new Exception(exMsg);
+                            }
+
+                            //Only now, with a command that passed its CRC check, is the file known to be whole
+                            //and the session id in its header real. The tunnel hears of a new session before
+                            //this command is processed, as it may be the new session's first request.
+                            if (counterpartSessions.Add(filesSessionId))
+                            {
+                                if (counterpartSessions.Count > 1)
+                                {
+                                    Program.Log($"[{readFileShortName}] The counterpart has restarted. New session: {filesSessionId}");
+                                }
+                                SessionChanged?.Invoke(this, new());
                             }
 
                             if (!recentPackets.Add((command.PacketNumber, command.CRC)))

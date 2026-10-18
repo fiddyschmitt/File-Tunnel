@@ -39,7 +39,11 @@ namespace ft.Tunnels
 
             sharedFileManager.SessionChanged += (sender, args) =>
             {
-                ProvideRemoteForwardsToCounterpart();
+                //Queued from another thread, as the ping replies are: SessionChanged is raised on the receive
+                //thread, which has to keep reading while the send queue is full. An upload-download end
+                //learns there that the counterpart has taken its last file, so blocking that thread would keep
+                //the queue full until the writer's fallback check, half the tunnel timeout later.
+                Task.Run(ProvideRemoteForwardsToCounterpart);
             };
 
             sharedFileManager.ConnectionAccepted += (sender, connectionDetails) =>

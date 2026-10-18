@@ -21,9 +21,6 @@ namespace ft.Listeners
         public EventHandler<CreateLocalListenerEventArgs>? CreateLocalListenerRequested;
         public EventHandler? SessionChanged;
 
-        /// <summary>True if SessionChanged is raised whenever the counterpart restarts.</summary>
-        public virtual bool ReportsCounterpartRestarts => false;
-
         public string ReadFromFilename { get; }
         public string WriteToFilename { get; }
 

@@ -1,4 +1,9 @@
+using ft.CLI;
+using ft.Commands;
+using ft.IO.Files;
 using ft.Listeners;
+using ft.Streams;
+using ft.Tunnels;
 using ft_tests.Utilities;
 using System.Net;
 using System.Net.Sockets;
@@ -7,7 +12,7 @@ namespace ft_tests
 {
     /// <summary>
     /// How each end of a file tunnel recognises the other's session, and what it keeps across an outage:
-    /// in-process tests over local temp files, so no lab is needed.
+    /// in-process tests over local temp files or an in-memory server, so no lab is needed.
     /// </summary>
     [DoNotParallelize]
     [TestClass]
@@ -85,6 +90,145 @@ namespace ft_tests
                 a.Interrupt(); a.Join();
                 b.Interrupt(); b.Join();
                 ft.CLI.Options.TunnelTimeoutMilliseconds = ft.CLI.Options.DEFAULT_TUNNEL_TIMEOUT_MILLISECONDS;
+            }
+        }
+
+        // The same over the upload-download transports, which dropped such proxies whenever they went
+        // offline: they didn't tell the tunnel when the counterpart restarted, so keeping them would have
+        // left a restarted counterpart's old ones open.
+        [TestMethod]
+        [Timeout(120000)]
+        [DataRow(1, true)]    // one file each way, read blocking: FTP, WebDAV, S3, Dropbox
+        [DataRow(5, false)]   // five files each way, read non-blocking: 9P
+        public void UploadDownload_RemoteProxy_ComesBack_WhenOnlyTheEndHostingItWentOffline(int files, bool blockingReader)
+        {
+            const int remoteProxyPort = 40233;
+            using var rig = new UploadDownloadRig(files, blockingReader);
+            rig.StartEnd("a", remoteProxyPort);
+            var b = rig.StartEnd("b");
+
+            Assert.IsTrue(rig.ProxyReaches(remoteProxyPort), "The proxy B hosts for A never worked");
+
+            // B sees nothing from A for longer than the tunnel timeout; A keeps seeing B.
+            b.View.HoldBack(TimeSpan.FromMilliseconds(UploadDownloadRig.TunnelTimeoutMs * 2));
+
+            Assert.IsTrue(rig.ProxyReaches(remoteProxyPort), "The proxy B hosts for A did not come back");
+        }
+
+        // An end that restarts within the tunnel timeout never takes the tunnel down, so the other end has
+        // to recognise the new session by itself: it hosts the proxies the new one asks for, and no longer
+        // the ones the old one asked for.
+        [TestMethod]
+        [Timeout(120000)]
+        [DataRow(1, true)]
+        [DataRow(5, false)]
+        public void UploadDownload_EndRestartingQuickly_GetsOnlyTheProxiesItNowAsksFor(int files, bool blockingReader)
+        {
+            const int oldProxyPort = 40234, newProxyPort = 40235;
+            using var rig = new UploadDownloadRig(files, blockingReader);
+            var a = rig.StartEnd("a", oldProxyPort);
+            rig.StartEnd("b");
+
+            Assert.IsTrue(rig.ProxyReaches(oldProxyPort), "The proxy B hosts for A never worked");
+
+            a.End();
+            rig.StartEnd("a", newProxyPort);
+
+            Assert.IsTrue(rig.ProxyReaches(newProxyPort), "B never hosted the proxy the restarted A asked for");
+            Assert.IsFalse(Listening(oldProxyPort), "B still hosts the proxy A asked for before it restarted");
+        }
+
+        // Likewise for the end hosting the proxies: restarted, it has lost them, and the other end has to ask
+        // for them again although the tunnel never went down.
+        [TestMethod]
+        [Timeout(120000)]
+        [DataRow(1, true)]
+        [DataRow(5, false)]
+        public void UploadDownload_HostRestartingQuickly_HostsTheProxiesAgain(int files, bool blockingReader)
+        {
+            const int remoteProxyPort = 40236;
+            using var rig = new UploadDownloadRig(files, blockingReader);
+            rig.StartEnd("a", remoteProxyPort);
+            var b = rig.StartEnd("b");
+
+            Assert.IsTrue(rig.ProxyReaches(remoteProxyPort), "The proxy B hosts for A never worked");
+
+            b.End();
+            rig.StartEnd("b");
+
+            Assert.IsTrue(rig.ProxyReaches(remoteProxyPort), "The restarted B never hosted the proxy A asked for");
+        }
+
+        // An upload-download end learns of a restart from the session id in each of the counterpart's files.
+        // A file the old session left behind, say where a delete failed as the new session started, can turn
+        // up after the new session's first. That is no new restart: taken for one, it would drop the proxies
+        // the new session had just asked for, and the new session would never ask again.
+        [TestMethod]
+        [Timeout(60000)]
+        public void UploadDownload_FileLeftByTheOldSession_IsNoNewRestart()
+        {
+            using var rig = new UploadDownloadRig(1, true);
+            var view = new ServerView(rig.Server, "a");
+            var reader = new UploadDownload(view, "a.dat", "b.dat", UploadDownloadRig.TunnelTimeoutMs, 1, 0, true, false);
+            var sessions = 0;
+            reader.SessionChanged += (s, e) => Interlocked.Increment(ref sessions);
+            new Thread(reader.ReceivePump) { IsBackground = true }.Start();
+
+            try
+            {
+                foreach (var sessionId in new long[] { 1, 2, 1 })
+                {
+                    WriteUploadDownloadFile(rig.Server, "a.dat", sessionId);
+                    Assert.IsTrue(Taken(rig.Server, "a.dat", TimeSpan.FromSeconds(10)), $"The reader never took the file from session {sessionId}");
+                }
+
+                Assert.AreEqual(2, sessions, "The reader took the old session's leftover file for another restart");
+            }
+            finally
+            {
+                view.Cut();
+            }
+        }
+
+        // A file as an upload-download writer writes one: its session id and the time it was written, then
+        // a command.
+        static void WriteUploadDownloadFile(MemoryServer server, string path, long sessionId)
+        {
+            using var content = new MemoryStream();
+            var writer = new BinaryWriter(new HashingStream(content, false, UploadDownloadRig.TunnelTimeoutMs));
+            writer.Write(sessionId);
+            writer.Write(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            new Ping(EnumPingType.Request).Serialise(writer);
+            writer.Flush();
+            lock (server.Files) server.Files[path] = content.ToArray();
+        }
+
+        // True once the reader has processed the file and deleted it.
+        static bool Taken(MemoryServer server, string path, TimeSpan within)
+        {
+            var deadline = DateTime.UtcNow + within;
+            while (DateTime.UtcNow < deadline)
+            {
+                lock (server.Files)
+                {
+                    if (!server.Files.ContainsKey(path)) return true;
+                }
+                Thread.Sleep(20);
+            }
+            return false;
+        }
+
+        static bool Listening(int port)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                client.Connect(IPAddress.Loopback, port);
+                return true;
+            }
+            catch (SocketException)
+            {
+                return false;
             }
         }
 
@@ -179,6 +323,127 @@ namespace ft_tests
             }
 
             public void Dispose() => stop.Cancel();
+        }
+
+        // Both ends of an upload-download tunnel in this process, over an in-memory server, and a destination
+        // for the proxies between them to reach. Ends are "a" and "b", and each reads the other's files.
+        sealed class UploadDownloadRig : IDisposable
+        {
+            public const int TunnelTimeoutMs = 3000;
+
+            public MemoryServer Server { get; } = new();
+
+            readonly int files;
+            readonly bool blockingReader;
+            readonly TcpListener destination = new(IPAddress.Loopback, 0);
+            readonly List<UploadDownloadEnd> ends = [];
+            readonly (int, int, int) savedOptions = (Options.PaceMilliseconds, Options.WriteIntervalMilliseconds, Options.ReadIntervalMilliseconds);
+
+            public UploadDownloadRig(int files, bool blockingReader)
+            {
+                this.files = files;
+                this.blockingReader = blockingReader;
+
+                // A pace that doesn't spin on the in-memory server, and no write or read interval.
+                (Options.PaceMilliseconds, Options.WriteIntervalMilliseconds, Options.ReadIntervalMilliseconds) = (10, 0, 0);
+                destination.Start();
+            }
+
+            // remoteProxyPorts are the end's -R SOCKS proxies, which the other end hosts.
+            public UploadDownloadEnd StartEnd(string name, params int[] remoteProxyPorts)
+            {
+                var end = new UploadDownloadEnd(Server, name, name == "a" ? "b" : "a", files, blockingReader, remoteProxyPorts);
+                ends.Add(end);
+                return end;
+            }
+
+            public bool ProxyReaches(int port) => SessionUnitTests.ProxyReaches(port, destination, TimeSpan.FromSeconds(30));
+
+            public void Dispose()
+            {
+                ends.ForEach(end => end.End());
+                destination.Stop();
+                (Options.PaceMilliseconds, Options.WriteIntervalMilliseconds, Options.ReadIntervalMilliseconds) = savedOptions;
+            }
+        }
+
+        // One end, wired as Program.RunSession wires one.
+        sealed class UploadDownloadEnd
+        {
+            public ServerView View { get; }
+            readonly MultiServer listeners = new();
+
+            public UploadDownloadEnd(MemoryServer server, string name, string counterpart, int files, bool blockingReader, int[] remoteProxyPorts)
+            {
+                const int maxFileSizeBytes = 64 * 1024, readDurationMillis = 50;
+
+                View = new ServerView(server, counterpart);
+                var manager = new UploadDownload(View, $"{counterpart}.dat", $"{name}.dat", UploadDownloadRig.TunnelTimeoutMs, files, maxFileSizeBytes, blockingReader, false);
+                var localToRemoteTunnel = new LocalToRemoteTunnel(listeners, manager, maxFileSizeBytes, readDurationMillis);
+                _ = new RemoteToLocalTunnel([.. remoteProxyPorts.Select(port => $"{port}")], [], [], manager, localToRemoteTunnel, "0.0.0.0", maxFileSizeBytes, readDurationMillis, UploadDownloadRig.TunnelTimeoutMs);
+                manager.Start();
+            }
+
+            // As if its process ended: it no longer reaches the server, and its listeners close. Its threads
+            // stay parked on the server for good.
+            public void End()
+            {
+                View.Cut();
+                listeners.Stop("The test ended this end.");
+            }
+        }
+
+        sealed class MemoryServer
+        {
+            public readonly Dictionary<string, byte[]> Files = [];
+        }
+
+        // One end's view of the server. Held back, it can't see the counterpart's files for a while, though
+        // the counterpart still sees its own. Cut, it blocks every call for good; once Cut returns, nothing
+        // more from that end reaches the server.
+        sealed class ServerView(MemoryServer server, string counterpart) : IFileAccess
+        {
+            DateTime heldUntil = DateTime.MinValue;
+            bool cut;
+
+            public void HoldBack(TimeSpan duration)
+            {
+                lock (server.Files) heldUntil = DateTime.UtcNow + duration;
+                Thread.Sleep(duration);
+            }
+
+            public void Cut()
+            {
+                lock (server.Files) cut = true;
+            }
+
+            T Call<T>(Func<Dictionary<string, byte[]>, T> operation)
+            {
+                lock (server.Files)
+                {
+                    if (!cut) return operation(server.Files);
+                }
+                Thread.Sleep(Timeout.Infinite);
+                return default!;
+            }
+
+            bool Hidden(string path) => path.StartsWith($"{counterpart}.") && DateTime.UtcNow < heldUntil;
+
+            byte[] Content(Dictionary<string, byte[]> files, string path) =>
+                !Hidden(path) && files.TryGetValue(path, out var content) ? content : throw new FileNotFoundException(path);
+
+            public bool Exists(string path) => Call(files => !Hidden(path) && files.ContainsKey(path));
+
+            public void Delete(string path) => Call(files => !Hidden(path) && files.Remove(path));
+
+            public void WriteAllBytes(string path, ReadOnlyMemory<byte> bytes, bool overwrite = true) => Call(files => files[path] = bytes.ToArray());
+
+            public void Move(string sourceFileName, string destFileName, bool overwrite) =>
+                Call(files => files[destFileName] = files.Remove(sourceFileName, out var content) ? content : throw new FileNotFoundException(sourceFileName));
+
+            public byte[] ReadAllBytes(string path) => Call(files => Content(files, path).ToArray());
+
+            public long GetFileSize(string path) => Call(files => (long)Content(files, path).Length);
         }
     }
 }
