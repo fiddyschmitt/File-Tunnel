@@ -298,6 +298,7 @@ namespace ft.Listeners
             try
             {
                 using var file = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                file.DisableCachingIfMacNfs();
                 Span<byte> sessionId = stackalloc byte[sizeof(long)];
                 return file.ReadAtLeast(sessionId, sessionId.Length, throwOnEndOfStream: false) == sessionId.Length
                        && BitConverter.ToInt64(sessionId) != 0;
@@ -374,7 +375,7 @@ namespace ft.Listeners
                         fileStream = IsolatedIo ?
                                         new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
                                         new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                        fileStream.DisableReadAheadIfMacNfs();
+                        fileStream.DisableCachingIfMacNfs();
 
                         if (retryPos != null)
                         {
@@ -481,7 +482,7 @@ namespace ft.Listeners
                                     ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
                                     : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                                 fileStream.Seek(resumePos, SeekOrigin.Begin);
-                                fileStream.DisableReadAheadIfMacNfs();
+                                fileStream.DisableCachingIfMacNfs();
                                 binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
                                 sinceReopen.Restart();
                             }
@@ -643,6 +644,7 @@ namespace ft.Listeners
                                     ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
                                     : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                                 fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                                fileStream.DisableCachingIfMacNfs();
                                 binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
                             }
                         }

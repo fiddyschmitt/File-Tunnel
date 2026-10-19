@@ -481,6 +481,12 @@ namespace ft
         private static extern int statfs(string path, byte[] buf);
         [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
         private static extern int libc_fcntl(int fd, int cmd, int arg);
+        [DllImport("libc", SetLastError = true, EntryPoint = "statx")]
+        private static extern int libc_statx(int dirfd, [MarshalAs(UnmanagedType.LPStr)] string pathname, int flags, uint mask, byte[] statxbuf);
+        private const int AT_EMPTY_PATH = 0x1000;
+        private const int AT_STATX_FORCE_SYNC = 0x2000;   // statx: revalidate with the server, not from the attribute cache
+        private const uint STATX_SIZE = 0x200;
+        private const int STATX_BUFFER_SIZE = 256;   // sizeof(struct statx)
         private const int MAC_F_NOCACHE = 48;   // macOS: turn the unified buffer cache off for this fd
         private const int MAC_F_RDAHEAD = 45;   // macOS: F_RDAHEAD - toggle read-ahead prefetch for this fd
         private const int MAC_REFRESH_BYTES = 65536;   // one read through the F_NOCACHE handle to refresh the held view
@@ -490,6 +496,7 @@ namespace ft
         private const int FUSE_SUPER_MAGIC = 0x65735546;   // statfs f_type for FUSE mounts (sshfs)
         private const int VBOXSF_SUPER_MAGIC = 0x786F4256; // statfs f_type for VirtualBox shared folders
         private const int V9FS_SUPER_MAGIC = 0x01021997;   // statfs f_type for 9P (Plan 9 / diod) mounts
+        private const int NFS_SUPER_MAGIC = 0x6969;        // statfs f_type for NFS mounts, any version
 
         // The kind of filesystem a mount is, derived purely from its statfs f_type magic. Pure and
         // side-effect-free so it is unit-testable without a real mount. The same magic covers a whole
@@ -621,15 +628,25 @@ namespace ft
             });
         }
 
-        // macOS NFS: turn OFF read-ahead prefetch on a read handle. Prefetching pages past the frontier of a
-        // file another host is actively appending can cache stale/partial data that a forward-reading held
-        // handle then serves back (out-of-order/duplicate commands); without prefetch the client fetches only
-        // the pages actually read, at the position it reads them. No-op unless a macOS NFS FileStream.
-        public static void DisableReadAheadIfMacNfs(this Stream stream)
+        // macOS NFS: turn OFF read-ahead prefetch and the data cache on a read handle. No-op unless a macOS NFS
+        // FileStream.
+        //  - Prefetching pages past the frontier of a file another host is actively appending can cache
+        //    stale/partial data that a forward-reading held handle then serves back (out-of-order/duplicate
+        //    commands); without prefetch the client fetches only the pages actually read, at the position it
+        //    reads them.
+        //  - What one handle caches, the client serves to every handle on the file, F_NOCACHE or not, until it
+        //    next revalidates the file's attributes (acregmin, 5 s by default). The purge flags are read through
+        //    handles of their own with F_NOCACHE, but they sit in the file's first block, which the held handle
+        //    caches whenever it reads from the start: when the session starts and after each of the
+        //    counterpart's purges. The flags then read stale for up to 5 s at a time, so a purge, which waits
+        //    on two of them, could take 10 s, the whole tunnel timeout.
+        public static void DisableCachingIfMacNfs(this Stream stream)
         {
             if (stream is not FileStream fileStream) return;
             if (!IsMacNfsMount(fileStream.Name)) return;
-            try { libc_fcntl((int)fileStream.SafeFileHandle.DangerousGetHandle(), MAC_F_RDAHEAD, 0); } catch { }
+            var fd = (int)fileStream.SafeFileHandle.DangerousGetHandle();
+            try { libc_fcntl(fd, MAC_F_RDAHEAD, 0); } catch { }
+            try { libc_fcntl(fd, MAC_F_NOCACHE, 1); } catch { }
         }
 
         // statfs reports plain FUSE for ALL fuse mounts, so it can't separate sshfs (held handle stays
@@ -773,8 +790,9 @@ namespace ft
                     //  - O_DIRECT read on a SEPARATE handle: forces a backing-store round-trip that refreshes
                     //    sshfs's inode cache for all handles. Falls back to a plain buffered read where
                     //    O_DIRECT is unavailable.
+                    // NFS refreshes the held handle without that separate handle (TryNfsRefresh).
                     TryFstatRefresh(fileStream);
-                    if (!TryDirectRefresh(fileStream))
+                    if (!TryDirectRefresh(fileStream) && !TryNfsRefresh(fileStream))
                     {
                         try
                         {
@@ -859,6 +877,42 @@ namespace ft
                 libc_close(fd);
             }
         }
+
+        // Linux NFS: the held handle sees the counterpart's writes once the client revalidates the file's
+        // attributes, which opening a second handle does (close-to-open). But over NFSv4 each open is an OPEN,
+        // and the server may answer it with a read delegation whenever nobody has the file open for writing. A
+        // counterpart on NFSv3 (macOS's default, and the only version Windows supports) holds no open: the server
+        // keeps the file open for it only while it writes, and closes it a few seconds after it pauses, as it
+        // does for each purge. Its next write then waits while the delegation is recalled: the server tells it
+        // to try later, and macOS waits 4 s before it does. A purge makes several writes, and sends nothing
+        // else meanwhile. statx with AT_STATX_FORCE_SYNC on the held handle makes the client revalidate just the
+        // same, with a GETATTR and no OPEN.
+        private static bool TryNfsRefresh(FileStream fileStream)
+        {
+            if (!canForceGetattr || MountMagic(fileStream.Name) != NFS_SUPER_MAGIC)
+            {
+                return false;
+            }
+
+            try
+            {
+                return libc_statx((int)fileStream.SafeFileHandle.DangerousGetHandle(), "", AT_EMPTY_PATH | AT_STATX_FORCE_SYNC, STATX_SIZE, new byte[STATX_BUFFER_SIZE]) == 0;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // A C library without statx (musl before 1.2.5): keep opening the second handle.
+                canForceGetattr = false;
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // statx came in Linux 4.11. On an older kernel the C library stands in for it with fstatat, which ignores
+        // AT_STATX_FORCE_SYNC and answers from the attribute cache, so there the second handle is still opened.
+        private static bool canForceGetattr = Environment.OSVersion.Version >= new Version(4, 11);
 
         // macOS: a long-lived (held) read handle on a network mount - notably smbfs - is served a STALE view.
         // It never sees a counterpart's appends, and even reopening the handle returns the cached size (the
