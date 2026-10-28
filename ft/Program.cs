@@ -181,17 +181,26 @@ namespace ft
         {
             var accessKey = o.ResolveAccessKey();
             var secretKey = o.ResolveSecretKey();
+            var sessionToken = o.ResolveSessionToken();
 
             if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
             {
-                Log("An S3 access key and secret key are required. Provide them via --access-key / --secret-key, or via the FT_S3_ACCESS_KEY / FT_S3_SECRET_KEY environment variables.", ConsoleColor.Red);
+                Log("An S3 access key and secret key are required. Provide them via --access-key / --secret-key, the FT_S3_ACCESS_KEY / FT_S3_SECRET_KEY environment variables, or the standard AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables.", ConsoleColor.Red);
+                Environment.Exit(1);
+                return;
+            }
+
+            //Temporary (STS) credentials start with "ASIA" and must be paired with a session token.
+            if (accessKey.StartsWith("ASIA", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(sessionToken))
+            {
+                Log("The access key looks like a temporary (STS) credential (starts with \"ASIA\") but no session token was supplied. Provide it via --session-token, FT_S3_SESSION_TOKEN, or the standard AWS_SESSION_TOKEN environment variable.", ConsoleColor.Red);
                 Environment.Exit(1);
                 return;
             }
 
             ApplyHttpBackendTuning("S3");
 
-            var access = new S3(o.Endpoint, o.Region, o.Bucket, accessKey, secretKey, o.MaxConnections);
+            var access = new S3(o.Endpoint, o.ResolveRegion(), o.Bucket, accessKey, secretKey, sessionToken, o.MaxConnections);
 
             var sharedFileManager = new UploadDownload(
                                              access,

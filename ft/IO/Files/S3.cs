@@ -22,13 +22,19 @@ namespace ft.IO.Files
         readonly string region;
         readonly string accessKey;
         readonly string secretKey;
+        readonly string sessionToken;
 
-        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, int maxConnections = 20)
+        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, string sessionToken = "", int maxConnections = 20)
         {
             this.region = string.IsNullOrWhiteSpace(region) ? "us-east-1" : region;
             this.bucket = bucket;
             this.accessKey = accessKey;
             this.secretKey = secretKey;
+
+            //Temporary (STS) credentials - access keys beginning "ASIA" - additionally require the
+            //session token to be sent as x-amz-security-token and folded into the SigV4 signature.
+            //Left empty for long-lived (AKIA) credentials.
+            this.sessionToken = sessionToken ?? "";
 
             if (string.IsNullOrWhiteSpace(endpoint))
             {
@@ -250,6 +256,12 @@ namespace ft.IO.Files
                 ["x-amz-date"] = amzDate,
             };
 
+            //For temporary (STS) credentials the session token must be both signed and sent.
+            if (!string.IsNullOrEmpty(sessionToken))
+            {
+                headers["x-amz-security-token"] = sessionToken;
+            }
+
             foreach (var kvp in additionalSignedHeaders)
             {
                 headers[kvp.Key] = kvp.Value;
@@ -287,6 +299,10 @@ namespace ft.IO.Files
 
             request.Headers.TryAddWithoutValidation("x-amz-date", amzDate);
             request.Headers.TryAddWithoutValidation("x-amz-content-sha256", payloadHash);
+            if (!string.IsNullOrEmpty(sessionToken))
+            {
+                request.Headers.TryAddWithoutValidation("x-amz-security-token", sessionToken);
+            }
             request.Headers.TryAddWithoutValidation("Authorization", authorization);
         }
 
