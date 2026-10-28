@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace ft.IO.Files
 {
@@ -24,7 +25,8 @@ namespace ft.IO.Files
         readonly string secretKey;
         readonly string sessionToken;
 
-        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, string sessionToken = "", int maxConnections = 20)
+        //messageHandler lets a test put an in-memory bucket in place of the network.
+        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, string sessionToken = "", int maxConnections = 20, HttpMessageHandler? messageHandler = null)
         {
             this.region = string.IsNullOrWhiteSpace(region) ? "us-east-1" : region;
             this.bucket = bucket;
@@ -43,7 +45,7 @@ namespace ft.IO.Files
 
             baseUri = new Uri(endpoint, UriKind.Absolute);
 
-            var handler = new SocketsHttpHandler
+            var handler = messageHandler ?? new SocketsHttpHandler
             {
                 //Recycle idle keep-alive sockets. CDN-fronted endpoints (eg. Bunny, Cloud.ru) can leave
                 //stale connections behind that wedge subsequent requests.
@@ -104,22 +106,58 @@ namespace ft.IO.Files
 
             WarnIfHeadForbidden(response.StatusCode, path);
             response.EnsureSuccessStatusCode();
-            return true;
+
+            //An empty object is a file that an end without delete permission emptied instead (see Delete).
+            //Nothing ft writes is empty: every file starts with a header.
+            return response.Content.Headers.ContentLength != 0;
         }
+
+        //Set once the server refuses a DELETE with AccessDenied: these credentials can read and write but not
+        //delete, as with a role that lacks s3:DeleteObject. From then on Delete frees a file by emptying it,
+        //and Exists - on both ends - takes an empty file as gone. (Benign race: at worst it logs twice.)
+        bool deleteForbidden = false;
 
         public void Delete(string path)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUri(path));
-
-            Sign(request, CanonicalUri(path), [], null);
-            using var response = client.Send(request);
-
-            if (response.StatusCode == HttpStatusCode.NotFound)
+            if (!deleteForbidden)
             {
-                return;
+                using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUri(path));
+
+                Sign(request, CanonicalUri(path), [], null);
+                using var response = client.Send(request);
+
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return;
+                }
+
+                //Any other refusal, such as a clock skew or a bad signature, would fail every request alike.
+                if (response.StatusCode != HttpStatusCode.Forbidden || ErrorCode(response) is not ("AccessDenied" or ""))
+                {
+                    response.EnsureSuccessStatusCode();
+                    return;
+                }
+
+                deleteForbidden = true;
+                Program.Log($"S3 refused to delete {path} (403 AccessDenied): these credentials may not delete objects (s3:DeleteObject). Emptying files instead of deleting them.", ConsoleColor.Yellow);
             }
 
-            response.EnsureSuccessStatusCode();
+            WriteAllBytes(path, ReadOnlyMemory<byte>.Empty);
+        }
+
+        //The Code of an S3 error response, such as AccessDenied, or "" if it has none.
+        static string ErrorCode(HttpResponseMessage response)
+        {
+            try
+            {
+                using var reader = new StreamReader(response.Content.ReadAsStream());
+                var match = Regex.Match(reader.ReadToEnd(), "<Code>([^<]*)</Code>");
+                return match.Success ? match.Groups[1].Value : "";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         public byte[] ReadAllBytes(string path)

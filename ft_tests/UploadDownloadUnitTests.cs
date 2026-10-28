@@ -148,6 +148,44 @@ namespace ft_tests
             }
         }
 
+        // The same handoff over S3 credentials that may read and write but not delete, such as a role without
+        // s3:DeleteObject: the reader empties the file it has read instead, and the writer takes an empty file
+        // as gone. Each end pings once a second, so with the files freed each end writes about once a second.
+        // Without that, every delete failed, and each end wrote once and then waited out the tunnel timeout.
+        [TestMethod]
+        [Timeout(60000)]
+        [DataRow("participant", "participant", "neither end may delete")]
+        [DataRow("participant", "admin", "one end may delete")]
+        public void UploadDownload_OverS3_WithoutDeletePermission_KeepsWriting(string accessKeyA, string accessKeyB, string description)
+        {
+            const int tunnelTimeoutMs = 10000;
+            var (pace, writeInterval, readInterval) = (Options.PaceMilliseconds, Options.WriteIntervalMilliseconds, Options.ReadIntervalMilliseconds);
+            Options.PaceMilliseconds = 10;
+            Options.WriteIntervalMilliseconds = 0;
+            Options.ReadIntervalMilliseconds = 0;
+
+            var bucket = new FakeS3Bucket("participant");
+            try
+            {
+                var a = new UploadDownload(new S3("http://s3.test", "us-east-1", "bucket", accessKeyA, "secret", messageHandler: bucket), "b.dat", "a.dat", tunnelTimeoutMs, 1, 0, true, false);
+                var b = new UploadDownload(new S3("http://s3.test", "us-east-1", "bucket", accessKeyB, "secret", messageHandler: bucket), "a.dat", "b.dat", tunnelTimeoutMs, 1, 0, true, false);
+                a.Start();
+                b.Start();
+
+                Thread.Sleep(TimeSpan.FromSeconds(6));
+
+                var writesA = bucket.Writes.GetValueOrDefault("/bucket/a.dat");
+                var writesB = bucket.Writes.GetValueOrDefault("/bucket/b.dat");
+                Assert.IsTrue(a.IsOnline && b.IsOnline, $"The tunnel isn't online ({description})");
+                Assert.IsTrue(writesA >= 4 && writesB >= 4, $"In 6 s the ends wrote {writesA} and {writesB} files ({description})");
+            }
+            finally
+            {
+                bucket.Close();   // parks the ends' pump threads, which never exit on their own
+                (Options.PaceMilliseconds, Options.WriteIntervalMilliseconds, Options.ReadIntervalMilliseconds) = (pace, writeInterval, readInterval);
+            }
+        }
+
         // An in-memory server whose deletes take effect only after a delay, like a remote one's. Once
         // closed, every call blocks for good.
         private sealed class SlowDeleteStore(TimeSpan deleteDelay) : IFileAccess
