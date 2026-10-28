@@ -179,9 +179,7 @@ namespace ft
 
         private static void RunS3Session(S3Options o)
         {
-            var accessKey = o.ResolveAccessKey();
-            var secretKey = o.ResolveSecretKey();
-            var sessionToken = o.ResolveSessionToken();
+            var (accessKey, secretKey, sessionToken) = o.ResolveCredentials();
 
             if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
             {
@@ -190,10 +188,9 @@ namespace ft
                 return;
             }
 
-            //Temporary (STS) credentials start with "ASIA" and must be paired with a session token.
-            if (accessKey.StartsWith("ASIA", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(sessionToken))
+            if (string.IsNullOrEmpty(sessionToken) && o.IsAwsTemporaryKey(accessKey))
             {
-                Log("The access key looks like a temporary (STS) credential (starts with \"ASIA\") but no session token was supplied. Provide it via --session-token, FT_S3_SESSION_TOKEN, or the standard AWS_SESSION_TOKEN environment variable.", ConsoleColor.Red);
+                Log("The access key is a temporary AWS credential (it starts with \"ASIA\"), which only works with its session token. Provide it via --session-token or FT_S3_SESSION_TOKEN, or AWS_SESSION_TOKEN if the keys come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.", ConsoleColor.Red);
                 Environment.Exit(1);
                 return;
             }
