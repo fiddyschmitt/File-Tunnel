@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace ft.CLI
 {
-    public class S3Options : Options
+    public class S3Options : HttpOptions
     {
         [Option("s3", Required = false, HelpText = @"Use an S3 (or S3-compatible) bucket for the file tunnel. Connects directly to the bucket - no mounted file share required.")]
         public bool S3 { get; set; } = false;

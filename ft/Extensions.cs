@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -962,6 +963,16 @@ namespace ft
             //nothing today - but it is what the API asks for, and it would matter to any limiter that
             //returns permits when the lease is released.
             using var lease = limiter.AcquireAsync(1, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        }
+
+        //Sends the given User-Agent with every request, or none at all if it's empty. It goes as given: the
+        //user agents some services look for aren't valid HTTP product tokens (the Yandex Disk client's ends in
+        //JSON), and .NET's own parser refuses those.
+        public static void SetUserAgent(this HttpClient client, string userAgent)
+        {
+            if (string.IsNullOrWhiteSpace(userAgent)) return;
+
+            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", userAgent.Trim());
         }
     }
 }

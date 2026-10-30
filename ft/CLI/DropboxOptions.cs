@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace ft.CLI
 {
-    public class DropboxOptions : Options
+    public class DropboxOptions : HttpOptions
     {
         [Option("dropbox", Required = false, HelpText = @"Use a Dropbox account for the file tunnel. Connects to Dropbox directly and does not require a mounted file share.")]
         public bool Dropbox { get; set; } = false;

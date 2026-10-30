@@ -26,7 +26,7 @@ namespace ft.IO.Files
         readonly string sessionToken;
 
         //messageHandler lets a test put an in-memory bucket in place of the network.
-        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, string sessionToken = "", int maxConnections = 20, HttpMessageHandler? messageHandler = null)
+        public S3(string endpoint, string region, string bucket, string accessKey, string secretKey, string sessionToken = "", int maxConnections = 20, string userAgent = "", HttpMessageHandler? messageHandler = null)
         {
             this.region = string.IsNullOrWhiteSpace(region) ? "us-east-1" : region;
             this.bucket = bucket;
@@ -62,6 +62,9 @@ namespace ft.IO.Files
             {
                 Timeout = TimeSpan.FromMilliseconds(Program.UNIVERSAL_TIMEOUT_MS),
             };
+
+            //Not part of the signature, as with the AWS SDKs: a proxy may rewrite it.
+            client.SetUserAgent(userAgent);
         }
 
         //Path-style addressing: https://host/bucket/key

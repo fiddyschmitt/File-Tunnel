@@ -24,7 +24,7 @@ namespace ft.IO.Files
         //HEAD support is a fixed server capability; once we learn it's unsupported, stop trying it
         bool headSupported = true;
 
-        public WebDav(string url, string username, string password)
+        public WebDav(string url, string username, string password, string userAgent = "")
         {
             if (!url.EndsWith('/'))
             {
@@ -42,6 +42,8 @@ namespace ft.IO.Files
             {
                 Timeout = TimeSpan.FromMilliseconds(Program.UNIVERSAL_TIMEOUT_MS),
             };
+
+            client.SetUserAgent(userAgent);
 
             if (!string.IsNullOrEmpty(username))
             {

@@ -158,11 +158,29 @@ namespace ft
             }
         }
 
+        //A user agent that would break every request is refused up front. A good one is shown as ft received it,
+        //since one with quotes in it is easily mangled by the shell.
+        private static void CheckUserAgent(HttpOptions o)
+        {
+            if (!o.UserAgentIsValid())
+            {
+                Log("The user agent must be printable ASCII on one line.", ConsoleColor.Red);
+                Environment.Exit(1);
+            }
+
+            if (!string.IsNullOrWhiteSpace(o.UserAgent))
+            {
+                Log($"User-Agent: {o.UserAgent.Trim()}");
+            }
+        }
+
         private static void RunWebDavSession(WebDavOptions o)
         {
+            CheckUserAgent(o);
+
             ApplyHttpBackendTuning("WebDAV");
 
-            var access = new WebDav(o.WebDavUrl, o.ResolveUsername(), o.ResolvePassword());
+            var access = new WebDav(o.WebDavUrl, o.ResolveUsername(), o.ResolvePassword(), o.UserAgent);
 
             var sharedFileManager = new UploadDownload(
                                              access,
@@ -179,6 +197,8 @@ namespace ft
 
         private static void RunS3Session(S3Options o)
         {
+            CheckUserAgent(o);
+
             var (accessKey, secretKey, sessionToken) = o.ResolveCredentials();
 
             if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
@@ -197,7 +217,7 @@ namespace ft
 
             ApplyHttpBackendTuning("S3");
 
-            var access = new S3(o.Endpoint, o.ResolveRegion(), o.Bucket, accessKey, secretKey, sessionToken, o.MaxConnections);
+            var access = new S3(o.Endpoint, o.ResolveRegion(), o.Bucket, accessKey, secretKey, sessionToken, o.MaxConnections, o.UserAgent);
 
             var sharedFileManager = new UploadDownload(
                                              access,
@@ -214,6 +234,8 @@ namespace ft
 
         private static void RunDropboxSession(DropboxOptions o)
         {
+            CheckUserAgent(o);
+
             var appKey = o.ResolveAppKey();
             var appSecret = o.ResolveAppSecret();
             var refreshToken = o.ResolveRefreshToken();
@@ -233,7 +255,7 @@ namespace ft
             Dropbox access;
             try
             {
-                access = new Dropbox(appKey, appSecret, refreshToken);
+                access = new Dropbox(appKey, appSecret, refreshToken, o.UserAgent);
             }
             catch (Exception ex)
             {

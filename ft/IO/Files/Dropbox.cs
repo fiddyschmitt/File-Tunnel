@@ -30,13 +30,14 @@ namespace ft.IO.Files
         string accessToken = "";
         DateTime accessTokenExpiresUtc = DateTime.MinValue;
 
-        public Dropbox(string appKey, string appSecret, string refreshToken)
+        //messageHandler lets a test put an in-memory server in place of the network.
+        public Dropbox(string appKey, string appSecret, string refreshToken, string userAgent = "", HttpMessageHandler? messageHandler = null)
         {
             this.appKey = appKey;
             this.appSecret = appSecret;
             this.refreshToken = refreshToken;
 
-            var handler = new SocketsHttpHandler
+            var handler = messageHandler ?? new SocketsHttpHandler
             {
                 //Recycle idle keep-alive sockets, matching the S3 client - CDN-fronted hosts can leave
                 //stale connections that wedge subsequent requests.
@@ -52,6 +53,8 @@ namespace ft.IO.Files
                 //DefaultSleepStrategy still enforces the tunnel timeout across retries, so this hides no hang.
                 Timeout = TimeSpan.FromMilliseconds(Options.TunnelTimeoutMilliseconds),
             };
+
+            client.SetUserAgent(userAgent);
 
             //Exchange the refresh token for an access token now, so bad credentials fail here rather than
             //on the first tunnel operation.

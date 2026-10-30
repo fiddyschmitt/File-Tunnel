@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace ft.CLI
 {
-    public class WebDavOptions : Options
+    public class WebDavOptions : HttpOptions
     {
         [Option("webdav", Required = false, HelpText = @"Use a WebDAV server for the file tunnel.")]
         public bool WebDav { get; set; } = false;
