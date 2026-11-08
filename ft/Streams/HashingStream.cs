@@ -100,5 +100,53 @@ namespace ft.Streams
                 crc32.Append(readBytes);
             }
         }
+
+        //Stream's own span and single-byte overloads detour through a rented or newly allocated array and a
+        //copy, and this stream sits on ft's hottest paths: BinaryWriter.Write(ReadOnlySpan) lands on the span
+        //Write for every command the SendPump writes to its file, and BinaryReader's PeekChar and ReadByte on
+        //the single-byte Read for every poll of the read file. Pass them straight to the inner stream instead.
+        public override int Read(Span<byte> buffer)
+        {
+            var result = stream.Read(buffer);
+
+            if (hashing)
+            {
+                crc32.Append(buffer[..result]);
+            }
+
+            return result;
+        }
+
+        public override int ReadByte()
+        {
+            var result = stream.ReadByte();
+
+            if (hashing && result != -1)
+            {
+                crc32.Append([(byte)result]);
+            }
+
+            return result;
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            stream.Write(buffer);
+
+            if (hashing)
+            {
+                crc32.Append(buffer);
+            }
+        }
+
+        public override void WriteByte(byte value)
+        {
+            stream.WriteByte(value);
+
+            if (hashing)
+            {
+                crc32.Append([value]);
+            }
+        }
     }
 }

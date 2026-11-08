@@ -25,6 +25,14 @@ namespace ft.Listeners
         //corrupt read still surfaces long before the counterpart could be declared offline.
         const int ReadRetryMilliseconds = 2000;
 
+        //How long to sleep between polls of the read file while no command is waiting. For the first 50 ms
+        //after the last command the file is polled every millisecond, so the next packet of a transfer, or the
+        //reply to a request, is picked up at once. A file that stays quiet is then polled every 2 ms, and from a
+        //quarter of a second on every 5 ms. A tunnel that is idle apart from its keepalive pings makes well under
+        //half the polls it did at a flat 1 ms, each a read system call and a timer wake-up, and the first command
+        //after a quiet spell is seen at most 4 ms later than it would have been.
+        static int IdlePollMilliseconds(long quietMilliseconds) => quietMilliseconds < 50 ? 1 : quietMilliseconds < 250 ? 2 : 5;
+
         const long SESSION_ID = 0;
         const int READY_FOR_PURGE_FLAG = sizeof(long);
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
@@ -125,10 +133,15 @@ namespace ft.Listeners
                     var hashingStream = new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds);
                     var binaryWriter = new BinaryWriter(hashingStream);
 
+                    //Flush hashingStream, not binaryWriter. BinaryWriter buffers nothing, so flushing it only flushes
+                    //this stream, and merely reading its BaseStream flushes it again; each of those is an fsync of
+                    //the file here, so the BinaryWriter flush extension cost three of them per batch of commands.
+                    //HashingStream.Flush is exactly one.
+
                     //Never 0: the header reads as 0 until this id is written, which tells the reader to wait for it.
                     var sessionId = Random.Shared.NextInt64(1, long.MaxValue);
                     binaryWriter.Write(sessionId);
-                    binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
+                    hashingStream.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                     if (Verbose)
                     {
@@ -183,7 +196,6 @@ namespace ft.Listeners
 
                                 hashingMemoryStream.SetLength(0);
                                 command.Serialise(msWriter);
-                                msWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                                 if (PurgeSizeInBytes > 0 && fileStream.Position + hashingMemoryStream.Length >= PurgeSizeInBytes - MESSAGE_WRITE_POS)
                                 {
@@ -192,7 +204,7 @@ namespace ft.Listeners
                                     var purge = new Purge();
                                     purge.Serialise(binaryWriter);
 
-                                    binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
+                                    hashingStream.Flush(Verbose, TunnelTimeoutMilliseconds);
 
                                     if (Verbose)
                                     {
@@ -257,7 +269,7 @@ namespace ft.Listeners
                         }
 
                         WriteLimiter.Wait();
-                        binaryWriter.Flush(Verbose, TunnelTimeoutMilliseconds);
+                        hashingStream.Flush(Verbose, TunnelTimeoutMilliseconds);
 
 
                         //File.AppendAllLines(debugFilename, [$"{ms.Length:N0} bytes, packet number {command.PacketNumber}", Convert.ToBase64String(ms.ToArray())]);
@@ -515,7 +527,7 @@ namespace ft.Listeners
                                 throw new Exception($"[{readFileShortName}] Timed out while waiting for data.");
                             }
 
-                            Delay.Wait(1);
+                            Delay.Wait(IdlePollMilliseconds(waitForData.ElapsedMilliseconds));
                         }
 
                         ReadLimiter.Wait();

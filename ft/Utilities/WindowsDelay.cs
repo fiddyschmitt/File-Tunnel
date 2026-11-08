@@ -38,9 +38,6 @@ namespace System.Threading
         internal static partial int timeBeginPeriod(int period);
 
         [LibraryImport(windowsMultimediaAPIString)]
-        internal static partial int timeEndPeriod(int period);
-
-        [LibraryImport(windowsMultimediaAPIString)]
         internal static partial int timeGetDevCaps(ref TimerCapabilities caps, int sizeOfTimerCaps);
 
         internal static TimerCapabilities Capabilities;
@@ -48,6 +45,13 @@ namespace System.Threading
         static WindowsDelay()
         {
             _ = timeGetDevCaps(ref Capabilities, Marshal.SizeOf(Capabilities));
+
+            // Ask for the finest timer period once, for the life of the process, rather than around every
+            // sleep as this used to. ft's polling loops sleep a millisecond at a time, so the request was in
+            // force almost continuously anyway, and the two system calls that made and withdrew it on every
+            // sleep were pure overhead. Since Windows 10 2004 the period is per process, and Windows ends the
+            // request when the process exits.
+            _ = timeBeginPeriod(Capabilities.PeriodMinimum);
         }
 
         /// <summary>
@@ -58,9 +62,7 @@ namespace System.Threading
         /// <param name="delayMs"></param>
         public static void Wait(int delayMs)
         {
-            _ = timeBeginPeriod(Capabilities.PeriodMinimum);
             Thread.Sleep(delayMs);
-            _ = timeEndPeriod(Capabilities.PeriodMinimum);
         }
 
         /// <summary>

@@ -163,7 +163,16 @@ namespace ft
                 }
                 else
                 {
-                    Delay.Wait(1);
+                    //Wait for the socket to become readable, for as long as the deadlines below allow, rather than
+                    //sleeping a millisecond and looking again. Data is seen the moment it arrives, and a connection
+                    //with nothing to say no longer wakes this thread, and makes several system calls, a thousand
+                    //times a second. Poll also returns at once when the peer closes, which the connected check
+                    //below then sees. Before the first byte there is no deadline, so wait a read duration at a time.
+                    var waitMillis = totalBytesRead == 0
+                        ? maxDurationMillis
+                        : Math.Min(maxQuietDurationMillis - timeSinceLastRead.ElapsedMilliseconds, maxDurationMillis - totalTime.ElapsedMilliseconds);
+
+                    input.Socket.Poll((int)Math.Clamp(waitMillis, 1, 1000) * 1000, SelectMode.SelectRead);
                 }
 
                 if (totalBytesRead > 0 && timeSinceLastRead.IsRunning && timeSinceLastRead.ElapsedMilliseconds > maxQuietDurationMillis)
