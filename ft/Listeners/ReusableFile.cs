@@ -33,6 +33,12 @@ namespace ft.Listeners
         //after a quiet spell is seen at most 4 ms later than it would have been.
         static int IdlePollMilliseconds(long quietMilliseconds) => quietMilliseconds < 50 ? 1 : quietMilliseconds < 250 ? 2 : 5;
 
+        //With --isolated-io, how far ahead of the pump's position each open of the read file reads. Every Read of
+        //such a file opens it afresh, and a command is read in half a dozen Reads, so each command cost that many
+        //opens; with the read-ahead one open serves every field of a command, and the commands after it that the
+        //file already holds. Up to 1 MB, and no more than a quarter of the purge size.
+        int IsolatedReadAheadBytes => PurgeSizeInBytes > 0 ? (int)Math.Min(1024 * 1024, Math.Max(4096, PurgeSizeInBytes / 4)) : 1024 * 1024;
+
         const long SESSION_ID = 0;
         const int READY_FOR_PURGE_FLAG = sizeof(long);
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
@@ -385,7 +391,7 @@ namespace ft.Listeners
                         }
 
                         fileStream = IsolatedIo ?
-                                        new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
+                                        new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS) :
                                         new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                         fileStream.DisableCachingIfMacNfs();
 
@@ -491,7 +497,7 @@ namespace ft.Listeners
                                 var resumePos = fileStream.Position;
                                 binaryReader.Dispose();
                                 fileStream = IsolatedIo
-                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
+                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
                                     : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                                 fileStream.Seek(resumePos, SeekOrigin.Begin);
                                 fileStream.DisableCachingIfMacNfs();
@@ -630,6 +636,9 @@ namespace ft.Listeners
                             {
                                 Program.Log($"[{readFileShortName}] Seeking to the beginning of file.");
                             }
+                            //Nothing the stream buffered before the purge may be served after it: the counterpart
+                            //rewrites the file from the start, so drop it before going back there.
+                            fileStream.Flush();
                             fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
 
                             if (Verbose)
@@ -653,7 +662,7 @@ namespace ft.Listeners
                             {
                                 binaryReader.Dispose();   // disposes the wrapping HashingStream + fileStream
                                 fileStream = IsolatedIo
-                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
+                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
                                     : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                                 fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
                                 fileStream.DisableCachingIfMacNfs();
