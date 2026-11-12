@@ -570,9 +570,9 @@ namespace ft_tests
             if (side1 is null || side2 is null)
                 Assert.Inconclusive($"Skipped: a required client node is unavailable (Sshfs {client1OS}-{serverOS}-{client2OS}).");
 
-            // sshfs is auto-switched to --isolated-io even when the row says Normal, and that mode purges every 1 MB,
-            // so the default size already crosses ten purges. The larger normal-mode size would only slow these rows,
-            // which are already the slowest in the suite.
+            // sshfs is auto-switched to --isolated-io even when the row says Normal, and that mode purges every 8 MB:
+            // at the default size about 20 MB goes through each file, so these rows already cross two purges. The
+            // larger normal-mode size would only slow them, and they are already the slowest in the suite.
             ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2, bytesToSend: DefaultBytesToSend);
         }
 
@@ -676,9 +676,9 @@ namespace ft_tests
                 var aw2 = $"{AndroidSshfsClient.MountPoint(2)}/{filename2}";
                 var as2 = new AndroidSshfsClient((AndroidProcessRunner)android_2, 2, androidSpec, $"-r {ar2} -w {aw2} --verbose");
 
-                // sshfs is auto-switched to --isolated-io even when the row says Normal, and that mode purges every 1 MB,
-                // so the default size already crosses ten purges. The larger normal-mode size would only slow these rows,
-                // which are already the slowest in the suite.
+                // sshfs is auto-switched to --isolated-io even when the row says Normal, and that mode purges every 8 MB:
+                // at the default size about 20 MB goes through each file, so these rows already cross two purges. The
+                // larger normal-mode size would only slow them, and they are already the slowest in the suite.
                 ConductTunnelTests(mode, as1, androidServer, as2, ar1, aw1, ar2, aw2, bytesToSend: DefaultBytesToSend);
                 return;
             }
@@ -697,9 +697,9 @@ namespace ft_tests
             var writePath2 = $"{localExport}/{filename2}";
             var side2 = new Client(targetOS, targetRunner, $"-r {readPath2} -w {writePath2} --verbose");
 
-            // sshfs is auto-switched to --isolated-io even when the row says Normal, and that mode purges every 1 MB,
-            // so the default size already crosses ten purges. The larger normal-mode size would only slow these rows,
-            // which are already the slowest in the suite.
+            // sshfs is auto-switched to --isolated-io even when the row says Normal, and that mode purges every 8 MB:
+            // at the default size about 20 MB goes through each file, so these rows already cross two purges. The
+            // larger normal-mode size would only slow them, and they are already the slowest in the suite.
             ConductTunnelTests(mode, side1, server, side2, readPath1, writePath1, readPath2, writePath2, bytesToSend: DefaultBytesToSend);
         }
 
@@ -1473,8 +1473,9 @@ namespace ft_tests
         // default. A transfer has to run well past that with data still flowing, or a transport that mishandles
         // a purge goes unnoticed: at the old 2 x 5 MB = 10 MB each way the QEMU virtio-9p row passed for
         // months, although every transfer over 10 MB was being cut short there. 2 x 12 MB = 24 MB each way
-        // crosses two purges per direction, with data after each. (IsolatedIo already purges every 1 MB, so
-        // its 10 MB crosses ten; the whole-file modes do not purge at all.)
+        // crosses two purges per direction, with data after each. (IsolatedIo purges every 8 MB, and at the default
+        // size about 20 MB goes through each of its files, so its rows cross two purges with data after each; the
+        // whole-file modes do not purge at all.)
         public const int NormalModeBytesToSend = 12 * 1024 * 1024;
 
         public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2, int? bytesToSend = null)

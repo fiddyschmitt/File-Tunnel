@@ -375,9 +375,14 @@ namespace ft
                 }
             }
 
+            //With --isolated-io the file is kept smaller than the default. The cap was 1 MB from v2.3.0, which added it
+            //with the first end-to-end tests of the modes "to improve tunnel stability", with no other reason recorded.
+            //That is a purge every 16 commands, and a purge is a handshake of 0.1-2 s on the shares that need this mode
+            //(sshfs, vboxsf, the Windows NFS client), so purging was most of the time such a tunnel spent. At 8 MB
+            //there are an eighth as many.
             if (o.IsolatedIo && o.MaxFileSizeBytes == ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES)
             {
-                o.MaxFileSizeBytes = 1024 * 1024;
+                o.MaxFileSizeBytes = 8 * 1024 * 1024;
                 Log($"Reduced --max-size from {ReusableFileOptions.DEFAULT_MAX_SIZE_BYTES:N0} to {o.MaxFileSizeBytes:N0} to improve tunnel stability.", ConsoleColor.Yellow);
             }
 
