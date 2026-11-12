@@ -382,6 +382,10 @@ namespace ft.Listeners
                     {
                         while (true)
                         {
+                            //A Linux NFS client that has looked for the file and not found it keeps saying so for up
+                            //to 30 s after the counterpart creates it, unless the directory is fetched afresh first.
+                            Extensions.RevalidateDirectoryIfNfs(ReadFromFilename);
+
                             if (File.Exists(ReadFromFilename) && HasSessionId(ReadFromFilename))
                             {
                                 Program.Log($"[{readFileShortName}] now exists. Reading.");
