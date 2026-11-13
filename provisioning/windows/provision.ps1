@@ -60,6 +60,16 @@ if ($keys -like "$env:ProgramData\*") {
 # those ports proved unreliable here, and this is an isolated lab, so the firewall is off.
 Set-NetFirewallProfile -All -Enabled False
 
+# --- Defender scans everything, as on a user's machine ---------------------------------------------
+# The box excludes all of C: from Defender's scanning. A user's machine has no such exclusion, and
+# Defender opening and scanning ft's tunnel files and the shares is part of what ft has to cope with,
+# so every exclusion goes. Defender's other settings are the box's, which are Windows' defaults.
+$mp = Get-MpPreference
+foreach ($x in @($mp.ExclusionPath)) { if ($x) { Remove-MpPreference -ExclusionPath $x } }
+foreach ($x in @($mp.ExclusionExtension)) { if ($x) { Remove-MpPreference -ExclusionExtension $x } }
+foreach ($x in @($mp.ExclusionProcess)) { if ($x) { Remove-MpPreference -ExclusionProcess $x } }
+foreach ($x in @($mp.ExclusionIpAddress)) { if ($x) { Remove-MpPreference -ExclusionIpAddress $x } }
+
 # --- Names resolve through VirtualBox's DNS relay, which asks the PC ------------------------------
 # VirtualBox's DHCP hands the NAT adapter the DNS servers the PC had when the VM started, and Windows
 # keeps them after they change (a VPN on the PC connecting or disconnecting). VirtualBox's relay,
@@ -156,6 +166,18 @@ if ($current.AutoAdminLogon -ne '1' -or $current.DefaultUserName -ne $user -or
 # --- Never sleeps (a sleeping test machine looks like a failing test) -----------------------------
 powercfg.exe /change standby-timeout-ac 0
 powercfg.exe /change hibernate-timeout-ac 0
+
+# --- Windows Update installs updates by itself, as on a user's machine -----------------------------
+# The box turns automatic updates off by policy, which left its machines months behind a user's. The
+# one policy kept: no restart while someone is logged on, which the account always is (a test machine
+# that restarts in the middle of a run looks like a failing test). Updates that need a restart finish
+# at the lab's next one.
+$au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+if (-not (Test-Path $au)) { New-Item -Path $au -Force | Out-Null }
+foreach ($name in (Get-Item $au).GetValueNames()) {
+    if ($name -ne 'NoAutoRebootWithLoggedOnUsers') { Remove-ItemProperty -Path $au -Name $name }
+}
+Set-ItemProperty -Path $au -Name NoAutoRebootWithLoggedOnUsers -Type DWord -Value 1
 
 # --- Summary ------------------------------------------------------------------------------------
 $os = Get-CimInstance Win32_OperatingSystem

@@ -21,6 +21,14 @@ Write-Output "$($env:COMPUTERNAME) ($addresses): $($os.Caption) build $($os.Buil
 Check 'sshd running' { (Get-Service sshd).Status -eq 'Running' }
 Check 'SSH sessions get PowerShell' { (Get-ItemProperty 'HKLM:\SOFTWARE\OpenSSH').DefaultShell -like '*powershell.exe' }
 Check 'firewall off' { -not (Get-NetFirewallProfile | Where-Object Enabled) }
+Check 'Defender scanning, with no exclusions' {
+    $p = Get-MpPreference
+    (Get-MpComputerStatus).RealTimeProtectionEnabled -and
+        -not (@($p.ExclusionPath) + @($p.ExclusionExtension) + @($p.ExclusionProcess) + @($p.ExclusionIpAddress) | Where-Object { $_ })
+}
+Check 'Windows Update installs updates by itself' {
+    -not (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -ErrorAction SilentlyContinue).NoAutoUpdate
+}
 Check 'RDP on (3389)' {
     (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server').fDenyTSConnections -eq 0 -and
     (Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue)
