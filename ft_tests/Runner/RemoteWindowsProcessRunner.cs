@@ -2,6 +2,7 @@ using ft;
 using Renci.SshNet;
 using System;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace ft_tests.Runner
 {
@@ -100,23 +101,61 @@ namespace ft_tests.Runner
             return result;
         }
 
+        // Where, in Stop()'s output, the outcome of the kill ends and ft's log begins.
+        private const string LogMarker = "----- ft-run.log -----";
+
         public override TimeSpan? Stop()
         {
-            var processName = Path.GetFileName(remoteExecutablePath);
-            // ExecuteBounded hard-caps the whole call INCLUDING channel-open. A tiring Windows node whose sshd
+            var processName = Path.GetFileName(remoteExecutablePath);                 // ft.exe, as taskkill names it
+            var name = Path.GetFileNameWithoutExtension(remoteExecutablePath);        // ft, as .NET names the process
+            var keepLog = localLogFile is not null && launchedArgs is not null;
+
+            // Kill ft, make sure it has gone, and kill it again if it hasn't. A taskkill once missed, and that ft ran
+            // on into the next row on its node, still holding ft-run.log: the next launch's redirection into the log
+            // failed, so that row's ft never started. Why it missed is unknown, as nothing kept taskkill's output;
+            // now the outcome is kept with ft's log. When the node has restarted, the first try finds the SSH
+            // connection gone and the next one reconnects (SshExecuteExtensions).
+            //
+            // It is all one command, the reading of the log included, because each command starts PowerShell afresh,
+            // which takes about 4 s on the lab's VMs. For the same reason the check calls .NET rather than cmdlets
+            // from a module PowerShell would first have to load. The log is opened with ReadWrite sharing, so it is
+            // kept even from an ft that wouldn't die.
+            var command = $"$k = taskkill /IM {processName} /F 2>&1 | % {{ $_.ToString().Trim() }} | ? {{ $_ }}; " +
+                          $"foreach ($p in [Diagnostics.Process]::GetProcessesByName('{name}')) {{ [void]$p.WaitForExit(5000) }}; " +
+                          $"($k -join ' ') + ' | {name} processes left: ' + [Diagnostics.Process]::GetProcessesByName('{name}').Count";
+            if (keepLog)
+            {
+                command += $"; '{LogMarker}'; $s = [IO.File]::Open('{RemoteLogFile}', 'Open', 'Read', 'ReadWrite'); [IO.StreamReader]::new($s).ReadToEnd(); $s.Dispose()";
+            }
+
+            // ExecuteHardBounded hard-caps the whole call INCLUDING channel-open. A tiring Windows node whose sshd
             // stops answering channel-open used to hang here forever (CommandTimeout does not cover Open()),
             // wedging the whole run - the exact 4.5h stall this replaced.
-            sshClient.ExecuteBounded(@$"taskkill /IM {processName} /F", 15);
-            KeepLog();
-            return null;
-        }
+            var budget = keepLog ? 30 : 15;
+            var outcome = "";
+            var log = "";
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                var (output, _, completed) = sshClient.ExecuteHardBounded(command, budget);
+                var at = output.IndexOf(LogMarker, StringComparison.Ordinal);
+                outcome = !completed ? $"no answer within {budget} s"
+                        : output.Length == 0 ? "no output, so the SSH command never ran"
+                        : string.Join(" | ", (at < 0 ? output : output[..at]).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                log = at < 0 ? "" : output[(at + LogMarker.Length)..].TrimStart('\r', '\n');
+                if (Regex.IsMatch(outcome, $@"\b{Regex.Escape(name)} processes left: 0\b"))
+                {
+                    break;
+                }
+                Debug.WriteLine($"WARNING {RunOnIP}: {processName} may still be running after taskkill (try {attempt} of 3): {outcome}");
+            }
 
-        private void KeepLog()
-        {
-            if (localLogFile is null || launchedArgs is null) return;
-            var log = sshClient.ExecuteBounded($"Get-Content -Raw -LiteralPath '{RemoteLogFile}'", 60);
-            File.AppendAllText(localLogFile, $"===== {DateTime.Now:yyyy-MM-dd HH:mm:ss} {host}: ft {launchedArgs}{Environment.NewLine}{log}{Environment.NewLine}");
-            launchedArgs = null;
+            if (keepLog)
+            {
+                File.AppendAllText(localLogFile!, $"===== {DateTime.Now:yyyy-MM-dd HH:mm:ss} {host}: ft {launchedArgs}{Environment.NewLine}{log}{Environment.NewLine}" +
+                                                  $"----- stopped: {outcome}{Environment.NewLine}");
+                launchedArgs = null;
+            }
+            return null;
         }
 
         public override void DeleteFile(string path)
