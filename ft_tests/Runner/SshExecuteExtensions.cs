@@ -1,5 +1,7 @@
 using Renci.SshNet;
 using System;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ft_tests.Runner
@@ -29,15 +31,21 @@ namespace ft_tests.Runner
         public static (string Output, int ExitStatus, bool Completed) ExecuteHardBounded(this SshClient client, string commandText, int? timeoutSeconds = null)
         {
             var budget = TimeSpan.FromSeconds(timeoutSeconds ?? (int)DefaultTimeout.TotalSeconds);
-            var cmd = client.CreateCommand(commandText);
-            cmd.CommandTimeout = budget; // bounds EXECUTION once the channel is open
+            SshCommand? cmd = null;
 
             // Execute on a background task so we can cap the wall-clock wait - CommandTimeout can't bound
             // ChannelSession.Open(). Swallow every exception (timeout, channel error, dispose race): these are
             // best-effort harness commands and must never throw back and abort ClassInit / a test.
             var task = Task.Run(() =>
             {
-                try { return cmd.Execute(); }
+                try
+                {
+                    Reconnect(client);
+                    var created = client.CreateCommand(commandText);
+                    created.CommandTimeout = budget; // bounds EXECUTION once the channel is open
+                    Volatile.Write(ref cmd, created);
+                    return created.Execute();
+                }
                 catch { return ""; }
             });
 
@@ -45,16 +53,39 @@ namespace ft_tests.Runner
             // DID open; only a channel-open hang (which CommandTimeout can't catch) reaches this outer cap.
             if (task.Wait(budget + TimeSpan.FromSeconds(5)))
             {
-                var status = cmd.ExitStatus ?? -1;
-                var err = cmd.Error ?? "";
-                try { cmd.Dispose(); } catch { }
+                var done = Volatile.Read(ref cmd);
+                var status = done?.ExitStatus ?? -1;
+                var err = done?.Error ?? "";
+                try { done?.Dispose(); } catch { }
                 return (task.Result + err, status, true);
             }
 
             // Hung past the cap - almost certainly stuck in ChannelSession.Open() on a half-dead session.
             // Dispose to close the channel/socket and let the abandoned Execute thread unwind, then give up.
-            try { cmd.Dispose(); } catch { }
+            try { Volatile.Read(ref cmd)?.Dispose(); } catch { }
             return ("", -1, false);
+        }
+
+        // SSH.NET never reconnects by itself, so a connection that drops stays dropped. When a Windows node
+        // crashed and restarted mid-run, every later command on it failed at once until the run ended: no ft
+        // was stopped there again, and the ft left running broke the rows after it. So connect again first,
+        // under a lock of the client's own, as threads share a client. The first command after a connection
+        // dies can still fail, as SSH.NET only finds out by trying; the one after it reconnects.
+        static readonly ConditionalWeakTable<SshClient, object> ReconnectLocks = new();
+
+        static void Reconnect(SshClient client)
+        {
+            if (client.IsConnected)
+            {
+                return;
+            }
+            lock (ReconnectLocks.GetValue(client, _ => new object()))
+            {
+                if (!client.IsConnected)
+                {
+                    client.Connect();
+                }
+            }
         }
     }
 }
