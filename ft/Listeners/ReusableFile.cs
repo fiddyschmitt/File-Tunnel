@@ -315,7 +315,7 @@ namespace ft.Listeners
         {
             try
             {
-                using var file = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var file = OpenForReading(filename);
                 file.DisableCachingIfMacNfs();
                 Span<byte> sessionId = stackalloc byte[sizeof(long)];
                 return file.ReadAtLeast(sessionId, sessionId.Length, throwOnEndOfStream: false) == sessionId.Length
@@ -326,6 +326,16 @@ namespace ft.Listeners
                 return false;
             }
         }
+
+        //The counterpart's file, opened for reading. On a Mac's SMB mount every handle on it reads uncached
+        //(MacSmbReadFileStream), so none needs refreshing by opening another: opening a new handle for each refresh
+        //lost the writes of a counterpart on the same Mac.
+        FileStream OpenForReading(int bufferSize = 4096, FileOptions options = FileOptions.None) => OpenForReading(ReadFromFilename, bufferSize, options);
+
+        static FileStream OpenForReading(string filename, int bufferSize = 4096, FileOptions options = FileOptions.None) =>
+            Extensions.IsMacSmbMount(filename)
+                ? new MacSmbReadFileStream(filename, bufferSize, options)
+                : new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize, options);
 
         public override void ReceivePump()
         {
@@ -396,7 +406,7 @@ namespace ft.Listeners
 
                         fileStream = IsolatedIo ?
                                         new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS) :
-                                        new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                        OpenForReading();
                         fileStream.DisableCachingIfMacNfs();
 
                         if (retryPos != null)
@@ -446,7 +456,7 @@ namespace ft.Listeners
 
                         Stream isReadyForPurgeStream = freshFlagReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
-                                                            new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                                                            OpenForReading(1, FileOptions.SequentialScan);
                         isReadyForPurge = new ToggleReader(
                             new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
                             READY_FOR_PURGE_FLAG,
@@ -455,7 +465,7 @@ namespace ft.Listeners
 
                         Stream isPurgeCompleteStream = freshFlagReads ?
                                                             new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
-                                                            new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+                                                            OpenForReading(1, FileOptions.SequentialScan);
                         isPurgeComplete = new ToggleReader(
                             new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
                             PURGE_COMPLETE_FLAG,
@@ -502,7 +512,7 @@ namespace ft.Listeners
                                 binaryReader.Dispose();
                                 fileStream = IsolatedIo
                                     ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
-                                    : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                    : OpenForReading();
                                 fileStream.Seek(resumePos, SeekOrigin.Begin);
                                 fileStream.DisableCachingIfMacNfs();
                                 binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
@@ -640,10 +650,42 @@ namespace ft.Listeners
                             {
                                 Program.Log($"[{readFileShortName}] Seeking to the beginning of file.");
                             }
-                            //Nothing the stream buffered before the purge may be served after it: the counterpart
-                            //rewrites the file from the start, so drop it before going back there.
-                            fileStream.Flush();
-                            fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            if (reopenReadHandleAfterPurge)
+                            {
+                                // Reopen the read handle (see reopenReadHandleAfterPurge) to re-sync the client's
+                                // cache across the purge. Here, not once the purge is over: the counterpart has
+                                // truncated the file, as it does before setting its complete flag, and it writes
+                                // nothing more until we clear our ready flag below, so the new handle is opened
+                                // on the purged file before the counterpart writes to it again. Opened as the
+                                // counterpart resumed, it made a Mac's SMB client lose the counterpart's first
+                                // writes when both ran on the same Mac (see MacSmbReadFileStream). CRC-safe: the
+                                // per-command hash resets on each Command.Deserialise, so a fresh HashingStream
+                                // carries no state.
+                                try
+                                {
+                                    binaryReader.Dispose();   // disposes the wrapping HashingStream + fileStream
+                                    fileStream = IsolatedIo
+                                        ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
+                                        : OpenForReading();
+                                    fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                                    fileStream.DisableCachingIfMacNfs();
+                                    binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
+                                }
+                                catch
+                                {
+                                    //The counterpart waits for our ready flag to clear before it writes again:
+                                    //let it finish the purge before this pump starts over.
+                                    setReadyForPurge?.Set(0);
+                                    throw;
+                                }
+                            }
+                            else
+                            {
+                                //Nothing the stream buffered before the purge may be served after it: the counterpart
+                                //rewrites the file from the start, so drop it before going back there.
+                                fileStream.Flush();
+                                fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
+                            }
 
                             if (Verbose)
                             {
@@ -658,20 +700,6 @@ namespace ft.Listeners
                             isPurgeComplete.Wait(0);
 
                             Program.Log($"[{readFileShortName}] File was purged by counterpart.");
-
-                            // Reopen the read handle here (macOS only - see reopenReadHandleAfterPurge) to
-                            // re-sync the smbfs client cache across the purge. CRC-safe: the per-command hash
-                            // resets on each Command.Deserialise, so a fresh HashingStream carries no state.
-                            if (reopenReadHandleAfterPurge)
-                            {
-                                binaryReader.Dispose();   // disposes the wrapping HashingStream + fileStream
-                                fileStream = IsolatedIo
-                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
-                                    : new FileStream(ReadFromFilename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                                fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                                fileStream.DisableCachingIfMacNfs();
-                                binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
-                            }
                         }
                     }
                 }

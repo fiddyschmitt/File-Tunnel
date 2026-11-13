@@ -605,23 +605,29 @@ namespace ft
         // upload-download small-file cap + low pace automatically, keyed off the mount rather than a flag.
         public static bool IsNinePMount(string path) => ClassifyMountMagic(MountMagic(path)) == MountKind.NineP;
 
-        // True when the path is on a macOS NFS mount. macOS struct statfs is ~2168 bytes (it embeds two
-        // 1024-byte path fields) with f_fstypename - a 16-byte string like "nfs"/"smbfs" - at offset 72;
-        // the Linux-oriented MountMagic above deliberately skips macOS, so read it here with a macOS-sized
-        // buffer. Cached per path (a mount can't change type). Only NFS needs ReusableFile's reopen-when-
-        // stalled + fresh-flag handling: a macOS NFS held read handle serves a STALE view that a FRESH open
-        // revalidates (~2-4s) but neither a held read/fstat nor a separate F_NOCACHE read does. smbfs is the
-        // opposite - its stale view IS fixed in place by the F_NOCACHE read (MacDirectRefresh), and a
-        // reopened smbfs handle is served the same stale bytes - so smbfs must be left on that path.
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> MacNfsCache = new();
-        public static bool IsMacNfsMount(string path)
+        // True when the path is on a macOS NFS mount. Only NFS needs ReusableFile's reopen-when-stalled +
+        // fresh-flag handling: a macOS NFS held read handle serves a STALE view that a FRESH open revalidates
+        // (~2-4s) but neither a held read/fstat nor a separate F_NOCACHE read does. smbfs is the opposite - an
+        // uncached read is answered by the server (MacSmbReadFileStream reads that way), and a reopened smbfs
+        // handle is served the same stale bytes - so smbfs must be left off that path.
+        public static bool IsMacNfsMount(string path) => MacMountFsType(path).Equals("nfs", StringComparison.OrdinalIgnoreCase);
+
+        // True when the path is on a macOS SMB mount (smbfs).
+        public static bool IsMacSmbMount(string path) => MacMountFsType(path).Equals("smbfs", StringComparison.OrdinalIgnoreCase);
+
+        // The type of the macOS mount the path is on ("nfs", "smbfs", "apfs", ...), or "" elsewhere or if it can't be
+        // read. macOS struct statfs is ~2168 bytes (it embeds two 1024-byte path fields) with f_fstypename - a 16-byte
+        // string - at offset 72; the Linux-oriented MountMagic above deliberately skips macOS, so read it here with a
+        // macOS-sized buffer. Cached per path (a mount can't change type).
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MacFsTypeCache = new();
+        private static string MacMountFsType(string path)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                return false;
+                return "";
             }
 
-            return MacNfsCache.GetOrAdd(path, p =>
+            return MacFsTypeCache.GetOrAdd(path, p =>
             {
                 try
                 {
@@ -631,12 +637,12 @@ namespace ft
                     var dir = Path.GetDirectoryName(p);
                     var target = string.IsNullOrEmpty(dir) ? p : dir;
                     var buf = new byte[4096]; // macOS struct statfs ~2168 bytes; f_fstypename[16] at offset 72
-                    if (statfs(target, buf) != 0) return false;
+                    if (statfs(target, buf) != 0) return "";
                     var end = 72;
                     while (end < 72 + 16 && buf[end] != 0) end++;
-                    return Encoding.ASCII.GetString(buf, 72, end - 72).Equals("nfs", StringComparison.OrdinalIgnoreCase);
+                    return Encoding.ASCII.GetString(buf, 72, end - 72);
                 }
-                catch { return false; }
+                catch { return ""; }
             });
         }
 
@@ -816,7 +822,14 @@ namespace ft
                 }
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 {
-                    MacDirectRefresh(fileStream);
+                    if (fileStream is MacSmbReadFileStream smbStream)
+                    {
+                        smbStream.Refresh();
+                    }
+                    else
+                    {
+                        MacDirectRefresh(fileStream);
+                    }
                 }
                 else
                 {
@@ -973,6 +986,8 @@ namespace ft
         // on macOS - ft only ForceReads its own tunnel files (which live on the caching mount), and on a
         // coherent mount at a genuine EOF the separate read simply returns 0 bytes, a cheap no-op. Verified to
         // make Normal mode work across sender/receiver position, sustained load, and Samba + Windows servers.
+        // ReusableFile's read streams on smbfs no longer come here: they read uncached (MacSmbReadFileStream), as
+        // opening a handle for each refresh made smbfs lose the writes of a counterpart on the same Mac.
         private static void MacDirectRefresh(FileStream fileStream)
         {
             var fd = libc_open(fileStream.Name, O_RDONLY);
