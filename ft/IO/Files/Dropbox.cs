@@ -295,38 +295,80 @@ namespace ft.IO.Files
             }
         }
 
+        //How many times a token refresh that failed for a passing reason is tried again.
+        const int TokenRefreshRetries = 3;
+
+        //Dropbox's token endpoint has its bad moments like any other: a 500 from it once ended a tunnel at
+        //start-up, before it had begun, in the end-to-end tests. So a server error or a 429, or a request that
+        //never reached Dropbox, is tried again, after 1, 2 and then 4 s, or after the Retry-After Dropbox gives.
+        //A refusal (a 400 or 401: a wrong app key, app secret or refresh token) fails at once, since asking again
+        //can't help, and so does a request that timed out, which has already waited the tunnel timeout.
         void RefreshAccessToken()
         {
             lock (tokenLock)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiHost}/oauth2/token")
+                for (var attempt = 1; ; attempt++)
                 {
-                    Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                    string failure;
+                    string? body = null;
+                    TimeSpan? retryAfter = null;
+
+                    try
                     {
-                        ["grant_type"] = "refresh_token",
-                        ["refresh_token"] = refreshToken
-                    })
-                };
+                        using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiHost}/oauth2/token")
+                        {
+                            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                            {
+                                ["grant_type"] = "refresh_token",
+                                ["refresh_token"] = refreshToken
+                            })
+                        };
 
-                var basic = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{appKey}:{appSecret}"));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+                        var basic = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{appKey}:{appSecret}"));
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
 
-                using var response = client.Send(request);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                    throw new Exception($"Dropbox token refresh failed ({(int)response.StatusCode}). Check the app key, app secret and refresh token. Response: {body}");
+                        using var response = client.Send(request);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            using var stream = response.Content.ReadAsStream();
+                            using var doc = JsonDocument.Parse(stream);
+                            var root = doc.RootElement;
+
+                            accessToken = root.GetProperty("access_token").GetString() ?? "";
+                            var expiresInSeconds = root.TryGetProperty("expires_in", out var e) ? e.GetInt32() : 14400;
+
+                            //Refresh a minute early so an in-flight operation never races the expiry.
+                            accessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(expiresInSeconds - 60);
+                            return;
+                        }
+
+                        var status = (int)response.StatusCode;
+                        body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                        if (status != 429 && status < 500)
+                        {
+                            throw new Exception($"Dropbox token refresh failed ({status}). Check the app key, app secret and refresh token. Response: {body}");
+                        }
+
+                        failure = $"{status}";
+                        retryAfter = response.Headers.RetryAfter?.Delta;
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        failure = ex.Message;
+                    }
+
+                    var shown = string.IsNullOrWhiteSpace(body) ? "" : $" Response: {body}";
+                    if (attempt > TokenRefreshRetries)
+                    {
+                        throw new Exception($"Dropbox token refresh failed ({failure}) {attempt} times in a row.{shown}");
+                    }
+
+                    //Never past the tunnel timeout, as in Send.
+                    var delay = retryAfter ?? TimeSpan.FromSeconds(1 << (attempt - 1));
+                    var sleepMs = (int)Math.Clamp(delay.TotalMilliseconds, 0, Options.TunnelTimeoutMilliseconds);
+                    Program.Log($"Dropbox token refresh failed ({failure}), trying again in {sleepMs / 1000.0:0.#} s.{shown}", ConsoleColor.Yellow);
+                    Thread.Sleep(sleepMs);
                 }
-
-                using var stream = response.Content.ReadAsStream();
-                using var doc = JsonDocument.Parse(stream);
-                var root = doc.RootElement;
-
-                accessToken = root.GetProperty("access_token").GetString() ?? "";
-                var expiresInSeconds = root.TryGetProperty("expires_in", out var e) ? e.GetInt32() : 14400;
-
-                //Refresh a minute early so an in-flight operation never races the expiry.
-                accessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(expiresInSeconds - 60);
             }
         }
 
