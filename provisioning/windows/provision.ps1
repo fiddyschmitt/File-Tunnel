@@ -167,17 +167,16 @@ if ($current.AutoAdminLogon -ne '1' -or $current.DefaultUserName -ne $user -or
 powercfg.exe /change standby-timeout-ac 0
 powercfg.exe /change hibernate-timeout-ac 0
 
-# --- Windows Update installs updates by itself, as on a user's machine -----------------------------
-# The box turns automatic updates off by policy, which left its machines months behind a user's. The
-# one policy kept: no restart while someone is logged on, which the account always is (a test machine
-# that restarts in the middle of a run looks like a failing test). Updates that need a restart finish
-# at the lab's next one.
+# --- Windows Update installs nothing by itself ------------------------------------------------------
+# The box turns automatic updates off by policy, and the lab keeps them off: a test machine that
+# restarts to finish an update in the middle of a run looks like a failing test. Windows' one policy
+# against that, no restart while someone is logged on, applies only to updates installed on a
+# schedule, so it could not be relied on with updates left on. Updates are installed by hand, between
+# runs (Settings > Windows Update still checks when asked).
 $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
 if (-not (Test-Path $au)) { New-Item -Path $au -Force | Out-Null }
-foreach ($name in (Get-Item $au).GetValueNames()) {
-    if ($name -ne 'NoAutoRebootWithLoggedOnUsers') { Remove-ItemProperty -Path $au -Name $name }
-}
-Set-ItemProperty -Path $au -Name NoAutoRebootWithLoggedOnUsers -Type DWord -Value 1
+Set-ItemProperty -Path $au -Name NoAutoUpdate -Type DWord -Value 1
+Remove-ItemProperty -Path $au -Name NoAutoRebootWithLoggedOnUsers -ErrorAction SilentlyContinue
 
 # --- Summary ------------------------------------------------------------------------------------
 $os = Get-CimInstance Win32_OperatingSystem

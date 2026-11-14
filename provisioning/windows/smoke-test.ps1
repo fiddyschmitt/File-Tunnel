@@ -26,8 +26,8 @@ Check 'Defender scanning, with no exclusions' {
     (Get-MpComputerStatus).RealTimeProtectionEnabled -and
         -not (@($p.ExclusionPath) + @($p.ExclusionExtension) + @($p.ExclusionProcess) + @($p.ExclusionIpAddress) | Where-Object { $_ })
 }
-Check 'Windows Update installs updates by itself' {
-    -not (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -ErrorAction SilentlyContinue).NoAutoUpdate
+Check 'Windows Update installs nothing by itself' {
+    (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -ErrorAction SilentlyContinue).NoAutoUpdate -eq 1
 }
 Check 'RDP on (3389)' {
     (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server').fDenyTSConnections -eq 0 -and
