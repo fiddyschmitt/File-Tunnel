@@ -384,13 +384,14 @@ namespace ft.Listeners
             long? knownSessionId = null;   //survives reopening the file, unlike currentSessionId
             long? retryPos = null;
 
-            // macOS smbfs serves a held read handle a stale view across a counterpart's purge (the
-            // truncate-and-regrow that caps the file). The in-place MacDirectRefresh keeps the handle
-            // coherent in steady state, but under load it intermittently can't reveal the writer's
-            // post-purge appends before the offline timeout - the reader stalls, the tunnel is declared
-            // offline and every carried connection is torn down mid-transfer. Reopening the handle at the
-            // purge boundary re-syncs the smbfs client cache reliably (exactly what --isolated-io does
-            // on every read, which is why IR never hits this). Measured: LMM 6/12 -> 12/12, 0 timeouts.
+            // macOS smbfs served a held read handle a stale view across a counterpart's purge (the
+            // truncate-and-regrow that caps the file): under load the reader intermittently didn't see the
+            // writer's post-purge appends before the offline timeout - it stalled, the tunnel was declared
+            // offline and every carried connection was torn down mid-transfer. Reopening the handle at the
+            // purge boundary re-synced the smbfs client cache reliably (exactly what --isolated-io does
+            // on every read, which is why IR never hit this). Measured: LMM 6/12 -> 12/12, 0 timeouts. The
+            // handle read through the cache then; on smbfs it now reads uncached (MacSmbReadFileStream), and
+            // the reopen has stayed: it has not been measured without.
             //
             // The Linux 9p client has the same weakness, far more reliably: after the counterpart purges the
             // file, a held read handle does not see the data written afterwards, so a purge ends the tunnel
@@ -409,8 +410,8 @@ namespace ft.Listeners
             // seeing a stale EOF, so a peer's appends don't become visible before the tunnel timeout - a
             // FRESH open revalidates in ~2-4s (measured on .33; nothing on the held fd - fstat, F_NOCACHE -
             // beats it). When stalled this long, reopen the read handle in place (see the wait loop below).
-            // Gated to macOS NFS in NORMAL mode ONLY: a reopened smbfs handle is served the SAME stale bytes
-            // (smbfs is fixed in place by MacDirectRefresh's F_NOCACHE read, not by a reopen), and IR already
+            // Gated to macOS NFS in NORMAL mode ONLY: a reopened smbfs handle was served the SAME stale bytes
+            // (smbfs is fixed by reading uncached, see MacSmbReadFileStream, not by a reopen), and IR already
             // reopens per read - so reopening in either case only interferes (both regressed when this was
             // macOS-wide).
             var reopenReadHandleWhenStalled = Extensions.IsMacNfsMount(ReadFromFilename) && !IsolatedIo;
@@ -483,8 +484,8 @@ namespace ft.Listeners
                         // see the counterpart flip a flag). These flag reads are tiny and infrequent (only
                         // during a purge), so read them the always-fresh IR way - IsolatedReadsFileStream
                         // reopens + F_NOCACHE-reads on every read. The bulk data read stays the fast reopen-
-                        // when-stalled FileStream; only these flags pay the per-read cost. NFS-gated: smbfs
-                        // Normal reads the flags fine in place via MacDirectRefresh, so leave it untouched.
+                        // when-stalled FileStream; only these flags pay the per-read cost. NFS-gated: on smbfs
+                        // the flag handles read uncached (MacSmbReadFileStream) and need none of this.
                         var freshFlagReads = IsolatedIo || Extensions.IsMacNfsMount(ReadFromFilename);
 
                         Stream isReadyForPurgeStream = freshFlagReads ?

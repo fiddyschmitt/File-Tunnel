@@ -171,7 +171,7 @@ namespace ft_tests
 
             // The Mac: SSH key auth (the lab's key), ft in userspace. Its SMB client mounts are ensured here, not
             // by provisioning. Two runner instances (ft-1/ft-2) let the Mac be on both tunnel sides at once.
-            // macOS Normal-mode SMB works via MacDirectRefresh (ForceRead's separate F_NOCACHE read), so both
+            // macOS Normal-mode SMB works by reading the tunnel file uncached (MacSmbReadFileStream), so both
             // modes are covered.
             var macUser = Lab.MacUser;
             var macKey = Lab.SshKey;
