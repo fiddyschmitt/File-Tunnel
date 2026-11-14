@@ -1466,16 +1466,17 @@ namespace ft_tests
         static string Truncate(string s) => string.IsNullOrEmpty(s) ? "" : (s.Length <= 300 ? s : s[..300]);
 
         // Transfer sizes are per connection and per direction; ConductTest runs 2 connections in full duplex,
-        // so each shared file carries twice this.
+        // and each crosses the tunnel twice (in through one side's -L, back out through the -R it set up on the
+        // other), so each shared file carries four times this.
         public const int DefaultBytesToSend = 5 * 1024 * 1024;
 
         // Normal mode purges (truncates and regrows) each shared file whenever it passes --max-size, 10 MB by
         // default. A transfer has to run well past that with data still flowing, or a transport that mishandles
         // a purge goes unnoticed: at the old 2 x 5 MB = 10 MB each way the QEMU virtio-9p row passed for
         // months, although every transfer over 10 MB was being cut short there. 2 x 12 MB = 24 MB each way
-        // crosses two purges per direction, with data after each. (IsolatedIo purges every 8 MB, and at the default
-        // size about 20 MB goes through each of its files, so its rows cross two purges with data after each; the
-        // whole-file modes do not purge at all.)
+        // puts 48 MB through each file, which crosses four purges, with data after each. (IsolatedIo purges every
+        // 8 MB, and at the default size about 20 MB goes through each of its files, so its rows cross two purges
+        // with data after each; the whole-file modes do not purge at all.)
         public const int NormalModeBytesToSend = 12 * 1024 * 1024;
 
         public static void ConductTunnelTests(Mode mode, Client side1, Server server, Client side2, string readPath1, string writePath1, string readPath2, string writePath2, int? bytesToSend = null)
