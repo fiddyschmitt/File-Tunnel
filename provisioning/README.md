@@ -149,7 +149,8 @@ PASS/WARN/FAIL lines; a FAIL stops Vagrant there.
   the emulator instead, pinned in `settings.yml` and kept in `~/Library/Android/ft-emulator/<version>`.
 - **The Android build** runs on Linux because NativeAOT for linux-bionic-arm64 needs the Android NDK's
   Linux toolchain. It builds this PC's working tree (shared in read-only), uncommitted changes
-  included, not what's on GitHub.
+  included, not what's on GitHub. Its .NET SDK is pinned in `settings.yml`: after a bump,
+  `vagrant provision ft-debian-build` replaces the old SDK with the new one.
 - **Pinned boxes and images**: every rebuild starts from the same bits. Bump on purpose.
 - **Typical options everywhere**: the lab mounts and serves its shares the way a user would, on the
   kernel a user would have. When ft needs something special to be coherent over a share, that goes in

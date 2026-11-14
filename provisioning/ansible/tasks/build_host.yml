@@ -40,6 +40,23 @@
     dest: /opt/ftbuild/dotnet-install.sh
     mode: "0755"
 
+# A new pin replaces the old SDK rather than joining it: dotnet-install.sh leaves the old SDK in
+# place, and dotnet builds with the newest SDK it finds, whatever the pin says.
+- name: .NET SDK {{ linux.build.dotnet_sdk }} already installed?
+  ansible.builtin.stat:
+    path: "/opt/ftbuild/dotnet/sdk/{{ linux.build.dotnet_sdk }}"
+  register: pinned_sdk
+
+- name: Any other .NET SDK removed, with what the build compiled with it
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /opt/ftbuild/dotnet
+    - /opt/ftbuild/work/ft/bin
+    - /opt/ftbuild/work/ft/obj
+  when: not pinned_sdk.stat.exists
+
 - name: .NET SDK {{ linux.build.dotnet_sdk }}
   ansible.builtin.command:
     argv: [/opt/ftbuild/dotnet-install.sh, --version, "{{ linux.build.dotnet_sdk }}", --install-dir, /opt/ftbuild/dotnet]

@@ -162,7 +162,9 @@ linux:
   # The build VM: builds ft for Android (linux-bionic-arm64, NativeAOT) from this
   # PC's working tree, and puts the binary where the tests pick it up.
   build:
-    dotnet_sdk: "10.0.301"
+    # The newest .NET 10 SDK (10.0.404 brings runtime 10.0.15). Its runtime is compiled into the binary,
+    # so bump this when .NET ships a fix: the build's NuGet audit warns about an old one (NU190x).
+    dotnet_sdk: "10.0.404"
     ndk: r27c
     # Its SHA-1 is Google's published 090e8083a715fdb1a3e402d0763c388abb03fb4e. Bump both together.
     ndk_sha256: 59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc
