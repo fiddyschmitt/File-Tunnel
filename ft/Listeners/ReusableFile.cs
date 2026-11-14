@@ -337,6 +337,41 @@ namespace ft.Listeners
                 ? new MacSmbReadFileStream(filename, bufferSize, options)
                 : new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize, options);
 
+        //The counterpart's file, opened for the pump to read commands from.
+        Stream OpenForCommands()
+        {
+            Stream stream = IsolatedIo
+                ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
+                : OpenForReading();
+            stream.DisableCachingIfMacNfs();
+            return stream;
+        }
+
+        //Opens the counterpart's file again, for the pump to go on reading commands at the given position, and
+        //closes the handle it read through until now. Closing the BinaryReader doesn't do that: it closes the
+        //HashingStream it was given, which leaves the file under it open. Each handle replaced then stayed open
+        //until the garbage collector came across it, and was closed at whatever moment that was: measured on a
+        //Mac, six of them at a time, closed in the middle of a transfer. On a Mac's SMB mount, a handle closed
+        //while a counterpart on the same Mac extends the file is what loses the counterpart's writes (see
+        //MacSmbReadFileStream). CRC-safe: the per-command hash resets on each Command.Deserialise, so a fresh
+        //HashingStream carries no state.
+        (Stream FileStream, BinaryReader Reader) ReopenForCommands(Stream current, long position)
+        {
+            var reopened = OpenForCommands();
+            try
+            {
+                reopened.Seek(position, SeekOrigin.Begin);
+            }
+            catch
+            {
+                reopened.Dispose();
+                throw;
+            }
+
+            current.Dispose();
+            return (reopened, new BinaryReader(new HashingStream(reopened, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII));
+        }
+
         public override void ReceivePump()
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
@@ -383,9 +418,10 @@ namespace ft.Listeners
 
             while (true)
             {
+                Stream? fileStream = null;
+
                 try
                 {
-                    Stream? fileStream = null;
                     BinaryReader? binaryReader = null;
 
                     try
@@ -404,10 +440,7 @@ namespace ft.Listeners
                             Delay.Wait(200);
                         }
 
-                        fileStream = IsolatedIo ?
-                                        new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS) :
-                                        OpenForReading();
-                        fileStream.DisableCachingIfMacNfs();
+                        fileStream = OpenForCommands();
 
                         if (retryPos != null)
                         {
@@ -499,23 +532,15 @@ namespace ft.Listeners
 
                             // macOS NFS: reopen the read handle in place to defeat the held handle's stale
                             // attribute cache (see stallReopenMillis). We resume from the SAME byte position,
-                            // so no command is skipped or re-read; CRC-safe because the per-command hash resets
-                            // on each Command.Deserialise, so the fresh HashingStream carries no state. Each
-                            // reopen's GETATTR reveals ALL data written so far, so the reader bulk-reads the
-                            // backlog and stalls again - unlike IR, which reopens on every read. Only on a real
-                            // stall, so smbfs (kept flowing by MacDirectRefresh) never triggers it.
+                            // so no command is skipped or re-read. Each reopen's GETATTR reveals ALL data
+                            // written so far, so the reader bulk-reads the backlog and stalls again - unlike
+                            // IR, which reopens on every read. Only on a real stall, and only on NFS (see
+                            // reopenReadHandleWhenStalled).
                             if (reopenReadHandleWhenStalled
                                 && waitForData.ElapsedMilliseconds > stallReopenMillis
                                 && sinceReopen.ElapsedMilliseconds > stallReopenMillis)
                             {
-                                var resumePos = fileStream.Position;
-                                binaryReader.Dispose();
-                                fileStream = IsolatedIo
-                                    ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
-                                    : OpenForReading();
-                                fileStream.Seek(resumePos, SeekOrigin.Begin);
-                                fileStream.DisableCachingIfMacNfs();
-                                binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
+                                (fileStream, binaryReader) = ReopenForCommands(fileStream, fileStream.Position);
                                 sinceReopen.Restart();
                             }
 
@@ -658,18 +683,11 @@ namespace ft.Listeners
                                 // nothing more until we clear our ready flag below, so the new handle is opened
                                 // on the purged file before the counterpart writes to it again. Opened as the
                                 // counterpart resumed, it made a Mac's SMB client lose the counterpart's first
-                                // writes when both ran on the same Mac (see MacSmbReadFileStream). CRC-safe: the
-                                // per-command hash resets on each Command.Deserialise, so a fresh HashingStream
-                                // carries no state.
+                                // writes when both ran on the same Mac (see MacSmbReadFileStream). The handle it
+                                // replaces is closed here too, while the counterpart still waits.
                                 try
                                 {
-                                    binaryReader.Dispose();   // disposes the wrapping HashingStream + fileStream
-                                    fileStream = IsolatedIo
-                                        ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds, IsolatedReadAheadBytes, MESSAGE_WRITE_POS)
-                                        : OpenForReading();
-                                    fileStream.Seek(MESSAGE_WRITE_POS, SeekOrigin.Begin);
-                                    fileStream.DisableCachingIfMacNfs();
-                                    binaryReader = new BinaryReader(new HashingStream(fileStream, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII);
+                                    (fileStream, binaryReader) = ReopenForCommands(fileStream, MESSAGE_WRITE_POS);
                                 }
                                 catch
                                 {
@@ -707,6 +725,11 @@ namespace ft.Listeners
                 {
                     Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
+
+                    //Closed now, like a handle that is replaced (see ReopenForCommands), not when the garbage
+                    //collector comes across it. The flag readers stay as they are: the SendPump may be waiting on one.
+                    try { fileStream?.Dispose(); } catch { }
+
                     Delay.Wait(1000);
                 }
             }
