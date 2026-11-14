@@ -491,6 +491,8 @@ namespace ft
         private static extern int statfs(string path, byte[] buf);
         [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
         private static extern int libc_fcntl(int fd, int cmd, int arg);
+        [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
+        private static extern int libc_fcntl_stack_arg(int fd, int cmd, nint x2, nint x3, nint x4, nint x5, nint x6, nint x7, nint arg);
         [DllImport("libc", SetLastError = true, EntryPoint = "statx")]
         private static extern int libc_statx(int dirfd, [MarshalAs(UnmanagedType.LPStr)] string pathname, int flags, uint mask, byte[] statxbuf);
         private const int AT_EMPTY_PATH = 0x1000;
@@ -509,6 +511,18 @@ namespace ft
         private const int VBOXSF_SUPER_MAGIC = 0x786F4256; // statfs f_type for VirtualBox shared folders
         private const int V9FS_SUPER_MAGIC = 0x01021997;   // statfs f_type for 9P (Plan 9 / diod) mounts
         private const int NFS_SUPER_MAGIC = 0x6969;        // statfs f_type for NFS mounts, any version
+
+        // macOS: fcntl(fd, cmd, arg). fcntl is variadic (int fcntl(int fd, int cmd, ...)), and on Apple Silicon a
+        // variadic argument is passed on the stack. A P/Invoke declared with three ints passes the third in a
+        // register (x2), like the first two, so fcntl read whatever the stack held instead: measured, half of a
+        // stack address. F_NOCACHE was turned on only because that is never zero, and F_RDAHEAD was never turned
+        // off. Six placeholders fill the argument registers that are left (x2 to x7), which puts the argument in
+        // the first stack slot, where fcntl looks for it. An Intel Mac passes a variadic argument in a register,
+        // as it does any other.
+        public static int MacFcntl(int fd, int cmd, int arg) =>
+            RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                ? libc_fcntl_stack_arg(fd, cmd, 0, 0, 0, 0, 0, 0, arg)
+                : libc_fcntl(fd, cmd, arg);
 
         // The kind of filesystem a mount is, derived purely from its statfs f_type magic. Pure and
         // side-effect-free so it is unit-testable without a real mount. The same magic covers a whole
@@ -663,8 +677,8 @@ namespace ft
             if (stream is not FileStream fileStream) return;
             if (!IsMacNfsMount(fileStream.Name)) return;
             var fd = (int)fileStream.SafeFileHandle.DangerousGetHandle();
-            try { libc_fcntl(fd, MAC_F_RDAHEAD, 0); } catch { }
-            try { libc_fcntl(fd, MAC_F_NOCACHE, 1); } catch { }
+            try { MacFcntl(fd, MAC_F_RDAHEAD, 0); } catch { }
+            try { MacFcntl(fd, MAC_F_NOCACHE, 1); } catch { }
         }
 
         // statfs reports plain FUSE for ALL fuse mounts, so it can't separate sshfs (held handle stays
@@ -999,7 +1013,7 @@ namespace ft
             var raw = IntPtr.Zero;
             try
             {
-                libc_fcntl(fd, MAC_F_NOCACHE, 1);
+                MacFcntl(fd, MAC_F_NOCACHE, 1);
                 raw = Marshal.AllocHGlobal(MAC_REFRESH_BYTES);
                 libc_lseek(fd, fileStream.Position, SEEK_SET);
                 _ = libc_read(fd, raw, MAC_REFRESH_BYTES);

@@ -27,15 +27,12 @@ namespace ft.Streams
         const int F_RDAHEAD = 45;
         const int F_NOCACHE = 48;
 
-        [DllImport("libc", SetLastError = true, EntryPoint = "fcntl")]
-        static extern int fcntl(int fd, int cmd, int arg);
-
         public MacSmbReadFileStream(string path, int bufferSize = 4096, FileOptions options = FileOptions.None)
             : base(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize, options)
         {
             var fd = (int)SafeFileHandle.DangerousGetHandle();
-            fcntl(fd, F_RDAHEAD, 0);
-            fcntl(fd, F_NOCACHE, 1);
+            Extensions.MacFcntl(fd, F_RDAHEAD, 0);
+            Extensions.MacFcntl(fd, F_NOCACHE, 1);
         }
 
         //A stream opened for reading has nothing to write, so this only drops the read buffer.

@@ -20,9 +20,6 @@ namespace ft.Streams
         // F_NOCACHE read goes to the server and returns those bytes.
         const int F_NOCACHE = 48;
 
-        [DllImport("libc", SetLastError = true)]
-        private static extern int fcntl(int fd, int cmd, int arg);
-
         static void BypassCacheOnMac(SafeHandle handle)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -32,7 +29,7 @@ namespace ft.Streams
 
             try
             {
-                fcntl((int)handle.DangerousGetHandle(), F_NOCACHE, 1);
+                Extensions.MacFcntl((int)handle.DangerousGetHandle(), F_NOCACHE, 1);
             }
             catch
             {
