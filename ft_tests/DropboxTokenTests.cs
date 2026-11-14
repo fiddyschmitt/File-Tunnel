@@ -1,3 +1,4 @@
+using ft.CLI;
 using ft.IO.Files;
 using System.Net;
 using System.Net.Http.Headers;
@@ -6,8 +7,8 @@ namespace ft_tests
 {
     /// <summary>
     /// Dropbox's token refresh: a server error, a 429 or a request that never reached Dropbox is tried again, up
-    /// to three times, and a refusal fails at once. The client sends to an in-memory server that answers the token
-    /// requests as each test scripts them.
+    /// to three times, and a refusal or a request that timed out fails at once. The client sends to an in-memory
+    /// server that answers the token requests as each test scripts them.
     /// </summary>
     [TestClass]
     [TestCategory("Unit")]
@@ -38,6 +39,40 @@ namespace ft_tests
 
             Assert.AreEqual(2, server.TokenRequests);
             Assert.IsFalse(dropbox.Exists("1.dat"));
+        }
+
+        [TestMethod]
+        public void RetriesWhenTheConnectionTimesOut()
+        {
+            var server = new TokenServer(ConnectTimeout(), Token());
+
+            var dropbox = new Dropbox("app-key", "app-secret", "refresh-token", messageHandler: server);
+
+            Assert.AreEqual(2, server.TokenRequests);
+            Assert.IsFalse(dropbox.Exists("1.dat"));
+        }
+
+        // The whole request timing out has already waited the tunnel timeout: HttpClient's own timeout, which
+        // the Dropbox client sets to it. Here that is made short, and the server never answers.
+        [TestMethod]
+        [DoNotParallelize]   // changes the tunnel timeout, which is the same for every test
+        public void DoesNotRetryARequestThatTimesOut()
+        {
+            var tunnelTimeout = Options.TunnelTimeoutMilliseconds;
+            Options.TunnelTimeoutMilliseconds = 1500;
+            try
+            {
+                var server = new TokenServer(NoAnswer(), Token());
+
+                var ex = Assert.Throws<OperationCanceledException>(() => new Dropbox("app-key", "app-secret", "refresh-token", messageHandler: server));
+
+                Assert.IsInstanceOfType<TimeoutException>(ex.InnerException);
+                Assert.AreEqual(1, server.TokenRequests);
+            }
+            finally
+            {
+                Options.TunnelTimeoutMilliseconds = tunnelTimeout;
+            }
         }
 
         [TestMethod]
@@ -86,6 +121,13 @@ namespace ft_tests
         static Func<HttpResponseMessage> Unreachable() =>
             () => throw new HttpRequestException("No such host is known. (api.dropboxapi.com:443)");
 
+        // What SocketsHttpHandler throws when a connection isn't made within its ConnectTimeout.
+        static Func<HttpResponseMessage> ConnectTimeout() =>
+            () => throw new TaskCanceledException("The operation was canceled.", new TimeoutException("A connection could not be established within the configured ConnectTimeout."));
+
+        // A server that accepts the request and never answers it: only the client's own timeout ends the wait.
+        static Func<HttpResponseMessage> NoAnswer() => () => null!;
+
         // Answers each token request with the next scripted answer, and every API request with "not found". Keeps
         // the Authorization header of each API request.
         sealed class TokenServer(params Func<HttpResponseMessage>[] tokenAnswers) : HttpMessageHandler
@@ -96,6 +138,13 @@ namespace ft_tests
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
                 Task.FromResult(Send(request, cancellationToken));
 
+            // Waits, as a request does on a server that never answers, until the client gives up on it.
+            static HttpResponseMessage WaitForTheClientToGiveUp(CancellationToken cancellationToken)
+            {
+                cancellationToken.WaitHandle.WaitOne();
+                throw new OperationCanceledException(cancellationToken);
+            }
+
             protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
             {
                 if (request.RequestUri!.AbsolutePath == "/oauth2/token")
@@ -104,7 +153,7 @@ namespace ft_tests
                     {
                         throw new AssertFailedException($"Token request {TokenRequests + 1}, but the test scripted only {tokenAnswers.Length}.");
                     }
-                    return tokenAnswers[TokenRequests++]();
+                    return tokenAnswers[TokenRequests++]() ?? WaitForTheClientToGiveUp(cancellationToken);
                 }
 
                 ApiAuthorizations.Add(request.Headers.Authorization?.ToString() ?? "");

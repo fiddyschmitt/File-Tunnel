@@ -1,6 +1,7 @@
 using ft.CLI;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -298,11 +299,18 @@ namespace ft.IO.Files
         //How many times a token refresh that failed for a passing reason is tried again.
         const int TokenRefreshRetries = 3;
 
+        //A request that ended this much sooner than the HTTP timeout, or more, didn't end because of it. Timers
+        //fire a little early as well as late.
+        static readonly TimeSpan TimeoutMargin = TimeSpan.FromSeconds(1);
+
         //Dropbox's token endpoint has its bad moments like any other: a 500 from it once ended a tunnel at
         //start-up, before it had begun, in the end-to-end tests. So a server error or a 429, or a request that
         //never reached Dropbox, is tried again, after 1, 2 and then 4 s, or after the Retry-After Dropbox gives.
         //A refusal (a 400 or 401: a wrong app key, app secret or refresh token) fails at once, since asking again
-        //can't help, and so does a request that timed out, which has already waited the tunnel timeout.
+        //can't help, and so does a request that timed out, which has already waited the tunnel timeout. A
+        //connection that timed out has not: it gave up after ConnectTimeout, a few seconds, without reaching
+        //Dropbox, so it is tried again. Both time-outs arrive as the same exception, a cancellation with a
+        //TimeoutException inside, and are told apart by how long the request took.
         void RefreshAccessToken()
         {
             lock (tokenLock)
@@ -312,6 +320,7 @@ namespace ft.IO.Files
                     string failure;
                     string? body = null;
                     TimeSpan? retryAfter = null;
+                    var requestTime = Stopwatch.StartNew();
 
                     try
                     {
@@ -355,6 +364,10 @@ namespace ft.IO.Files
                     catch (HttpRequestException ex)
                     {
                         failure = ex.Message;
+                    }
+                    catch (OperationCanceledException ex) when (ex.InnerException is TimeoutException && requestTime.Elapsed < client.Timeout - TimeoutMargin)
+                    {
+                        failure = ex.InnerException.Message;
                     }
 
                     var shown = string.IsNullOrWhiteSpace(body) ? "" : $" Response: {body}";
