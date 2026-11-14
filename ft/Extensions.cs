@@ -548,6 +548,20 @@ namespace ft
         // CIFS starved the keepalive ping, regressing SMB-Linux Normal).
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> MountMagicCache = new();
 
+        // The directory to ask about the mount a tunnel file is on: the one the file is in, never the file itself.
+        // statfs gives the same answer for either (they are on the same mount), but the directory is there from
+        // the start, whereas the counterpart may not have created the file yet, and a Win32-OpenSSH sftp server
+        // refuses statfs on a file a peer holds open (EPERM), which the read file is: asking about the file
+        // mis-detects the mount as coherent (-> Normal mode, held handles, which then fail against that same
+        // exclusive-open server). Taken from the full path, as a file named without a folder ("ft -r 2.dat", run
+        // from inside the share) has no directory part of its own: the file was asked about instead, and no
+        // mount was detected for it.
+        public static string MountProbeDirectory(string path)
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(path));
+            return string.IsNullOrEmpty(dir) ? path : dir;   // a root has no parent: it is the directory
+        }
+
         private static int MountMagic(string path)
         {
             // statfs shares the Linux kernel ABI on Android/bionic as well as on Linux (f_type at offset 0,
@@ -562,31 +576,37 @@ namespace ft
                 return 0;
             }
 
-            return MountMagicCache.GetOrAdd(path, p =>
+            if (MountMagicCache.TryGetValue(path, out var cached))
             {
-                try
+                return cached;
+            }
+
+            int magic;
+            try
+            {
+                var buf = new byte[256]; // Linux struct statfs is ~120 bytes; f_type magic is at offset 0
+                if (statfs(MountProbeDirectory(path), buf) != 0)
                 {
-                    // Always statfs the CONTAINING DIRECTORY, never the file itself. statfs returns the same
-                    // filesystem magic for either (they are on the same mount), but a Win32-OpenSSH sftp server
-                    // refuses statfs on a file a peer holds open (EPERM) - and the read file is exactly what the
-                    // counterpart holds - so statfs'ing the file mis-detects the mount as coherent (-> Normal
-                    // mode, held handles, which then fail against that same exclusive-open server). The
-                    // directory (the mount root) is never exclusively held, so its statfs always succeeds. It is
-                    // also present from the start, whereas the file may not exist yet (the counterpart creates it).
-                    var dir = Path.GetDirectoryName(p);
-                    var target = string.IsNullOrEmpty(dir) ? p : dir;
-                    var buf = new byte[256]; // Linux struct statfs is ~120 bytes; f_type magic is at offset 0
-                    return statfs(target, buf) == 0 ? BitConverter.ToInt32(buf, 0) : 0;
+                    // Not kept: a directory that can't be asked now (a share that is still connecting) is asked
+                    // again next time, rather than taken for an ordinary disk for as long as ft runs.
+                    return 0;
                 }
-                catch { return 0; }
-            });
+                magic = BitConverter.ToInt32(buf, 0);
+            }
+            catch
+            {
+                magic = 0;   // no statfs to call, or no such path: neither will change
+            }
+
+            MountMagicCache[path] = magic;
+            return magic;
         }
 
         // True when the path is on a VirtualBox shared folder (vboxsf) / an sshfs (FUSE) mount. Both
         // serve a stale view to a held read handle and only refresh on a fresh open(), so they default
         // to the reopen-per-read of --isolated-io (enabled in Program.cs).
         // Diagnostic only (--verbose): a fresh, uncached statfs magic + mountinfo fstype for the path, so the
-        // auto-detect decision can be traced. Mirrors MountMagic's file-or-directory target and platform guard.
+        // auto-detect decision can be traced. Mirrors MountMagic's target and platform guard.
         public static string DescribeMount(string path)
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -594,11 +614,11 @@ namespace ft
                 return "(macOS/Windows: statfs skipped)";
             }
             var exists = File.Exists(path);
-            var dir = Path.GetDirectoryName(path);
-            var target = string.IsNullOrEmpty(dir) ? path : dir;
+            var target = path;
             int magic = 0, rc = -1, err = 0;
             try
             {
+                target = MountProbeDirectory(path);
                 var buf = new byte[256];
                 rc = statfs(target, buf);
                 err = rc == 0 ? 0 : Marshal.GetLastPInvokeError();
@@ -641,23 +661,30 @@ namespace ft
                 return "";
             }
 
-            return MacFsTypeCache.GetOrAdd(path, p =>
+            if (MacFsTypeCache.TryGetValue(path, out var cached))
             {
-                try
+                return cached;
+            }
+
+            string fsType;
+            try
+            {
+                var buf = new byte[4096]; // macOS struct statfs ~2168 bytes; f_fstypename[16] at offset 72
+                if (statfs(MountProbeDirectory(path), buf) != 0)
                 {
-                    // Always statfs the containing directory, never the file (same mount, same f_fstypename):
-                    // the file may not exist yet, and a server that opens files exclusively refuses statfs on a
-                    // peer-held file - the directory (mount root) is never held. See MountMagic for the detail.
-                    var dir = Path.GetDirectoryName(p);
-                    var target = string.IsNullOrEmpty(dir) ? p : dir;
-                    var buf = new byte[4096]; // macOS struct statfs ~2168 bytes; f_fstypename[16] at offset 72
-                    if (statfs(target, buf) != 0) return "";
-                    var end = 72;
-                    while (end < 72 + 16 && buf[end] != 0) end++;
-                    return Encoding.ASCII.GetString(buf, 72, end - 72);
+                    return "";   // not kept: asked again next time, as in MountMagic
                 }
-                catch { return ""; }
-            });
+                var end = 72;
+                while (end < 72 + 16 && buf[end] != 0) end++;
+                fsType = Encoding.ASCII.GetString(buf, 72, end - 72);
+            }
+            catch
+            {
+                fsType = "";
+            }
+
+            MacFsTypeCache[path] = fsType;
+            return fsType;
         }
 
         // macOS NFS: turn OFF read-ahead prefetch and the data cache on a read handle. No-op unless a macOS NFS
@@ -693,8 +720,8 @@ namespace ft
             {
                 try
                 {
-                    var full = Path.GetFullPath(File.Exists(p) ? p : (Path.GetDirectoryName(p) ?? p));
-                    return FindMount(File.ReadAllLines("/proc/self/mountinfo"), full);
+                    // The file's own full path finds its mount whether or not the file exists yet.
+                    return FindMount(File.ReadAllLines("/proc/self/mountinfo"), Path.GetFullPath(p));
                 }
                 catch { return ("", ""); }
             });

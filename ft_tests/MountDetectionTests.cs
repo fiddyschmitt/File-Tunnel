@@ -123,5 +123,21 @@ namespace ft_tests
             Assert.IsFalse(diod.Supports(Extensions.TunnelMode.IsolatedIo));
             Assert.IsTrue(diod.Supports(Extensions.TunnelMode.UploadDownload));
         }
+
+        // The mount a tunnel file is on is asked of the directory the file is in. A file named without a folder
+        // ("ft -r 2.dat", run from inside the share) is in the current directory: its name has no directory part,
+        // and the file itself, which may not exist yet, was asked about instead.
+        [TestMethod]
+        public void MountProbeDirectory_IsTheFolderTheFileIsIn()
+        {
+            var here = Directory.GetCurrentDirectory();
+            var root = Path.GetPathRoot(here)!;
+
+            Assert.AreEqual(here, Extensions.MountProbeDirectory("2.dat"), "a bare file name");
+            Assert.AreEqual(Path.Combine(here, "tunnel"), Extensions.MountProbeDirectory(Path.Combine("tunnel", "2.dat")), "a relative path");
+            Assert.AreEqual(Path.Combine(root, "share"), Extensions.MountProbeDirectory(Path.Combine(root, "share", "2.dat")), "a full path");
+            Assert.AreEqual(root, Extensions.MountProbeDirectory(Path.Combine(root, "2.dat")), "a file in the root");
+            Assert.AreEqual(root, Extensions.MountProbeDirectory(root), "the root has no folder above it");
+        }
     }
 }
