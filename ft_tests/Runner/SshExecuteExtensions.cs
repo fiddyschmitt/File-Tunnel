@@ -32,6 +32,7 @@ namespace ft_tests.Runner
         {
             var budget = TimeSpan.FromSeconds(timeoutSeconds ?? (int)DefaultTimeout.TotalSeconds);
             SshCommand? cmd = null;
+            var abandoned = 0;   // 1 once the wait below has given up on the command
 
             // Execute on a background task so we can cap the wall-clock wait - CommandTimeout can't bound
             // ChannelSession.Open(). Swallow every exception (timeout, channel error, dispose race): these are
@@ -41,9 +42,27 @@ namespace ft_tests.Runner
                 try
                 {
                     Reconnect(client);
+
+                    // Reconnecting can outlast the wait below (SSH.NET allows a connection 30 s). A command
+                    // given up on meanwhile must not run after all: by then the test has moved on, and a
+                    // late "kill ft" would stop the next row's ft.
+                    if (Volatile.Read(ref abandoned) != 0)
+                    {
+                        return "";
+                    }
+
                     var created = client.CreateCommand(commandText);
                     created.CommandTimeout = budget; // bounds EXECUTION once the channel is open
-                    Volatile.Write(ref cmd, created);
+
+                    // Interlocked, here and where the wait gives up: each side writes its own word and then reads
+                    // the other's, and at least one of them must see the other's write.
+                    Interlocked.Exchange(ref cmd, created);
+                    if (Volatile.Read(ref abandoned) != 0)
+                    {
+                        created.Dispose();
+                        return "";
+                    }
+
                     return created.Execute();
                 }
                 catch { return ""; }
@@ -62,6 +81,8 @@ namespace ft_tests.Runner
 
             // Hung past the cap - almost certainly stuck in ChannelSession.Open() on a half-dead session.
             // Dispose to close the channel/socket and let the abandoned Execute thread unwind, then give up.
+            // A command that hasn't been created yet (the task is still reconnecting) is never run.
+            Interlocked.Exchange(ref abandoned, 1);
             try { Volatile.Read(ref cmd)?.Dispose(); } catch { }
             return ("", -1, false);
         }
