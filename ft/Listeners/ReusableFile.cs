@@ -44,11 +44,17 @@ namespace ft.Listeners
         const int PURGE_COMPLETE_FLAG = READY_FOR_PURGE_FLAG + 1;
         const int MESSAGE_WRITE_POS = PURGE_COMPLETE_FLAG + 1;
 
+        //Our ready flag and the counterpart's cross between the pumps. The SendPump opens the writer of ours, which the
+        //ReceivePump sets during the counterpart's purges, and the ReceivePump opens the reader of the counterpart's,
+        //which the SendPump waits on during its own. A pump that starts over opens its handle afresh and closes the one
+        //it replaces, which the other pump may be using just then, so each use is made under that flag's lock, through
+        //the handle current at that moment (see ReplaceFlagHandle). Closing a handle while the other pump used it would
+        //make that pump start over as well, and a SendPump starts over with a new session id, which makes the
+        //counterpart close every connection the tunnel carries.
+        readonly object readyFlagWriterLock = new();
+        readonly object readyFlagReaderLock = new();
         ToggleWriter? setReadyForPurge;
-        ToggleWriter? setPurgeComplete;
-
         ToggleReader? isReadyForPurge;
-        ToggleReader? isPurgeComplete;
 
         public int PurgeSizeInBytes { get; }
         public bool IsolatedIo { get; }
@@ -132,6 +138,8 @@ namespace ft.Listeners
                     continue;
                 }
 
+                ToggleWriter? setPurgeComplete = null;   //our complete flag, which only this pump uses
+
                 try
                 {
                     fileStream.SetLength(MESSAGE_WRITE_POS);
@@ -154,23 +162,8 @@ namespace ft.Listeners
                         Program.Log($"[{writeFileShortName}] Set Session ID to: {sessionId}");
                     }
 
-                    Stream setReadyForPurgeStream = IsolatedIo
-                        ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
-                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | Extensions.TunnelWriteOptions);
-                    setReadyForPurge = new ToggleWriter(
-                        new BinaryWriter(setReadyForPurgeStream),
-                        READY_FOR_PURGE_FLAG,
-                        TunnelTimeoutMilliseconds,
-                        Verbose);
-
-                    Stream setPurgeCompleteStream = IsolatedIo
-                        ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
-                        : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | Extensions.TunnelWriteOptions);
-                    setPurgeComplete = new ToggleWriter(
-                        new BinaryWriter(setPurgeCompleteStream),
-                        PURGE_COMPLETE_FLAG,
-                        TunnelTimeoutMilliseconds,
-                        Verbose);
+                    ReplaceFlagHandle(readyFlagWriterLock, ref setReadyForPurge, OpenFlagWriter(READY_FOR_PURGE_FLAG));
+                    setPurgeComplete = OpenFlagWriter(PURGE_COMPLETE_FLAG);
 
                     var ms = new MemoryStream();
                     var hashingMemoryStream = new HashingStream(ms, Verbose, TunnelTimeoutMilliseconds);
@@ -216,7 +209,7 @@ namespace ft.Listeners
                                     {
                                         Program.Log($"[{writeFileShortName}] Waiting for counterpart to be ready for purge.");
                                     }
-                                    isReadyForPurge?.Wait(1);
+                                    WaitForCounterpartReadyFlag(1);
 
                                     if (Verbose)
                                     {
@@ -236,7 +229,7 @@ namespace ft.Listeners
                                     {
                                         Program.Log($"[{writeFileShortName}] Waiting for counterpart clear their ready flag.");
                                     }
-                                    isReadyForPurge?.Wait(0);
+                                    WaitForCounterpartReadyFlag(0);
 
                                     if (Verbose)
                                     {
@@ -292,6 +285,14 @@ namespace ft.Listeners
                 {
                     Program.Log($"[{writeFileShortName}] {nameof(SendPump)}: {ex.Message}");
                     Program.Log($"[{writeFileShortName}] Restarting {nameof(SendPump)}");
+
+                    //Closed now, before the file is created afresh, rather than whenever the garbage collector comes
+                    //across them. Disposing the file's stream writes out what it still holds, into the file of the
+                    //session that is ending. The writer of our ready flag stays open until the next one replaces it:
+                    //the ReceivePump may be setting the flag.
+                    try { fileStream.Dispose(); } catch { }
+                    try { setPurgeComplete?.Dispose(); } catch { }
+
                     Delay.Wait(1000);
                 }
             }
@@ -372,6 +373,75 @@ namespace ft.Listeners
             return (reopened, new BinaryReader(new HashingStream(reopened, Verbose, TunnelTimeoutMilliseconds), Encoding.ASCII));
         }
 
+        //A reader of one of the counterpart's flags, through a handle of its own.
+        ToggleReader OpenFlagReader(long position, bool freshReads)
+        {
+            Stream stream = freshReads
+                ? new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds)
+                : OpenForReading(1, FileOptions.SequentialScan);
+
+            try
+            {
+                return new ToggleReader(new BinaryReader(stream, Encoding.ASCII), position, TunnelTimeoutMilliseconds, Verbose);
+            }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
+        }
+
+        //A writer of one of our flags, through a handle of its own.
+        ToggleWriter OpenFlagWriter(long position)
+        {
+            Stream stream = IsolatedIo
+                ? new IsolatedWritesFileStream(WriteToFilename, TunnelTimeoutMilliseconds)
+                : new FileStream(WriteToFilename, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.SequentialScan | Extensions.TunnelWriteOptions);
+
+            return new ToggleWriter(new BinaryWriter(stream), position, TunnelTimeoutMilliseconds, Verbose);
+        }
+
+        //Puts a pump's new handle on a ready flag in the place of its old one, then closes the old one. The other pump
+        //takes the handle from the field under the same lock at each use, so it has no further use of the old one.
+        static void ReplaceFlagHandle<T>(object flagLock, ref T? current, T replacement) where T : class, IDisposable
+        {
+            T? replaced;
+            lock (flagLock)
+            {
+                replaced = current;
+                current = replacement;
+            }
+
+            try { replaced?.Dispose(); } catch { }
+        }
+
+        //The SendPump's wait for the counterpart's ready flag, through the reader the ReceivePump has open at each look.
+        //It doesn't wait while the ReceivePump has none open yet.
+        void WaitForCounterpartReadyFlag(byte value)
+        {
+            while (true)
+            {
+                lock (readyFlagReaderLock)
+                {
+                    if (isReadyForPurge == null || isReadyForPurge.Is(value))
+                    {
+                        return;
+                    }
+                }
+
+                Delay.Wait(1);
+            }
+        }
+
+        //The ReceivePump's setting of our ready flag, through the writer the SendPump has open, once it has one.
+        void SetOurReadyFlag(byte value)
+        {
+            lock (readyFlagWriterLock)
+            {
+                setReadyForPurge?.Set(value);
+            }
+        }
+
         public override void ReceivePump()
         {
             //var debugFilename = $"diag-received-{Environment.MachineName}.txt";
@@ -420,6 +490,7 @@ namespace ft.Listeners
             while (true)
             {
                 Stream? fileStream = null;
+                ToggleReader? isPurgeComplete = null;   //the counterpart's complete flag, which only this pump reads
 
                 try
                 {
@@ -488,23 +559,8 @@ namespace ft.Listeners
                         // the flag handles read uncached (MacSmbReadFileStream) and need none of this.
                         var freshFlagReads = IsolatedIo || Extensions.IsMacNfsMount(ReadFromFilename);
 
-                        Stream isReadyForPurgeStream = freshFlagReads ?
-                                                            new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
-                                                            OpenForReading(1, FileOptions.SequentialScan);
-                        isReadyForPurge = new ToggleReader(
-                            new BinaryReader(isReadyForPurgeStream, Encoding.ASCII),
-                            READY_FOR_PURGE_FLAG,
-                            TunnelTimeoutMilliseconds,
-                            Verbose);
-
-                        Stream isPurgeCompleteStream = freshFlagReads ?
-                                                            new IsolatedReadsFileStream(ReadFromFilename, TunnelTimeoutMilliseconds) :
-                                                            OpenForReading(1, FileOptions.SequentialScan);
-                        isPurgeComplete = new ToggleReader(
-                            new BinaryReader(isPurgeCompleteStream, Encoding.ASCII),
-                            PURGE_COMPLETE_FLAG,
-                            TunnelTimeoutMilliseconds,
-                            Verbose);
+                        ReplaceFlagHandle(readyFlagReaderLock, ref isReadyForPurge, OpenFlagReader(READY_FOR_PURGE_FLAG, freshFlagReads));
+                        isPurgeComplete = OpenFlagReader(PURGE_COMPLETE_FLAG, freshFlagReads);
                     }
                     catch (Exception ex)
                     {
@@ -664,7 +720,7 @@ namespace ft.Listeners
                             {
                                 Program.Log($"[{readFileShortName}] Signaling that we're ready for purge.");
                             }
-                            setReadyForPurge?.Set(1);
+                            SetOurReadyFlag(1);
 
                             if (Verbose)
                             {
@@ -694,7 +750,7 @@ namespace ft.Listeners
                                 {
                                     //The counterpart waits for our ready flag to clear before it writes again:
                                     //let it finish the purge before this pump starts over.
-                                    setReadyForPurge?.Set(0);
+                                    SetOurReadyFlag(0);
                                     throw;
                                 }
                             }
@@ -710,7 +766,7 @@ namespace ft.Listeners
                             {
                                 Program.Log($"[{readFileShortName}] Clearing ready flag.");
                             }
-                            setReadyForPurge?.Set(0);
+                            SetOurReadyFlag(0);
 
                             if (Verbose)
                             {
@@ -727,9 +783,11 @@ namespace ft.Listeners
                     Program.Log($"[{readFileShortName}] {nameof(ReceivePump)}: {ex.Message}");
                     Program.Log($"[{readFileShortName}] Restarting {nameof(ReceivePump)}");
 
-                    //Closed now, like a handle that is replaced (see ReopenForCommands), not when the garbage
-                    //collector comes across it. The flag readers stay as they are: the SendPump may be waiting on one.
+                    //Closed now, like a handle that is replaced (see ReopenForCommands), not whenever the garbage
+                    //collector comes across them. The reader of the counterpart's ready flag stays open until the next
+                    //one replaces it: the SendPump may be waiting on the flag.
                     try { fileStream?.Dispose(); } catch { }
+                    try { isPurgeComplete?.Dispose(); } catch { }
 
                     Delay.Wait(1000);
                 }

@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace ft.IO
 {
-    public class ToggleWriter
+    public class ToggleWriter : IDisposable
     {
         private readonly BinaryWriter writer;
         private readonly long position;
@@ -35,5 +35,8 @@ namespace ft.IO
 
             writer.Flush(verbose, tunnelTimeoutMilliseconds);
         }
+
+        //Closes the handle the flag is written through.
+        public void Dispose() => writer.Dispose();
     }
 }

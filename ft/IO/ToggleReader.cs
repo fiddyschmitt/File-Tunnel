@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace ft.IO
 {
-    public class ToggleReader
+    public class ToggleReader : IDisposable
     {
         readonly BinaryReader reader;
         readonly long position;
@@ -25,25 +25,31 @@ namespace ft.IO
             reader.BaseStream.Seek(position, SeekOrigin.Begin);
         }
 
-        public void Wait(byte value)
+        //One look at the flag: true when it holds the value. When it doesn't, the view of the file is refreshed, so
+        //that the next look sees a change.
+        public bool Is(byte value)
         {
             reader.BaseStream.Seek(position, SeekOrigin.Begin);
 
-            int currentValue;
-            while (true)
+            if (reader.PeekChar() == value)
             {
-                currentValue = reader.PeekChar();
+                return true;
+            }
 
-                if (currentValue == value)
-                {
-                    break;
-                }
+            //required for VirtualBoxSharedFolder,Normal,Windows,Windows,Linux
+            reader.BaseStream.ForceRead(tunnelTimeoutMilliseconds, verbose);
+            return false;
+        }
 
-                //required for VirtualBoxSharedFolder,Normal,Windows,Windows,Linux
-                reader.BaseStream.ForceRead(tunnelTimeoutMilliseconds, verbose);
-
+        public void Wait(byte value)
+        {
+            while (!Is(value))
+            {
                 Delay.Wait(1);
             }
         }
+
+        //Closes the handle the flag is read through.
+        public void Dispose() => reader.Dispose();
     }
 }
