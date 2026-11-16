@@ -860,20 +860,24 @@ namespace ft
                         }
                         catch { }
                     }
+
+                    DropReadBuffer(fileStream);
                 }
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 {
-                    if (fileStream is MacSmbReadFileStream smbStream)
-                    {
-                        smbStream.Refresh();
-                    }
-                    else
+                    // A Mac's SMB mount is read uncached (MacSmbReadFileStream), so there the read buffer is all
+                    // there is to refresh.
+                    if (fileStream is not MacSmbReadFileStream)
                     {
                         MacDirectRefresh(fileStream);
                     }
+
+                    DropReadBuffer(fileStream);
                 }
                 else
                 {
+                    // Windows, and Android, which a linux-bionic build doesn't report as Linux: the flush of a stream
+                    // opened for reading drops its read buffer (see DropReadBuffer).
                     fileStream.Flush(verbose, tunnelTimeoutMilliseconds);
                 }
             }
@@ -882,6 +886,21 @@ namespace ft
                 stream.Flush(verbose, tunnelTimeoutMilliseconds);
             }
         }
+
+        // The reader peeks at the next byte through the stream's read buffer, and takes a zero byte for "not written
+        // yet". A network share can show a file's new size before the bytes written there, so a peek can meet zeros
+        // where a command is about to be. Those zeros stayed in the buffer, and each later peek at that position was
+        // answered from it, without reading the file again, however fresh the refreshes above made the file. The
+        // session id check, once a second, drops the buffer as it seeks to the start of the file, but not when the
+        // buffer holds the start of the file too. So in the first 4 KB, as each session and each purge begins, the
+        // reader waited until the tunnel timed out, then started over at the end of the file, past the command. That
+        // was seen on a Mac's SMB mount (see MacSmbReadFileStream). Measured with a command written over such zeros,
+        // on Linux and on a Mac, local disks both: 10 bytes into the file, it was never read before, and was read
+        // within 33 ms with the buffer dropped; 8 KB in, it was read after 1 s before, and within 6 ms with it. This
+        // costs nothing while the reader waits at the end of the file, where the buffer is empty already. While it
+        // looks at a zero, each poll reads the file again. A stream opened for reading has nothing to write, so its
+        // flush only drops the read buffer.
+        static void DropReadBuffer(FileStream fileStream) => fileStream.Flush();
 
         // Re-fetches the held handle's inode size with a single fstat, gated to FUSE mounts. virtio-fs
         // (and potentially other FUSE servers) keep a long-lived read handle's cached size stale - a plain

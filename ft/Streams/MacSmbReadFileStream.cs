@@ -18,10 +18,10 @@ namespace ft.Streams
     // through the one handle needs no refresh at all, and sees a Linux writer's appends within 5 ms at the 90th
     // percentile on Windows, Samba and macOS servers alike.
     //
-    // Refresh() drops this stream's own read buffer. A peek that meets a zero byte, which a reader takes for "not
-    // written yet", leaves what it read in the buffer, and the next peek at the same position is answered from the
-    // buffer without reading the file again: the reader waited, until the tunnel timed out, for data the file
-    // already held.
+    // Its own read buffer still has to be dropped, which ForceRead does for every file stream (see
+    // Extensions.DropReadBuffer). A peek that met a zero byte, which a reader takes for "not written yet", left what
+    // it read in the buffer, and the next peek at the same position was answered from the buffer without reading the
+    // file again: the reader waited, until the tunnel timed out, for data the file already held.
     public sealed class MacSmbReadFileStream : FileStream
     {
         const int F_RDAHEAD = 45;
@@ -34,8 +34,5 @@ namespace ft.Streams
             Extensions.MacFcntl(fd, F_RDAHEAD, 0);
             Extensions.MacFcntl(fd, F_NOCACHE, 1);
         }
-
-        //A stream opened for reading has nothing to write, so this only drops the read buffer.
-        public void Refresh() => Flush();
     }
 }
